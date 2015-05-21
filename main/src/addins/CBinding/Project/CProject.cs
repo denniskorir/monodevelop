@@ -137,14 +137,14 @@ namespace CBinding
 				(CProjectConfiguration)CreateConfiguration ("Debug");
 			
 			configuration.DefineSymbols = "DEBUG MONODEVELOP";		
-			configuration.DebugMode = true;
+			configuration.DebugSymbols = true;
 				
 			Configurations.Add (configuration);
 			
 			configuration =
 				(CProjectConfiguration)CreateConfiguration ("Release");
 				
-			configuration.DebugMode = false;
+			configuration.DebugSymbols = false;
 			configuration.OptimizationLevel = 3;
 			configuration.DefineSymbols = "MONODEVELOP";
 			Configurations.Add (configuration);
@@ -389,7 +389,7 @@ namespace CBinding
 			return conf.OutputDirectory.Combine (conf.CompiledOutputName);
 		}
 		
-		protected override SolutionItemConfiguration OnCreateConfiguration (string name)
+		protected override SolutionItemConfiguration OnCreateConfiguration (string name, ConfigurationKind kind)
 		{
 			CProjectConfiguration conf = new CProjectConfiguration ();
 			

@@ -220,7 +220,7 @@
 	</Extension>
 
 	<Extension path = "/MonoDevelop/ProjectModel/Gui/ItemOptionPanels/Run">
-		<Condition id="FlavorType" value="MonoDevelop.AspNet.Projects.AspNetFlavor">
+		<Condition id="FlavorType" value="MonoDevelop.AspNet.Projects.AspNetAppProjectFlavor">
 			<Section id = "XspOptions"
 			             _label = "XSP Web Server"
 			             class = "MonoDevelop.AspNet.Execution.XspOptionsPanel"/>
@@ -395,5 +395,9 @@
 
 	<Extension path="/MonoDevelop/Ide/ProjectTemplateWizards">
 		<Class id="MonoDevelop.AspNet.ProjectTemplateWizard" class="MonoDevelop.AspNet.Projects.AspNetProjectTemplateWizard" />
+	</Extension>
+
+	<Extension path="/MonoDevelop/Ide/TemplateImages">
+		<Image id="md-aspnet-empty-project" resource="aspnet-empty-project.png" />
 	</Extension>
 </ExtensionModel>

@@ -30,7 +30,7 @@
 using System;
 using System.Xml;
 
-namespace Microsoft.Build.BuildEngine {
+namespace MonoDevelop.Projects.Formats.MSBuild.Conditions {
 	internal sealed class ConditionNotExpression : ConditionExpression {
 	
 		readonly ConditionExpression expression;

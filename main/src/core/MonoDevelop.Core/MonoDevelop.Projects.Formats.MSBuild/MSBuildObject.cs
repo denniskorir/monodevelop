@@ -41,6 +41,7 @@ namespace MonoDevelop.Projects.Formats.MSBuild
 		
 		public XmlElement Element {
 			get { return elem; }
+			internal set { elem = value; }
 		}
 
 		protected XmlElement AddChildElement (string name)
@@ -65,18 +66,6 @@ namespace MonoDevelop.Projects.Formats.MSBuild
 				else
 					Element.SetAttribute ("Condition", value);
 			}
-		}
-
-		internal virtual void Evaluate (MSBuildEvaluationContext context)
-		{
-		}
-
-		internal virtual void OnEvaluationStarting ()
-		{
-		}
-
-		internal virtual void OnEvaluationFinished ()
-		{
 		}
 	}
 

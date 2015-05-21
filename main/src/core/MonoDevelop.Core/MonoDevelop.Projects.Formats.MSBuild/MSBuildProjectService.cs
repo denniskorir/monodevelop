@@ -141,6 +141,18 @@ namespace MonoDevelop.Projects.Formats.MSBuild
 			projecItemTypeNodes = AddinManager.GetExtensionNodes<TypeExtensionNode> (MSBuildProjectItemTypesPath).ToDictionary (e => e.TypeName);
 		}
 
+		static Dictionary<string,Type> customProjectItemTypes = new Dictionary<string,Type> ();
+
+		internal static void RegisterCustomProjectItemType (string name, Type type)
+		{
+			customProjectItemTypes [name] = type;
+		}
+
+		internal static void UnregisterCustomProjectItemType (string name)
+		{
+			customProjectItemTypes.Remove (name);
+		}
+
 		static void HandleGlobalPropertyProviderChanged (object sender, EventArgs e)
 		{
 			lock (builders) {
@@ -207,7 +219,7 @@ namespace MonoDevelop.Projects.Formats.MSBuild
 			var node = GetItemTypeNodes ().FirstOrDefault (n => n.CanHandleFile (fileName, typeGuid));
 
 			if (node != null) {
-				item = await node.CreateSolutionItem (monitor, fileName);
+				item = await node.CreateSolutionItem (monitor, ctx, fileName);
 				if (item == null)
 					return null;
 			}
@@ -314,6 +326,11 @@ namespace MonoDevelop.Projects.Formats.MSBuild
 				}
 			}
 			throw new InvalidOperationException ("Unknown project type: " + typeGuid);
+		}
+
+		internal static bool CanCreateProject (string typeGuid, params string[] flavorGuids)
+		{
+			return IsKnownTypeGuid (ConvertTypeAliasToGuid (typeGuid)) && ConvertTypeAliasesToGuids (flavorGuids).All (id => IsKnownFlavorGuid (id));
 		}
 
 		internal static SolutionItem CreateSolutionItem (string type, ProjectCreateInformation info, System.Xml.XmlElement projectOptions)
@@ -993,18 +1010,6 @@ namespace MonoDevelop.Projects.Formats.MSBuild
 			}
 		}
 
-		static string LoadProjectTypeGuids (string fileName)
-		{
-			MSBuildProject project = new MSBuildProject ();
-			project.Load (fileName);
-			
-			IMSBuildPropertySet globalGroup = project.GetGlobalPropertyGroup ();
-			if (globalGroup == null)
-				return null;
-
-			return globalGroup.GetValue ("ProjectTypeGuids");
-		}
-
 		internal static UnknownProjectTypeNode GetUnknownProjectTypeInfo (string[] guids, string fileName = null)
 		{
 			var ext = fileName != null ? Path.GetExtension (fileName).TrimStart ('.') : null;
@@ -1021,6 +1026,9 @@ namespace MonoDevelop.Projects.Formats.MSBuild
 					throw new InvalidOperationException ("Project item type '" + node.TypeName + "' is not a subclass of ProjectItem");
 				return t;
 			}
+			Type tt;
+			if (customProjectItemTypes.TryGetValue (itemName, out tt))
+				return tt;
 			else
 				return null;
 		}
@@ -1030,8 +1038,11 @@ namespace MonoDevelop.Projects.Formats.MSBuild
 			TypeExtensionNode node;
 			if (projecItemTypeNodes.TryGetValue (type.FullName, out node))
 				return node.Id;
-			else
-				return null;
+
+			var r = customProjectItemTypes.FirstOrDefault (k => k.Value == type);
+			if (r.Key != null)
+				return r.Key;
+			return null;
 		}
 	}
 	

@@ -31,7 +31,7 @@ using System.Linq;
 
 namespace MonoDevelop.Projects.Formats.MSBuild
 {
-	public class MSBuildProjectInstance
+	public sealed class MSBuildProjectInstance: IDisposable
 	{
 		MSBuildProject msproject;
 		List<IMSBuildItemEvaluated> evaluatedItems = new List<IMSBuildItemEvaluated> ();
@@ -40,6 +40,11 @@ namespace MonoDevelop.Projects.Formats.MSBuild
 		MSBuildTarget[] targets = new MSBuildTarget[0];
 		Dictionary<string,string> globalProperties = new Dictionary<string, string> ();
 
+		MSBuildProjectInstanceInfo info;
+
+		object projectInstance;
+		MSBuildEngine engine;
+
 		public MSBuildProjectInstance (MSBuildProject project)
 		{
 			msproject = project;
@@ -47,56 +52,49 @@ namespace MonoDevelop.Projects.Formats.MSBuild
 			evaluatedProperties = new MSBuildEvaluatedPropertyCollection (msproject);
 		}
 
+		public void Dispose ()
+		{
+			if (projectInstance != null) {
+				engine.DisposeProjectInstance (projectInstance);
+				projectInstance = null;
+				engine = null;
+			}
+		}
+
 		public void SetGlobalProperty (string property, string value)
 		{
 			globalProperties [property] = value;
 		}
 
+		public void RemoveGlobalProperty (string property)
+		{
+			globalProperties.Remove (property);
+		}
+
+		internal bool OnlyEvaluateProperties { get; set; }
+
 		public void Evaluate ()
 		{
-			// Use a private metadata property to assign an id to each item. This id is used to match
-			// evaluated items with the items that generated them.
-			int id = 0;
-			List<XmlElement> idElems = new List<XmlElement> ();
+			if (projectInstance != null)
+				engine.DisposeProjectInstance (projectInstance);
+			
+			info = msproject.LoadNativeInstance ();
+
+			engine = info.Engine;
+			projectInstance = engine.CreateProjectInstance (info.Project);
 
 			try {
-				var currentItems = new Dictionary<string,MSBuildItem> ();
-				foreach (var it in msproject.GetAllItems ()) {
-					var c = msproject.Document.CreateElement (NodeIdPropertyName, MSBuildProject.Schema);
-					string nid = (id++).ToString ();
-					c.InnerXml = nid;
-					it.Element.AppendChild (c);
-					currentItems [nid] = it;
-					idElems.Add (c);
-					it.EvaluatedItemCount = 0;
-				}
-
-				var supportsMSBuild = msproject.UseMSBuildEngine && msproject.GetGlobalPropertyGroup ().GetValue ("UseMSBuildEngine", true);
-
-				MSBuildEngine e = MSBuildEngine.Create (supportsMSBuild);
-
-				OnEvaluationStarting ();
-
-				var p = e.LoadProjectFromXml (msproject, msproject.FileName, msproject.Document.OuterXml);
-
 				foreach (var prop in globalProperties)
-					e.SetGlobalProperty (p, prop.Key, prop.Value);
+					engine.SetGlobalProperty (projectInstance, prop.Key, prop.Value);
 
-				e.Evaluate (p);
+				engine.Evaluate (projectInstance);
 
-				SyncBuildProject (currentItems, e, p);
+				SyncBuildProject (info.ItemMap, info.Engine, projectInstance);
 			}
 			catch (Exception ex) {
 				// If the project can't be evaluated don't crash
 				LoggingService.LogError ("MSBuild project could not be evaluated", ex);
 				throw new ProjectEvaluationException (msproject, ex.Message);
-			}
-			finally {
-				// Now remove the item id property
-				foreach (var el in idElems)
-					el.ParentNode.RemoveChild (el);
-
-				OnEvaluationFinished ();
 			}
 		}
 
@@ -107,68 +105,67 @@ namespace MonoDevelop.Projects.Formats.MSBuild
 			evaluatedItemsIgnoringCondition.Clear ();
 			evaluatedItems.Clear ();
 
-			foreach (var it in e.GetAllItems (project, false)) {
-				string name, include, finalItemSpec;
-				bool imported;
-				e.GetItemInfo (it, out name, out include, out finalItemSpec, out imported);
-				var iid = e.GetItemMetadata (it, NodeIdPropertyName);
-				MSBuildItem xit;
-				if (currentItems.TryGetValue (iid, out xit)) {
-					xit.SetEvalResult (finalItemSpec);
-					((MSBuildPropertyGroupEvaluated)xit.EvaluatedMetadata).Sync (e, it);
-				}
-			}
+			if (!OnlyEvaluateProperties) {
+				
+				var xmlImports = msproject.Imports.ToArray ();
+				var buildImports = e.GetImports (project).ToArray ();
+				for (int n = 0; n < xmlImports.Length && n < buildImports.Length; n++)
+					xmlImports [n].SetEvalResult (e.GetImportEvaluatedProjectPath (project, buildImports [n]));
 
-			var xmlImports = msproject.Imports.ToArray ();
-			var buildImports = e.GetImports (project).ToArray ();
-			for (int n = 0; n < xmlImports.Length && n < buildImports.Length; n++)
-				xmlImports [n].SetEvalResult (e.GetImportEvaluatedProjectPath (project, buildImports [n]));
+				var evalItems = new Dictionary<string,MSBuildItemEvaluated> ();
+				foreach (var it in e.GetEvaluatedItems (project)) {
+					var xit = it as MSBuildItemEvaluated;
+					if (xit == null) {
+						xit = CreateEvaluatedItem (e, it);
+						var itemId = e.GetItemMetadata (it, NodeIdPropertyName);
+						var key = itemId + " " + xit.Include;
+						if (evalItems.ContainsKey (key))
+							continue; // xbuild seems to return duplicate items when using wildcards. This is a workaround to avoid the duplicates.
+						MSBuildItem pit;
+						if (!string.IsNullOrEmpty (itemId) && currentItems.TryGetValue (itemId, out pit)) {
+							xit.SourceItem = pit;
+							xit.Condition = pit.Condition;
+							evalItems [key] = xit;
+						}
+					}
+					evaluatedItems.Add (xit);
+				}
 
-			var evalItems = new Dictionary<string,MSBuildItemEvaluated> ();
-			foreach (var it in e.GetEvaluatedItems (project)) {
-				var xit = CreateEvaluatedItem (e, it);
-				var itemId = e.GetItemMetadata (it, NodeIdPropertyName);
-				var key = itemId + " " + xit.Include;
-				if (evalItems.ContainsKey (key))
-					continue; // xbuild seems to return duplicate items when using wildcards. This is a workaround to avoid the duplicates.
-				MSBuildItem pit;
-				if (!string.IsNullOrEmpty (itemId) && currentItems.TryGetValue (itemId, out pit)) {
-					xit.SourceItem = pit;
-					xit.Condition = pit.Condition;
-					pit.EvaluatedItemCount++;
-					evalItems [key] = xit;
+				var evalItemsNoCond = new Dictionary<string,MSBuildItemEvaluated> ();
+				foreach (var it in e.GetEvaluatedItemsIgnoringCondition (project)) {
+					var xit = it as MSBuildItemEvaluated;
+					if (xit == null) {
+						xit = CreateEvaluatedItem (e, it);
+						var itemId = e.GetItemMetadata (it, NodeIdPropertyName);
+						MSBuildItemEvaluated evItem;
+						var key = itemId + " " + xit.Include;
+						if (evalItemsNoCond.ContainsKey (key))
+							continue; // xbuild seems to return duplicate items when using wildcards. This is a workaround to avoid the duplicates.
+						if (!string.IsNullOrEmpty (itemId) && evalItems.TryGetValue (key, out evItem)) {
+							evaluatedItemsIgnoringCondition.Add (evItem);
+							evalItemsNoCond [key] = evItem;
+							continue;
+						}
+						MSBuildItem pit;
+						if (!string.IsNullOrEmpty (itemId) && currentItems.TryGetValue (itemId, out pit)) {
+							xit.SourceItem = pit;
+							xit.Condition = pit.Condition;
+							evalItemsNoCond [key] = xit;
+						}
+					}
+					evaluatedItemsIgnoringCondition.Add (xit);
 				}
-				evaluatedItems.Add (xit);
-			}
 
-			var evalItemsNoCond = new Dictionary<string,MSBuildItemEvaluated> ();
-			foreach (var it in e.GetEvaluatedItemsIgnoringCondition (project)) {
-				var itemId = e.GetItemMetadata (it, NodeIdPropertyName);
-				MSBuildItemEvaluated evItem;
-				var xit = CreateEvaluatedItem (e, it);
-				var key = itemId + " " + xit.Include;
-				if (evalItemsNoCond.ContainsKey (key))
-					continue; // xbuild seems to return duplicate items when using wildcards. This is a workaround to avoid the duplicates.
-				if (!string.IsNullOrEmpty (itemId) && evalItems.TryGetValue (key, out evItem)) {
-					evaluatedItemsIgnoringCondition.Add (evItem);
-					evalItemsNoCond [key] = evItem;
-					continue;
-				}
-				MSBuildItem pit;
-				if (!string.IsNullOrEmpty (itemId) && currentItems.TryGetValue (itemId, out pit)) {
-					xit.SourceItem = pit;
-					xit.Condition = pit.Condition;
-					pit.EvaluatedItemCount++;
-					evalItemsNoCond [key] = xit;
-				}
-				evaluatedItemsIgnoringCondition.Add (xit);
+				// Clear the node id metadata
+				foreach (var it in evaluatedItems.Concat (evaluatedItemsIgnoringCondition))
+					((MSBuildPropertyGroupEvaluated)it.Metadata).RemoveProperty (NodeIdPropertyName);
+
+				targets = e.GetTargets (project).ToArray ();
 			}
 
 			var props = new MSBuildEvaluatedPropertyCollection (msproject);
 			evaluatedProperties = props;
 			props.SyncCollection (e, project);
-
-			targets = e.GetTargets (project).ToArray ();
 		}
 
 		MSBuildItemEvaluated CreateEvaluatedItem (MSBuildEngine e, object it)
@@ -180,26 +177,6 @@ namespace MonoDevelop.Projects.Formats.MSBuild
 			xit.IsImported = imported;
 			((MSBuildPropertyGroupEvaluated)xit.Metadata).Sync (e, it);
 			return xit;
-		}
-
-		void OnEvaluationStarting ()
-		{
-			foreach (var g in msproject.PropertyGroups)
-				g.OnEvaluationStarting ();
-			foreach (var g in msproject.ItemGroups)
-				g.OnEvaluationStarting ();
-			foreach (var i in msproject.Imports)
-				i.OnEvaluationStarting ();
-		}
-
-		void OnEvaluationFinished ()
-		{
-			foreach (var g in msproject.PropertyGroups)
-				g.OnEvaluationFinished ();
-			foreach (var g in msproject.ItemGroups)
-				g.OnEvaluationFinished ();
-			foreach (var i in msproject.Imports)
-				i.OnEvaluationFinished ();
 		}
 
 		public IMSBuildEvaluatedPropertyCollection EvaluatedProperties {
@@ -219,6 +196,14 @@ namespace MonoDevelop.Projects.Formats.MSBuild
 				return targets;
 			}
 		}
+	}
+
+	class MSBuildProjectInstanceInfo
+	{
+		public object Project { get; set; }
+		public MSBuildEngine Engine { get; set; }
+		public int ProjectStamp { get; set; }
+		public Dictionary<string,MSBuildItem> ItemMap { get; set; }
 	}
 }
 

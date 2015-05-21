@@ -32,31 +32,37 @@ using System.Collections.Immutable;
 
 namespace MonoDevelop.Projects.Formats.MSBuild
 {
-	public class MSBuildItem: MSBuildObject, IMSBuildItemEvaluated
+	public class MSBuildItem: MSBuildObject
 	{
 		MSBuildPropertyGroup metadata;
 		MSBuildPropertyGroupEvaluated evaluatedMetadata;
 		MSBuildProject parent;
-		string evaluatedInclude;
 
 		internal MSBuildItem (MSBuildProject parent, XmlElement elem): base (elem)
 		{
 			this.parent = parent;
 		}
+
+		public MSBuildProject Project {
+			get { return parent; }
+		}
 		
 		public string Include {
-			get { return evaluatedInclude ?? UnevaluatedInclude; }
-			set { evaluatedInclude = UnevaluatedInclude = value; }
+			get { return Element.GetAttribute ("Include"); }
+			set {
+				Element.SetAttribute ("Include", value); 
+				if (parent != null)
+					parent.NotifyChanged ();
+			}
 		}
 		
-		public string UnevaluatedInclude {
-			get { return Element.GetAttribute ("Include"); }
-			set { Element.SetAttribute ("Include", value); }
-		}
-
-		internal void SetEvalResult (string value)
-		{
-			this.evaluatedInclude = value;
+		public string Exclude {
+			get { return Element.GetAttribute ("Exclude"); }
+			set {
+				Element.SetAttribute ("Exclude", value); 
+				if (parent != null)
+					parent.NotifyChanged ();
+			}
 		}
 
 		public bool IsImported {
@@ -86,18 +92,10 @@ namespace MonoDevelop.Projects.Formats.MSBuild
 			}
 		}
 
-		IMSBuildPropertyGroupEvaluated IMSBuildItemEvaluated.Metadata {
-			get { return EvaluatedMetadata; }
-		}
-
-		MSBuildItem IMSBuildItemEvaluated.SourceItem {
-			get { return this; }
-		}
-
 		internal int EvaluatedItemCount { get; set; }
 
 		internal bool IsWildcardItem {
-			get { return EvaluatedItemCount > 1 && UnevaluatedInclude.Contains ("*"); }
+			get { return EvaluatedItemCount > 1 && (Include.Contains ("*") || Include.Contains (";")); }
 		}
 	}
 
@@ -107,6 +105,7 @@ namespace MonoDevelop.Projects.Formats.MSBuild
 		MSBuildProject parent;
 		string evaluatedInclude;
 		string include;
+		MSBuildItem sourceItem;
 
 		internal MSBuildItemEvaluated (MSBuildProject parent, string name, string include, string evaluatedInclude)
 		{
@@ -143,7 +142,10 @@ namespace MonoDevelop.Projects.Formats.MSBuild
 			}
 		}
 
-		public MSBuildItem SourceItem { get; internal set; }
+		public MSBuildItem SourceItem {
+			get { return sourceItem; }
+			set { sourceItem = value; sourceItem.EvaluatedItemCount++; }
+		}
 
 		public override string ToString ()
 		{

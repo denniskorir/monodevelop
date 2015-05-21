@@ -28,12 +28,16 @@ using NUnit.Framework;
 
 namespace UserInterfaceTests
 {
+	[TestFixture]
+	[Category("Misc")]
 	public class MiscTemplatesTest : CreateBuildTemplatesTestBase
 	{
 		readonly string miscCategory = "Miscellaneous";
 
 		readonly string genericKindRoot = "Generic";
 		readonly string cCPlusKindRoot = "C/C++";
+
+		public MiscTemplatesTest () : base (Util.TestRunId) {}
 
 		#region Generic
 

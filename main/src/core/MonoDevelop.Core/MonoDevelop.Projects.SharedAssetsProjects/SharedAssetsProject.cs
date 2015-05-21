@@ -95,7 +95,7 @@ namespace MonoDevelop.Projects.SharedAssetsProjects
 
 			projItemsPath = Path.Combine (Path.GetDirectoryName (msproject.FileName), projitemsFile);
 
-			MSBuildProject p = new MSBuildProject ();
+			MSBuildProject p = new MSBuildProject (msproject.EngineManager);
 			p.Load (projItemsPath);
 			p.Evaluate ();
 
@@ -108,15 +108,19 @@ namespace MonoDevelop.Projects.SharedAssetsProjects
 			projitemsProject = p;
 		}
 
+		internal override void SaveProjectItems (ProgressMonitor monitor, MSBuildProject msproject, HashSet<MSBuildItem> loadedItems, string pathPrefix)
+		{
+			// Save project items in the .projitems file
+			base.SaveProjectItems (monitor, projitemsProject, usedMSBuildItems, "$(MSBuildThisFileDirectory)");
+		}
+
 		protected override void OnWriteProject (ProgressMonitor monitor, MonoDevelop.Projects.Formats.MSBuild.MSBuildProject msproject)
 		{
-			base.OnWriteProject (monitor, msproject);
-
 			if (projItemsPath == FilePath.Null)
 				projItemsPath = Path.ChangeExtension (FileName, ".projitems");
-			
+
 			if (projitemsProject == null) {
-				projitemsProject = new MSBuildProject ();
+				projitemsProject = new MSBuildProject (msproject.EngineManager);
 				projitemsProject.FileName = projItemsPath;
 				var grp = projitemsProject.GetGlobalPropertyGroup ();
 				if (grp == null)
@@ -125,6 +129,15 @@ namespace MonoDevelop.Projects.SharedAssetsProjects
 				grp.SetValue ("HasSharedItems", true);
 				grp.SetValue ("SharedGUID", ItemId, preserveExistingCase:true);
 			}
+
+			IMSBuildPropertySet configGrp = projitemsProject.PropertyGroups.FirstOrDefault (g => g.Label == "Configuration");
+			if (configGrp == null) {
+				configGrp = projitemsProject.AddNewPropertyGroup (true);
+				configGrp.Label = "Configuration";
+			}
+			configGrp.SetValue ("Import_RootNamespace", DefaultNamespace);
+
+			base.OnWriteProject (monitor, msproject);
 
 			var newProject = FileName == null || !File.Exists (FileName);
 			if (newProject) {
@@ -150,20 +163,6 @@ namespace MonoDevelop.Projects.SharedAssetsProjects
 				msproject.ToolsVersion = null;
 			else
 				msproject.ToolsVersion = "2.0";
-
-			IMSBuildPropertySet configGrp = projitemsProject.PropertyGroups.FirstOrDefault (g => g.Label == "Configuration");
-			if (configGrp == null) {
-				configGrp = projitemsProject.AddNewPropertyGroup (true);
-				configGrp.Label = "Configuration";
-			}
-			configGrp.SetValue ("Import_RootNamespace", DefaultNamespace);
-
-			SaveProjectItems (monitor, projitemsProject, usedMSBuildItems, "$(MSBuildThisFileDirectory)");
-
-			// Remove all items of this project, since items are saved in the projitems file
-
-			foreach (var it in msproject.GetAllItems ().ToArray ())
-				msproject.RemoveItem (it);
 
 			projitemsProject.Save (projItemsPath);
 		}
@@ -283,6 +282,8 @@ namespace MonoDevelop.Projects.SharedAssetsProjects
 
 		protected override void OnDispose ()
 		{
+			if (projitemsProject != null)
+				projitemsProject.Dispose ();
 			DisconnectFromSolution ();
 			base.OnDispose ();
 		}
@@ -322,7 +323,7 @@ namespace MonoDevelop.Projects.SharedAssetsProjects
 			var referencesToFix = p.References.Where (r => r.GetItemsProjectPath () == ProjItemsPath && r.Reference != Name).ToList ();
 			foreach (var r in referencesToFix) {
 				p.References.Remove (r);
-				p.References.Add (new ProjectReference (this));
+				p.References.Add (ProjectReference.CreateProjectReference (this));
 			}
 
 			foreach (var pref in p.References.Where (r => r.ReferenceType == ReferenceType.Project && r.Reference == Name))

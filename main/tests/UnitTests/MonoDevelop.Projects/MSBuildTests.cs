@@ -117,7 +117,7 @@ namespace MonoDevelop.Projects
 			Solution sol = TestProjectsChecks.CreateConsoleSolution ("console-project-msbuild");
 			sol.ConvertToFormat (MSBuildFileFormat.VS2010);
 			Project p = sol.Items [0] as Project;
-			p.GlobalProperties.SetValue ("TestProperty", "TestValue");
+			p.ProjectProperties.SetValue ("TestProperty", "TestValue");
 
 			await sol.SaveAsync (Util.GetMonitor ());
 
@@ -194,7 +194,7 @@ namespace MonoDevelop.Projects
 			pars.WarningLevel = 1;
 			Assert.AreEqual (1, pars.WarningLevel);
 			conf.DebugType = "full";
-			conf.DebugMode = true;
+			conf.DebugSymbols = true;
 
 			await sol.SaveAsync (Util.GetMonitor ());
 			Assert.AreEqual (1, pars.WarningLevel);
@@ -242,7 +242,7 @@ namespace MonoDevelop.Projects
 			
 			await p.SaveAsync (Util.GetMonitor ());
 
-			Assert.AreEqual (File.ReadAllText (p.FileName + ".saved"), File.ReadAllText (p.FileName));
+			Assert.AreEqual (Util.ToSystemEndings (File.ReadAllText (p.FileName + ".saved")), File.ReadAllText (p.FileName));
 		}
 		
 		[Test]
@@ -254,21 +254,21 @@ namespace MonoDevelop.Projects
 
 			DotNetProjectConfiguration conf = p.Configurations ["Debug|x86"] as DotNetProjectConfiguration;
 			Assert.IsNotNull (conf);
-			Assert.IsTrue (conf.DebugMode);
+			Assert.IsTrue (conf.DebugSymbols);
 			CSharpCompilerParameters cparams = (CSharpCompilerParameters) conf.CompilationParameters;
 			Assert.IsTrue (cparams.UnsafeCode);
 			
 			conf = p.Configurations ["Release|x86"] as DotNetProjectConfiguration;
 			Assert.IsNotNull (conf);
-			Assert.IsFalse (conf.DebugMode);
-			conf.DebugMode = true;
+			Assert.IsFalse (conf.DebugSymbols);
+			conf.DebugSymbols = true;
 			cparams = (CSharpCompilerParameters) conf.CompilationParameters;
 			Assert.IsFalse (cparams.UnsafeCode);
 			cparams.UnsafeCode = true;
 			
 			await p.SaveAsync (Util.GetMonitor ());
 
-			Assert.AreEqual (File.ReadAllText (p.FileName + ".saved"), File.ReadAllText (p.FileName));
+			Assert.AreEqual (Util.ToSystemEndings (File.ReadAllText (p.FileName + ".saved")), File.ReadAllText (p.FileName));
 		}
 		
 		[Test]
@@ -289,7 +289,7 @@ namespace MonoDevelop.Projects
 			
 			await p.SaveAsync (Util.GetMonitor ());
 
-			Assert.AreEqual (File.ReadAllText (p.FileName + ".saved"), File.ReadAllText (p.FileName));
+			Assert.AreEqual (Util.ToSystemEndings (File.ReadAllText (p.FileName + ".saved")), File.ReadAllText (p.FileName));
 		}
 		
 		[Test]
@@ -311,7 +311,7 @@ namespace MonoDevelop.Projects
 			
 			await p.SaveAsync (Util.GetMonitor ());
 
-			Assert.AreEqual (File.ReadAllText (p.FileName + ".saved"), File.ReadAllText (p.FileName));
+			Assert.AreEqual (Util.ToSystemEndings (File.ReadAllText (p.FileName + ".saved")), File.ReadAllText (p.FileName));
 		}
 		
 		[Test]
@@ -333,9 +333,35 @@ namespace MonoDevelop.Projects
 			
 			await p.SaveAsync (Util.GetMonitor ());
 
-			Assert.AreEqual (File.ReadAllText (p.FileName + ".saved"), File.ReadAllText (p.FileName));
+			Assert.AreEqual (Util.ToSystemEndings (File.ReadAllText (p.FileName + ".saved")), File.ReadAllText (p.FileName));
 		}
 		
+		[Test]
+		public async Task TestConfigurationMergingChangeMergeToParent3 ()
+		{
+			string projectFile = Util.GetSampleProject ("test-configuration-merging", "TestConfigurationMerging8.csproj");
+			DotNetProject p = await Services.ProjectService.ReadSolutionItem (Util.GetMonitor (), projectFile) as DotNetProject;
+			Assert.IsNotNull (p);
+
+			var refXml = File.ReadAllText (p.FileName);
+			await p.SaveAsync (Util.GetMonitor ());
+
+			Assert.AreEqual (refXml, File.ReadAllText (p.FileName));
+		}
+
+		[Test]
+		public async Task TestConfigurationWithAnyCpu ()
+		{
+			string projectFile = Util.GetSampleProject ("test-multi-configuration", "project.csproj");
+			DotNetProject p = await Services.ProjectService.ReadSolutionItem (Util.GetMonitor (), projectFile) as DotNetProject;
+			Assert.IsNotNull (p);
+
+			var refXml = File.ReadAllText (p.FileName);
+			await p.SaveAsync (Util.GetMonitor ());
+
+			Assert.AreEqual (refXml, File.ReadAllText (p.FileName));
+		}
+
 		[Test]
 		public async Task ProjectReferenceWithSpace ()
 		{
@@ -372,7 +398,7 @@ namespace MonoDevelop.Projects
 		}
 
 		[Test]
-		[Ignore ("xbuild bug. It is not returning correct values for evaluated-items-without-condition list")]
+		//[Ignore ("xbuild bug. It is not returning correct values for evaluated-items-without-condition list")]
 		public async Task SaveItemsWithProperties ()
 		{
 			string dir = Path.GetDirectoryName (typeof(Project).Assembly.Location);
@@ -434,7 +460,7 @@ namespace MonoDevelop.Projects
 			Assert.IsTrue (asms.Contains (testRef));
 		}
 
-		[Ignore ("xbuild bug. It is not returning correct values for evaluated-items-without-condition list")]
+		//[Ignore ("xbuild bug. It is not returning correct values for evaluated-items-without-condition list")]
 		[Test]
 		public async Task EvaluatePropertiesWithConditionalGroup ()
 		{
@@ -446,7 +472,7 @@ namespace MonoDevelop.Projects
 			Solution sol = await Services.ProjectService.ReadWorkspaceItem (Util.GetMonitor (), solFile) as Solution;
 			var p = (DotNetProject) sol.GetAllProjects ().First ();
 			Assert.AreEqual ("Program8_test1.cs", p.Files[7].FilePath.FileName, "Item group conditions are not ignored");
-			Assert.AreEqual ("Program9_$(GGG).cs", p.Files[8].FilePath.FileName, "Non-evaluable property group clears properties");
+			Assert.AreEqual ("Program9_yes.cs", p.Files[8].FilePath.FileName, "Non-evaluable property group clears properties");
 			Assert.AreEqual ("Program10_$(AAA", p.Files[9].FilePath.FileName, "Invalid property reference");
 			Assert.AreEqual ("Program11_EnvTest.cs", p.Files[10].FilePath.FileName, "Environment variable");
 		}
@@ -476,7 +502,6 @@ namespace MonoDevelop.Projects
 				Assert.IsTrue (f.ErrorText.Contains (clientProfileError), "Build failed with: " + f.ErrorText);
 
 			string projectFile = ((Project)sol.Items [0]).FileName;
-			string solXml = Util.ReadAllWithWindowsEndings (solFile);
 			string projectXml = Util.ReadAllWithWindowsEndings (projectFile);
 
 			await sol.SaveAsync (monitor);
@@ -848,7 +873,21 @@ namespace MonoDevelop.Projects
 			var p = await Services.ProjectService.ReadSolutionItem (Util.GetMonitor (), projFile);
 			Assert.IsInstanceOf<Project> (p);
 			var mp = (Project) p;
-			Assert.AreEqual(new string[] {"None", "Compile", "EmbeddedResource", "--", "Content", "ItemOne", "ItemTwo"}, mp.GetBuildActions ());
+
+			var actions = mp.GetBuildActions ();
+
+			// The main actions should always be the same and in the same position
+
+			Assert.AreEqual (0, Array.IndexOf (actions, "None"), "'None' not found or in wrong position");
+			Assert.AreEqual (1, Array.IndexOf (actions, "Compile"), "'Compile' not found or in wrong position");
+			Assert.AreEqual (2, Array.IndexOf (actions, "EmbeddedResource"), "'EmbeddedResource' not found or in wrong position");
+			Assert.AreEqual (3, Array.IndexOf (actions, "--"), "'--' not found or in wrong position");
+
+			// The remaining actions may vary depending on the platform, but some of them must be there
+
+			Assert.IsTrue (actions.Contains ("Content"), "'Content' not found");
+			Assert.IsTrue (actions.Contains ("ItemOne"), "'ItemOne' not found");
+			Assert.IsTrue (actions.Contains ("ItemTwo"), "'ItemTwo' not found");
 		}
 
 		[Test]
@@ -875,6 +914,24 @@ namespace MonoDevelop.Projects
 		}
 
 		[Test]
+		public async Task LoadProjectWithWildcardsAndExcludes ()
+		{
+			string projFile = Util.GetSampleProject ("console-project-with-wildcards", "ConsoleProject-with-excludes.csproj");
+
+			var p = await Services.ProjectService.ReadSolutionItem (Util.GetMonitor (), projFile);
+			Assert.IsInstanceOf<Project> (p);
+			var mp = (Project) p;
+			var files = mp.Files.Select (f => f.FilePath.FileName).OrderBy(f => f).ToArray ();
+			Assert.AreEqual(new string[] {
+				"Data2.cs",
+				"p1.txt",
+				"p4.txt",
+				"p5.txt",
+				"text3-1.txt",
+			}, files);
+		}
+
+		[Test]
 		public async Task SaveProjectWithWildcards ()
 		{
 			string projFile = Util.GetSampleProject ("console-project-with-wildcards", "ConsoleProject.csproj");
@@ -886,7 +943,7 @@ namespace MonoDevelop.Projects
 
 			await p.SaveAsync (Util.GetMonitor ());
 
-			Assert.AreEqual (File.ReadAllText (p.FileName + ".saved1"), File.ReadAllText (p.FileName));
+			Assert.AreEqual (Util.ToSystemEndings (File.ReadAllText (p.FileName + ".saved1")), File.ReadAllText (p.FileName));
 		}
 
 		[Test]
@@ -906,11 +963,11 @@ namespace MonoDevelop.Projects
 
 			await p.SaveAsync (Util.GetMonitor ());
 
-			Assert.AreEqual (File.ReadAllText (p.FileName + ".saved2"), File.ReadAllText (p.FileName));
+			Assert.AreEqual (Util.ToSystemEndings (File.ReadAllText (p.FileName + ".saved2")), File.ReadAllText (p.FileName));
 		}
 
 		[Test]
-		[Ignore ("xbuild bug: RecursiveDir metadata returns the wrong value")]
+		//[Ignore ("xbuild bug: RecursiveDir metadata returns the wrong value")]
 		public async Task LoadProjectWithWildcardLinks ()
 		{
 			string solFile = Util.GetSampleProject ("project-with-wildcard-links", "PortableTest.sln");
@@ -918,7 +975,7 @@ namespace MonoDevelop.Projects
 			var sol = (Solution) await Services.ProjectService.ReadWorkspaceItem (Util.GetMonitor (), solFile);
 
 			var mp = (Project) sol.Items [0];
-			Assert.AreEqual (2, mp.Files.Count);
+			Assert.AreEqual (4, mp.Files.Count);
 
 			var f1 = mp.Files.FirstOrDefault (pf => pf.FilePath.FileName == "Xamagon_1.png");
 			var f2 = mp.Files.FirstOrDefault (pf => pf.FilePath.FileName == "Xamagon_2.png");
@@ -926,8 +983,8 @@ namespace MonoDevelop.Projects
 			Assert.AreEqual (Path.GetFullPath (Path.Combine (mp.BaseDirectory, "..","test", "Xamagon_1.png")), Path.GetFullPath (f1.FilePath));
 			Assert.AreEqual (Path.GetFullPath (Path.Combine (mp.BaseDirectory, "..","test", "Subdir", "Xamagon_2.png")), Path.GetFullPath (f2.FilePath));
 
-			Assert.AreEqual ("Xamagon_1.png", f1.Link);
-			Assert.AreEqual (Path.Combine ("Subdir", "Xamagon_2.png"), f2.Link);
+			Assert.AreEqual ("Xamagon_1.png", f1.Link.ToString ());
+			Assert.AreEqual (Path.Combine ("Subdir", "Xamagon_2.png"), f2.Link.ToString ());
 		}
 
 		[Test]
@@ -1062,6 +1119,183 @@ namespace MonoDevelop.Projects
 
 			Assert.AreEqual (refXml, savedXml);
 		}
+
+		[Test()]
+		public async Task DefaultProjectConfiguration ()
+		{
+			string projFile = Util.GetSampleProject ("default-project-config", "ConsoleProject.csproj");
+			Project p = (Project) await Services.ProjectService.ReadSolutionItem (Util.GetMonitor (), projFile);
+
+			var refXml = File.ReadAllText (projFile);
+			await p.SaveAsync (Util.GetMonitor ());
+			var savedXml = File.ReadAllText (projFile);
+
+			Assert.AreEqual (refXml, savedXml);
+
+			var c = p.Configurations.FirstOrDefault<SolutionItemConfiguration> (co => co.Id == "Test");
+			p.Configurations.Remove (c);
+
+			await p.SaveAsync (Util.GetMonitor ());
+
+			refXml = Util.ToSystemEndings (File.ReadAllText (projFile + ".saved2"));
+			savedXml = File.ReadAllText (projFile);
+			Assert.AreEqual (refXml, savedXml);
+
+			c = p.Configurations.FirstOrDefault<SolutionItemConfiguration> (co => co.Id == "Test|x86");
+			p.Configurations.Remove (c);
+
+			await p.SaveAsync (Util.GetMonitor ());
+
+			refXml = Util.ToSystemEndings (File.ReadAllText (projFile + ".saved3"));
+			savedXml = File.ReadAllText (projFile);
+			Assert.AreEqual (refXml, savedXml);
+
+			c = p.Configurations.FirstOrDefault<SolutionItemConfiguration> (co => co.Id == "Debug");
+			p.Configurations.Remove (c);
+
+			await p.SaveAsync (Util.GetMonitor ());
+
+			refXml = Util.ToSystemEndings (File.ReadAllText (projFile + ".saved4"));
+			savedXml = File.ReadAllText (projFile);
+			Assert.AreEqual (refXml, savedXml);
+		}
+
+		[Test]
+		public async Task ProjectSerializationRoundtrip (
+			[Values (
+				"broken-condition.csproj"
+				//"ICSharpCode.NRefactory.Cecil.csproj"
+			)]
+			string project)
+		{
+			string solFile = Util.GetSampleProject ("roundtrip-test-projects", project);
+			var p = (SolutionItem) await Services.ProjectService.ReadSolutionItem (Util.GetMonitor (), solFile);
+
+			var refXml = File.ReadAllText (p.FileName);
+			await p.SaveAsync (Util.GetMonitor ());
+			var savedXml = File.ReadAllText (p.FileName);
+
+			Assert.AreEqual (refXml, savedXml);
+		}
+
+		[Test]
+		public async Task AddProjectConfigurationWithProperties ()
+		{
+			string solFile = Util.GetSampleProject ("console-project", "ConsoleProject.sln");
+
+			Solution sol = (Solution) await Services.ProjectService.ReadWorkspaceItem (Util.GetMonitor (), solFile);
+			var p = (Project) sol.Items [0];
+
+			var conf = p.CreateConfiguration ("Test");
+			conf.Properties.SetValue ("TestProperty", "TestValue");
+			conf.Properties.SetValue ("TestPath", p.BaseDirectory.Combine ("Subdir","SomeFile.txt"));
+			p.Configurations.Add (conf);
+
+			await p.SaveAsync (Util.GetMonitor ());
+
+			var refXml = Util.ToSystemEndings (File.ReadAllText (p.FileName + ".config-props-added"));
+			var savedXml = File.ReadAllText (p.FileName);
+			Assert.AreEqual (refXml, savedXml);
+			sol.Dispose ();
+
+			sol = (Solution) await Services.ProjectService.ReadWorkspaceItem (Util.GetMonitor (), solFile);
+			p = (Project) sol.Items [0];
+
+			conf = p.Configurations.OfType<ProjectConfiguration> ().FirstOrDefault (c => c.Name == "Test");
+			Assert.AreEqual ("TestValue", conf.Properties.GetValue ("TestProperty"));
+			Assert.AreEqual (p.BaseDirectory.Combine ("Subdir","SomeFile.txt"), conf.Properties.GetPathValue ("TestPath"));
+		}
+
+		[Test]
+		public async Task RenameProjectConfiguration ()
+		{
+			// Change the name of the Debug configuration.
+			// - The configuration condition in the msbuild file has to change.
+			// - The default configuration has to change
+
+			string solFile = Util.GetSampleProject ("console-project", "ConsoleProject.sln");
+
+			Solution sol = (Solution) await Services.ProjectService.ReadWorkspaceItem (Util.GetMonitor (), solFile);
+			var p = (Project) sol.Items [0];
+
+			var conf = p.Configurations.OfType<ProjectConfiguration> ().FirstOrDefault (c => c.Name == "Debug");
+			conf.Name = "Test";
+			conf.IntermediateOutputDirectory = p.BaseDirectory.Combine ("obj","Test");
+
+			await p.SaveAsync (Util.GetMonitor ());
+
+			var refXml = Util.ToSystemEndings (File.ReadAllText (p.FileName + ".config-renamed"));
+			var savedXml = File.ReadAllText (p.FileName);
+			Assert.AreEqual (refXml, savedXml);
+		}
+
+		[Test]
+		public async Task CustomProjectItemWithMetadata ()
+		{
+			// Save a custom item with metadata
+
+			try {
+				MSBuildProjectService.RegisterCustomProjectItemType ("CustomItem", typeof(CustomItem));
+
+				string solFile = Util.GetSampleProject ("console-project", "ConsoleProject.sln");
+
+				Solution sol = (Solution) await Services.ProjectService.ReadWorkspaceItem (Util.GetMonitor (), solFile);
+				var p = (Project) sol.Items [0];
+
+				CustomItem it = new CustomItem {
+					SomeMetadata = "FooTest"
+				};
+				p.Items.Add (it);
+
+				await p.SaveAsync (Util.GetMonitor ());
+
+				var refXml = Util.ToSystemEndings (File.ReadAllText (p.FileName + ".custom-item"));
+				var savedXml = File.ReadAllText (p.FileName);
+				Assert.AreEqual (refXml, savedXml);
+
+				sol.Dispose ();
+
+				sol = (Solution) await Services.ProjectService.ReadWorkspaceItem (Util.GetMonitor (), solFile);
+				p = (Project) sol.Items [0];
+
+				it = p.Items.OfType<CustomItem> ().FirstOrDefault ();
+				Assert.IsNotNull (it);
+				Assert.AreEqual ("TestInclude", it.Include);
+				Assert.AreEqual ("FooTest", it.SomeMetadata);
+			}
+			finally {
+				MSBuildProjectService.UnregisterCustomProjectItemType ("CustomItem");
+			}
+		}
+
+		[Test]
+		public async Task RunTarget ()
+		{
+			string projFile = Util.GetSampleProject ("msbuild-tests", "project-with-custom-target.csproj");
+			var p = (Project) await Services.ProjectService.ReadSolutionItem (Util.GetMonitor (), projFile);
+
+			var ctx = new TargetEvaluationContext ();
+			ctx.GlobalProperties.SetValue ("TestProp", "has");
+			ctx.PropertiesToEvaluate.Add ("GenProp");
+			ctx.PropertiesToEvaluate.Add ("AssemblyName");
+			ctx.ItemsToEvaluate.Add ("GenItem");
+			var res = await p.RunTarget (Util.GetMonitor (), "Test", p.Configurations [0].Selector, ctx);
+
+			Assert.AreEqual (1, res.BuildResult.Errors.Count);
+			Assert.AreEqual ("Something failed: has foo bar", res.BuildResult.Errors [0].ErrorText);
+
+			// Verify that properties are returned
+
+			Assert.AreEqual ("ConsoleProject", res.Properties.GetValue ("AssemblyName"));
+			Assert.AreEqual ("foo", res.Properties.GetValue ("GenProp"));
+
+			// Verify that items are returned
+
+			var items = res.Items.ToArray ();
+			Assert.AreEqual (1, items.Length);
+			Assert.AreEqual ("bar", items [0].Include);
+			Assert.AreEqual ("Hello", items [0].Metadata.GetValue ("MyMetadata"));
+        }
 	}
 
 	class MyProjectTypeNode: ProjectTypeNode
@@ -1123,5 +1357,19 @@ namespace MonoDevelop.Projects
 
 		[ItemProperty (IsExternal = true)]
 		public MyProjectData Data;
+	}
+
+	class CustomItem: ProjectItem
+	{
+		public override string Include {
+			get {
+				return "TestInclude";
+			}
+			protected set {
+			}
+		}
+
+		[ItemProperty]
+		public string SomeMetadata { get; set; }
 	}
 }

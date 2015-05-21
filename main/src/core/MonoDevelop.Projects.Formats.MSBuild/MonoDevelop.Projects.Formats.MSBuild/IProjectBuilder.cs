@@ -27,6 +27,7 @@
 // THE SOFTWARE.
 
 using System;
+using System.Collections.Generic;
 
 namespace MonoDevelop.Projects.Formats.MSBuild
 {
@@ -36,7 +37,7 @@ namespace MonoDevelop.Projects.Formats.MSBuild
 		void RefreshWithContent (string projectContent);
 		MSBuildResult Run (
 			ProjectConfigurationInfo[] configurations, ILogWriter logWriter, MSBuildVerbosity verbosity,
-			string[] runTargets, string[] evaluateItems, string[] evaluateProperties, int taskId
+			string[] runTargets, string[] evaluateItems, string[] evaluateProperties, Dictionary<string,string> globalProperties, int taskId
 		);
 	}
 
@@ -47,5 +48,6 @@ namespace MonoDevelop.Projects.Formats.MSBuild
 		public string ProjectGuid;
 		public string Configuration;
 		public string Platform;
+		public bool Enabled;
 	}
 }

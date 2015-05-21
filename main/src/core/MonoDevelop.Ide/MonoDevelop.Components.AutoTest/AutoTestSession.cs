@@ -33,11 +33,18 @@ using System.Collections.Generic;
 using MonoDevelop.Core.Instrumentation;
 using MonoDevelop.Ide;
 using MonoDevelop.Ide.Tasks;
+using MonoDevelop.Components.Commands;
 
 namespace MonoDevelop.Components.AutoTest
 {
 	public class AutoTestSession: MarshalByRefObject
 	{		
+		[System.Runtime.InteropServices.DllImport ("/System/Library/Frameworks/QuartzCore.framework/QuartzCore")]
+		static extern IntPtr CGDisplayCreateImage (int displayID);
+
+		[System.Runtime.InteropServices.DllImport("/System/Library/Frameworks/ApplicationServices.framework/Versions/Current/ApplicationServices", EntryPoint="CGMainDisplayID")]
+		internal static extern int MainDisplayID();
+
 		readonly ManualResetEvent syncEvent = new ManualResetEvent (false);
 		public readonly AutoTestSessionDebug SessionDebug = new AutoTestSessionDebug ();
 		public IAutoTestSessionDebug<MarshalByRefObject> DebugObject { 
@@ -54,10 +61,10 @@ namespace MonoDevelop.Components.AutoTest
 			return null;
 		}
 
-		public void ExecuteCommand (object cmd, object dataItem = null)
+		public void ExecuteCommand (object cmd, object dataItem = null, CommandSource source = CommandSource.Unknown)
 		{
 			Gtk.Application.Invoke (delegate {
-				AutoTestService.CommandManager.DispatchCommand (cmd, dataItem, null);
+				AutoTestService.CommandManager.DispatchCommand (cmd, dataItem, null, source);
 			});
 		}
 		
@@ -104,11 +111,14 @@ namespace MonoDevelop.Components.AutoTest
 
 		public void ExitApp ()
 		{
-			try {
-				IdeApp.Exit ();
-			} catch (Exception e) {
-				Console.WriteLine (e);
-			}
+			Sync (delegate {
+				try {
+					IdeApp.Exit ();
+				} catch (Exception e) {
+					Console.WriteLine (e);
+				}
+				return true;
+			});
 		}
 
 		public object GlobalInvoke (string name, object[] args)
@@ -132,6 +142,24 @@ namespace MonoDevelop.Components.AutoTest
 			return Sync (delegate {
 				return GetGlobalObject (name);
 			});
+		}
+
+		public void TakeScreenshot (string screenshotPath)
+		{
+			#if MAC
+			DispatchService.GuiDispatch (delegate {
+				try {
+					IntPtr handle = CGDisplayCreateImage (MainDisplayID ());
+					CoreGraphics.CGImage screenshot = ObjCRuntime.Runtime.GetINativeObject <CoreGraphics.CGImage> (handle, true);
+					AppKit.NSBitmapImageRep imgRep =  new AppKit.NSBitmapImageRep (screenshot);
+					var imageData = imgRep.RepresentationUsingTypeProperties (AppKit.NSBitmapImageFileType.Png);
+					imageData.Save (screenshotPath, true);
+				} catch (Exception e) {
+					Console.WriteLine (e);
+					throw;
+				}
+			});
+			#endif
 		}
 		
 		public void SetGlobalValue (string name, object value)
@@ -237,14 +265,42 @@ namespace MonoDevelop.Components.AutoTest
 			return query;
 		}
 
-		public AppResult[] ExecuteQuery (AppQuery query)
+		public void ExecuteOnIdleAndWait (Action idleFunc, int timeout = 20000)
 		{
-			var results = query.Execute ();
+			syncEvent.Reset ();
+			GLib.Idle.Add (() => {
+				idleFunc ();
+				syncEvent.Set ();
+				return false;
+			});
+
+			if (!syncEvent.WaitOne (timeout)) {
+				throw new Exception ("Timeout while executing ExecuteOnIdleAndWait");
+			}
+		}
+
+		// Executes the query outside of a syncEvent wait so it is safe to call from
+		// inside an ExecuteOnIdleAndWait
+		AppResult[] ExecuteQueryNoWait (AppQuery query)
+		{
+			AppResult[] resultSet = query.Execute ();
 			Sync (() => {
 				DispatchService.RunPendingEvents ();
 				return true;
 			});
-			return results;
+
+			return resultSet;
+		}
+
+		public AppResult[] ExecuteQuery (AppQuery query, int timeout = 20000)
+		{
+			AppResult[] resultSet = null;
+
+			ExecuteOnIdleAndWait (() => {
+				resultSet = ExecuteQueryNoWait (query);
+			});
+
+			return resultSet;
 		}
 
 		public AppResult[] WaitForElement (AppQuery query, int timeout)
@@ -254,7 +310,7 @@ namespace MonoDevelop.Components.AutoTest
 			AppResult[] resultSet = null;
 
 			GLib.Timeout.Add ((uint)pollTime, () => {
-				resultSet = ExecuteQuery (query);
+				resultSet = ExecuteQueryNoWait (query);
 
 				if (resultSet.Length > 0) {
 					syncEvent.Set ();
@@ -266,7 +322,7 @@ namespace MonoDevelop.Components.AutoTest
 			});
 
 			if (!syncEvent.WaitOne (timeout)) {
-				throw new Exception ("Timeout while executing synchronized call");
+				throw new Exception (String.Format ("Timeout while executing WaitForElement: {0}", query));
 			}
 
 			return resultSet;
@@ -279,7 +335,7 @@ namespace MonoDevelop.Components.AutoTest
 			AppResult[] resultSet = null;
 
 			GLib.Timeout.Add ((uint)pollTime, () => {
-				resultSet = query.Execute ();
+				resultSet = ExecuteQueryNoWait (query);
 				if (resultSet.Length == 0) {
 					syncEvent.Set ();
 					return false;
@@ -290,7 +346,7 @@ namespace MonoDevelop.Components.AutoTest
 			});
 
 			if (!syncEvent.WaitOne (timeout)) {
-				throw new Exception ("Timeout while executing synchronized call");
+				throw new Exception (String.Format ("Timeout while executing WaitForNoElement: {0}", query));
 			}
 		}
 
@@ -342,25 +398,42 @@ namespace MonoDevelop.Components.AutoTest
 
 		public bool Select (AppResult result)
 		{
-			return result.Select ();
+			bool success = false;
+
+			ExecuteOnIdleAndWait (() => {
+				success = result.Select ();
+			});
+
+			return success;
 		}
 
 		public bool Click (AppResult result)
 		{
-			return result.Click ();
+			bool success = false;
+
+			ExecuteOnIdleAndWait (() => {
+				success = result.Click ();
+			});
+
+			return success;
 		}
 
 		public bool EnterText (AppResult result, string text)
 		{
-			foreach (char c in text) {
-				result.TypeKey (c, "");
-			}
+			ExecuteOnIdleAndWait (() => result.EnterText (text));
+
 			return true;
 		}
 
 		public bool Toggle (AppResult result, bool active)
 		{
-			return result.Toggle (active);
+			bool success = false;
+
+			ExecuteOnIdleAndWait (() => {
+				success = result.Toggle (active);
+			});
+
+			return success;
 		}
 	}
 

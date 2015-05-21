@@ -568,7 +568,7 @@ namespace MonoDevelop.Projects
 					string confName = iconf != null ? iconf.Id : solutionConfiguration.ToString ();
 					monitor.BeginTask (GettextCatalog.GetString ("Building: {0} ({1})", Name, confName), 1);
 
-					using (Counters.BuildProjectTimer.BeginTiming ("Building " + Name, GetProjectEventMetadata ())) {
+					using (Counters.BuildProjectTimer.BeginTiming ("Building " + Name, GetProjectEventMetadata (solutionConfiguration))) {
 						return await InternalBuild (monitor, solutionConfiguration);
 					}
 
@@ -577,7 +577,7 @@ namespace MonoDevelop.Projects
 				}
 			}
 
-			ITimeTracker tt = Counters.BuildProjectAndReferencesTimer.BeginTiming ("Building " + Name, GetProjectEventMetadata ());
+			ITimeTracker tt = Counters.BuildProjectAndReferencesTimer.BeginTiming ("Building " + Name, GetProjectEventMetadata (solutionConfiguration));
 			try {
 				// Get a list of all items that need to be built (including this),
 				// and build them in the correct order
@@ -695,7 +695,7 @@ namespace MonoDevelop.Projects
 
 		async Task<BuildResult> CleanTask (ProgressMonitor monitor, ConfigurationSelector configuration)
 		{
-			ITimeTracker tt = Counters.BuildProjectTimer.BeginTiming ("Cleaning " + Name, GetProjectEventMetadata ());
+			ITimeTracker tt = Counters.BuildProjectTimer.BeginTiming ("Cleaning " + Name, GetProjectEventMetadata (configuration));
 			try {
 				try {
 					SolutionItemConfiguration iconf = GetConfiguration (configuration);
@@ -803,9 +803,16 @@ namespace MonoDevelop.Projects
 			inserted[index] = true;
 		}
 		
-		public IDictionary<string, string> GetProjectEventMetadata ()
+		public IDictionary<string, string> GetProjectEventMetadata (ConfigurationSelector configurationSelector)
 		{
 			var data = new Dictionary<string, string> ();
+			if (configurationSelector != null) {
+				var slnConfig = configurationSelector as SolutionConfigurationSelector;
+				if (slnConfig != null) {
+					data ["Config.Id"] = slnConfig.Id;
+				}
+			}
+
 			OnGetProjectEventMetadata (data);
 			return data;
 		}
@@ -925,6 +932,14 @@ namespace MonoDevelop.Projects
 		protected virtual Task OnPrepareExecution (ProgressMonitor monitor, ExecutionContext context, ConfigurationSelector configuration)
 		{
 			return Task.FromResult (true);
+		}
+
+		protected virtual bool DoGetCanExecute (ExecutionContext context, ConfigurationSelector configuration)
+		{
+			SolutionItemConfiguration conf = GetConfiguration (configuration) as SolutionItemConfiguration;
+			if (conf != null && conf.CustomCommands.HasCommands (CustomCommandType.Execute))
+				return conf.CustomCommands.CanExecute (this, CustomCommandType.Execute, context, configuration);
+			return OnGetCanExecute (context, configuration);
 		}
 
 		/// <summary>
@@ -1081,24 +1096,24 @@ namespace MonoDevelop.Projects
 			}
 		}
 		
-		public SolutionItemConfiguration AddNewConfiguration (string name)
+		public SolutionItemConfiguration AddNewConfiguration (string name, ConfigurationKind kind = ConfigurationKind.Blank)
 		{
-			SolutionItemConfiguration config = CreateConfiguration (name);
+			SolutionItemConfiguration config = CreateConfiguration (name, kind);
 			Configurations.Add (config);
 			return config;
 		}
 		
-		ItemConfiguration IConfigurationTarget.CreateConfiguration (string name)
+		ItemConfiguration IConfigurationTarget.CreateConfiguration (string name, ConfigurationKind kind)
 		{
-			return CreateConfiguration (name);
+			return CreateConfiguration (name, kind);
 		}
 
-		public SolutionItemConfiguration CreateConfiguration (string name)
+		public SolutionItemConfiguration CreateConfiguration (string name, ConfigurationKind kind = ConfigurationKind.Blank)
 		{
-			return ItemExtension.OnCreateConfiguration (name);
+			return ItemExtension.OnCreateConfiguration (name, kind);
 		}
 		
-		protected virtual SolutionItemConfiguration OnCreateConfiguration (string name)
+		protected virtual SolutionItemConfiguration OnCreateConfiguration (string name, ConfigurationKind kind = ConfigurationKind.Blank)
 		{
 			return new SolutionItemConfiguration (name);
 		}
@@ -1327,9 +1342,9 @@ namespace MonoDevelop.Projects
 				return Item.OnGetItemFiles (includeReferencedFiles);
 			}
 
-			internal protected override SolutionItemConfiguration OnCreateConfiguration (string name)
+			internal protected override SolutionItemConfiguration OnCreateConfiguration (string name, ConfigurationKind kind)
 			{
-				return Item.OnCreateConfiguration (name);
+				return Item.OnCreateConfiguration (name, kind);
 			}
 
 			internal protected override DateTime OnGetLastBuildTime (ConfigurationSelector configuration)
@@ -1364,7 +1379,7 @@ namespace MonoDevelop.Projects
 
 			internal protected override bool OnGetCanExecute (ExecutionContext context, ConfigurationSelector configuration)
 			{
-				return Item.OnGetCanExecute (context, configuration);
+				return Item.DoGetCanExecute (context, configuration);
 			}
 
 			internal protected override IEnumerable<ExecutionTarget> OnGetExecutionTargets (ConfigurationSelector configuration)

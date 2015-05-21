@@ -34,6 +34,7 @@ namespace MonoDevelop.Projects
 {
 	public class ProjectItem: IExtendedDataItem
 	{
+		Project project;
 		Hashtable extendedProperties;
 		ProjectItemMetadata metadata;
 		static Dictionary<Type,HashSet<string>> knownMetadataCache = new Dictionary<Type, HashSet<string>> ();
@@ -41,6 +42,16 @@ namespace MonoDevelop.Projects
 		public ProjectItem ()
 		{
 			ItemName = MSBuildProjectService.GetNameForProjectItem (GetType());
+		}
+
+		public Project Project {
+			get {
+				return project;
+			}
+			internal set {
+				project = value;
+				OnProjectSet ();
+			}
 		}
 
 		public IDictionary ExtendedProperties {
@@ -51,11 +62,12 @@ namespace MonoDevelop.Projects
 			}
 		}
 
-		internal IMSBuildItemEvaluated BackingItem { get; set; }
+		internal MSBuildItem BackingItem { get; set; }
+		internal IMSBuildItemEvaluated BackingEvalItem { get; set; }
 
 		internal bool IsFromWildcardItem {
 			get {
-				return BackingItem != null && BackingItem.SourceItem.IsWildcardItem;
+				return BackingEvalItem != null && BackingEvalItem.SourceItem.IsWildcardItem;
 			}
 		}
 
@@ -95,26 +107,27 @@ namespace MonoDevelop.Projects
 					if (!knownProps.Contains (prop.Name)) {
 						if (metadata == null)
 							metadata = new ProjectItemMetadata (project.MSBuildProject);
-						metadata.SetValue (prop.Name, prop.Value);
+						// Get the evaluated value for the original metadata property
+						var p = new ItemMetadataProperty (project.MSBuildProject, prop.Name, buildItem.Metadata.GetValue (prop.Name), prop.UnevaluatedValue);
+						metadata.AddProperty (p);
 					}
 				}
-				if (knownProps.Count > 0) {
-					if (metadata == null)
-						metadata = new ProjectItemMetadata (project.MSBuildProject);
-					metadata.ReadObjectProperties (this, GetType (), true);
-				}
 			}
+			buildItem.Metadata.ReadObjectProperties (this, GetType (), true);
 		}
 
 		internal protected virtual void Write (Project project, MSBuildItem buildItem)
 		{
 			buildItem.Condition = Condition;
+			buildItem.Metadata.WriteObjectProperties (this, GetType(), true);
 
 			if (metadata != null) {
-				metadata.SetProject (project.MSBuildProject);
-				foreach (var prop in metadata.GetProperties ())
-					buildItem.Metadata.SetValue (prop.Name, prop.Value);
-				metadata.WriteObjectProperties (this, GetType(), true);
+				metadata.SetProject (buildItem.Project);
+				foreach (var prop in metadata.GetProperties ()) {
+					// Use the UnevaluatedValue because if the property has changed, UnevaluatedValue will contain
+					// the new value, and if not, it will contain the old unevaluated value
+					buildItem.Metadata.SetValue (prop.Name, prop.UnevaluatedValue);
+				}
 			}
 		}
 
@@ -140,6 +153,13 @@ namespace MonoDevelop.Projects
 					knownMetadataCache [GetType()] = mset = new HashSet<string> (GetKnownMetadataProperties ());
 			}
 			return mset;
+		}
+
+		/// <summary>
+		/// Invoked when the project to which the item belongs changes.
+		/// </summary>
+		protected virtual void OnProjectSet ()
+		{
 		}
 	}
 	

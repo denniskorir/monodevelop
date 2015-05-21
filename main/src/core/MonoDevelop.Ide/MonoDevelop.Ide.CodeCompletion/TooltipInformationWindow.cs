@@ -122,11 +122,11 @@ namespace MonoDevelop.Ide.CodeCompletion
 					headLabel.WidthRequest = -1;
 				}
 				foreach (var cat in o.Categories) {
-					descriptionBox.PackStart (CreateCategory (cat.Item1, cat.Item2), true, true, 4);
+					descriptionBox.PackStart (CreateCategory (GetHeaderMarkup (cat.Item1), cat.Item2, foreColor), true, true, 4);
 				}
 
 				if (!string.IsNullOrEmpty (o.SummaryMarkup)) {
-					descriptionBox.PackStart (CreateCategory (GettextCatalog.GetString ("Summary"), o.SummaryMarkup), true, true, 4);
+					descriptionBox.PackStart (CreateCategory (GetHeaderMarkup (GettextCatalog.GetString ("Summary")), o.SummaryMarkup, foreColor), true, true, 4);
 				}
 				if (!string.IsNullOrEmpty (o.FooterMarkup)) {
 
@@ -150,6 +150,12 @@ namespace MonoDevelop.Ide.CodeCompletion
 				Theme.CurrentPage = current_overload;
 				QueueResize ();
 			}
+		}
+
+		internal static string GetHeaderMarkup (string headerName)
+		{
+			return headerName;
+			// return "<span foreground=\"#a7a79c\" size=\"larger\">" + headerName + "</span>";
 		}
 
 		public void OverloadLeft ()
@@ -192,21 +198,26 @@ namespace MonoDevelop.Ide.CodeCompletion
 			current_overload = 0;
 		}
 
-		VBox CreateCategory (string categoryName, string categoryContentMarkup)
+		internal static VBox CreateCategory (string categoryName, string categoryContentMarkup, Cairo.Color foreColor)
 		{
 			var vbox = new VBox ();
 
-			vbox.Spacing = 2;
+			vbox.Spacing = 8;
 
 			if (categoryName != null) {
 				var catLabel = new FixedWidthWrapLabel ();
-				catLabel.Text = categoryName;
+				catLabel.Markup = categoryName;
 				catLabel.ModifyFg (StateType.Normal, foreColor.ToGdkColor ());
 				catLabel.FontDescription = FontService.GetFontDescription ("Editor");
 				vbox.PackStart (catLabel, false, true, 0);
 			}
 
 			var contentLabel = new FixedWidthWrapLabel ();
+			HBox hbox = new HBox ();
+
+			// hbox.PackStart (new Label(), false, true, 10);
+
+
 			contentLabel.Wrap = Pango.WrapMode.WordChar;
 			contentLabel.BreakOnCamelCasing = false;
 			contentLabel.BreakOnPunctuation = false;
@@ -215,7 +226,8 @@ namespace MonoDevelop.Ide.CodeCompletion
 			contentLabel.ModifyFg (StateType.Normal, foreColor.ToGdkColor ());
 			contentLabel.FontDescription = FontService.GetFontDescription ("Editor");
 
-			vbox.PackStart (contentLabel, true, true, 0);
+			hbox.PackStart (contentLabel, true, true, 0);
+			vbox.PackStart (hbox, true, true, 0);
 
 			return vbox;
 		}

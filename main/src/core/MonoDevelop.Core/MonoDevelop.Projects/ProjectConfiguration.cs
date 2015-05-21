@@ -38,6 +38,10 @@ namespace MonoDevelop.Projects
 {
 	public class ProjectConfiguration : SolutionItemConfiguration
 	{
+		bool debugTypeWasNone;
+		IMSBuildEvaluatedPropertyCollection evaluatedProperties;
+		IPropertySet properties;
+
 		public ProjectConfiguration ()
 		{
 		}
@@ -46,10 +50,10 @@ namespace MonoDevelop.Projects
 		{
 		}
 
-		bool debugTypeWasNone;
-
 		internal protected virtual void Read (IMSBuildEvaluatedPropertyCollection pset, string toolsVersion)
 		{
+			evaluatedProperties = pset;
+
 			intermediateOutputDirectory = pset.GetPathValue ("IntermediateOutputPath");
 			outputDirectory = pset.GetPathValue ("OutputPath", defaultValue:"." + Path.DirectorySeparatorChar);
 			debugMode = pset.GetValue<bool> ("DebugSymbols", false);
@@ -104,7 +108,7 @@ namespace MonoDevelop.Projects
 			pset.SetValue ("RunWithWarnings", runWithWarnings, true);
 
 			if (debugType != "none" || !debugTypeReadAsEmpty)
-				pset.SetValue ("DebugType", debugType);
+				pset.SetValue ("DebugType", debugType, "");
 			
 			if (environmentVariables.Count > 0) {
 				XElement e = new XElement ("EnvironmentVariables");
@@ -119,6 +123,34 @@ namespace MonoDevelop.Projects
 				pset.RemoveProperty ("EnvironmentVariables");
 
 			pset.WriteObjectProperties (this, GetType (), true);
+		}
+
+		/// <summary>
+		/// Properties obtained while evaluating this configuration
+		/// </summary>
+		/// <remarks>This property set contains all properties resulting from evaluating
+		/// the project with the Configuration and Platform properties set for this
+		/// configuration.</remarks>
+		public IReadOnlyPropertySet EvaluatedProperties {
+			get { return evaluatedProperties ?? MSBuildEvaluatedPropertyCollection.Empty; }
+		}
+
+		/// <summary>
+		/// Property set where the properties for this configuration are defined.
+		/// </summary>
+		public IPropertySet Properties {
+			get {
+				if (properties == null) {
+					if (ParentItem == null)
+						properties = MSBuildPropertyGroup.CreateEmpty ();
+					else
+						properties = ParentItem.MSBuildProject.CreatePropertyGroup ();
+				}
+				return properties; 
+			}
+			internal set {
+				properties = value;
+			}
 		}
 
 		FilePath intermediateOutputDirectory = FilePath.Empty;
@@ -147,7 +179,7 @@ namespace MonoDevelop.Projects
 		}
 
 		bool debugMode = false;
-		public bool DebugMode {
+		public bool DebugSymbols {
 			get { return debugMode; }
 			set { debugMode = value; }
 		}

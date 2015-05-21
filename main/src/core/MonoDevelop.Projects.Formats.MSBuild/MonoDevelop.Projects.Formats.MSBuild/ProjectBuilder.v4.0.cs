@@ -57,7 +57,7 @@ namespace MonoDevelop.Projects.Formats.MSBuild
 
 		public MSBuildResult Run (
 			ProjectConfigurationInfo[] configurations, ILogWriter logWriter, MSBuildVerbosity verbosity,
-			string[] runTargets, string[] evaluateItems, string[] evaluateProperties, int taskId)
+			string[] runTargets, string[] evaluateItems, string[] evaluateProperties, Dictionary<string,string> globalProperties, int taskId)
 		{
 			if (runTargets == null || runTargets.Length == 0)
 				throw new ArgumentException ("runTargets is empty");
@@ -80,6 +80,10 @@ namespace MonoDevelop.Projects.Formats.MSBuild
 					//building the project will create items and alter properties, so we use a new instance
 					var pi = project.CreateProjectInstance ();
 
+					if (globalProperties != null)
+						foreach (var p in globalProperties)
+							pi.SetProperty (p.Key, p.Value);
+					
 					pi.Build (runTargets, loggers);
 
 					result = new MSBuildResult (logger.BuildResult.ToArray ());

@@ -402,6 +402,8 @@ namespace MonoDevelop.Ide.TypeSystem
 			foreach (var f in p.Files) {
 				if (token.IsCancellationRequested)
 					yield break;
+				if (f.Subtype == MonoDevelop.Projects.Subtype.Directory)
+					continue;
 				if (TypeSystemParserNode.IsCompileBuildAction (f.BuildAction)) {
 					if (!duplicates.Add (projectData.GetOrCreateDocumentId (f.Name)))
 						continue;
@@ -463,6 +465,8 @@ namespace MonoDevelop.Ide.TypeSystem
 				if (hashSet.Contains (fileName))
 					continue;
 				hashSet.Add (fileName);
+				if (!File.Exists (fileName))
+					continue;
 				yield return MetadataReferenceCache.LoadReference (projectId, fileName);
 				addFacadeAssemblies |= MonoDevelop.Core.Assemblies.SystemAssemblyService.ContainsReferenceToSystemRuntime (fileName);
 			}
@@ -472,8 +476,11 @@ namespace MonoDevelop.Ide.TypeSystem
 				if (netProject != null) {
 					var runtime = netProject.TargetRuntime ?? MonoDevelop.Core.Runtime.SystemAssemblyService.DefaultRuntime;
 					var facades = runtime.FindFacadeAssembliesForPCL (netProject.TargetFramework);
-					foreach (var facade in facades)
+					foreach (var facade in facades) {
+						if (!File.Exists (facade))
+							continue;
 						yield return MetadataReferenceCache.LoadReference (projectId, facade);
+					}
 				}
 			}
 
@@ -485,6 +492,8 @@ namespace MonoDevelop.Ide.TypeSystem
 					continue;
 				if (TypeSystemService.IsOutputTrackedProject (referencedProject)) {
 					var fileName = referencedProject.GetOutputFileName (configurationSelector);
+					if (!File.Exists (fileName))
+						continue;
 					yield return MetadataReferenceCache.LoadReference (projectId, fileName);
 				}
 			}
@@ -691,7 +700,6 @@ namespace MonoDevelop.Ide.TypeSystem
 		{
 			var id = info.Id;
 			var path = DetermineFilePath (info.Id, info.Name, info.FilePath, info.Folders, true);
-
 			MonoDevelop.Projects.Project mdProject = null;
 
 			if (id.ProjectId != null) {
@@ -779,8 +787,9 @@ namespace MonoDevelop.Ide.TypeSystem
 				if (monoProject != null) {
 					var pf = monoProject.GetProjectFile (fileName);
 					if (pf != null) {
-						TypeSystemService.ParseProjection (new ParseOptions { Project = monoProject, FileName = fileName, Content = new StringTextSource (text), BuildAction = pf.BuildAction },
-														   DesktopService.GetMimeTypeForUri (fileName));
+						var mimeType = DesktopService.GetMimeTypeForUri (fileName);
+						if (TypeSystemService.CanParseProjections (monoProject, mimeType, fileName))
+							TypeSystemService.ParseProjection (new ParseOptions { Project = monoProject, FileName = fileName, Content = new StringTextSource(text), BuildAction = pf.BuildAction }, mimeType);
 					}
 				}
 
@@ -822,10 +831,13 @@ namespace MonoDevelop.Ide.TypeSystem
 				return;
 			var project = (MonoDevelop.Projects.Project)sender;
 			foreach (MonoDevelop.Projects.ProjectFileEventInfo fargs in args) {
-				if (!TypeSystemParserNode.IsCompileBuildAction (fargs.ProjectFile.BuildAction))
+				var projectFile = fargs.ProjectFile;
+				if (projectFile.Subtype == MonoDevelop.Projects.Subtype.Directory)
+					continue;
+				if (!TypeSystemParserNode.IsCompileBuildAction (projectFile.BuildAction))
 					continue;
 				var projectId = GetProjectId (project);
-				var newDocument = CreateDocumentInfo (project.Name, GetProjectData (projectId), fargs.ProjectFile);
+				var newDocument = CreateDocumentInfo(project.Name, GetProjectData(projectId), projectFile);
 				OnDocumentAdded (newDocument);
 			}
 		}
@@ -853,7 +865,10 @@ namespace MonoDevelop.Ide.TypeSystem
 				return;
 			var project = (MonoDevelop.Projects.Project)sender;
 			foreach (MonoDevelop.Projects.ProjectFileRenamedEventInfo fargs in args) {
-				if (!TypeSystemParserNode.IsCompileBuildAction (fargs.ProjectFile.BuildAction))
+				var projectFile = fargs.ProjectFile;
+				if (projectFile.Subtype == MonoDevelop.Projects.Subtype.Directory)
+					continue;
+				if (!TypeSystemParserNode.IsCompileBuildAction (projectFile.BuildAction))
 					continue;
 
 				var projectId = GetProjectId (project);
@@ -868,7 +883,7 @@ namespace MonoDevelop.Ide.TypeSystem
 					data.RemoveDocument (fargs.OldName);
 				}
 
-				var newDocument = CreateDocumentInfo (project.Name, GetProjectData (projectId), fargs.ProjectFile);
+				var newDocument = CreateDocumentInfo (project.Name, GetProjectData (projectId), projectFile);
 				OnDocumentAdded (newDocument);
 			}
 		}
@@ -881,7 +896,8 @@ namespace MonoDevelop.Ide.TypeSystem
 				return;
 			var project = (MonoDevelop.Projects.Project)sender;
 			var projectId = GetProjectId (project);
-			OnProjectReloaded (LoadProject (project, default(CancellationToken))); 
+			if (CurrentSolution.ContainsProject (projectId))
+				OnProjectReloaded (LoadProject (project, default(CancellationToken))); 
 		}
 
 		#endregion

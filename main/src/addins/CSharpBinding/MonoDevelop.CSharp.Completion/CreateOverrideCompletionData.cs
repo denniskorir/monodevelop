@@ -34,6 +34,7 @@ using MonoDevelop.Ide.TypeSystem;
 using MonoDevelop.Ide.Editor.Extension;
 using MonoDevelop.CSharp.Refactoring;
 using MonoDevelop.CSharp.Formatting;
+using System;
 
 namespace MonoDevelop.CSharp.Completion
 {
@@ -51,7 +52,11 @@ namespace MonoDevelop.CSharp.Completion
 			get {
 				if (displayText == null) {
 					var model = ext.ParsedDocument.GetAst<SemanticModel> ();
-					displayText = base.Symbol.ToMinimalDisplayString (model, ext.Editor.CaretOffset, Ambience.LabelFormat) + " {...}";
+					try {
+						displayText = base.Symbol.ToMinimalDisplayString (model, declarationBegin, Ambience.LabelFormat) + " {...}";
+					} catch (ArgumentOutOfRangeException) {
+						displayText = base.Symbol.ToMinimalDisplayString (model, 0, Ambience.LabelFormat) + " {...}";
+					}
 					if (!afterKeyword)
 						displayText = "override " + displayText;
 				}
@@ -64,7 +69,7 @@ namespace MonoDevelop.CSharp.Completion
 		{
 			var model = ext.ParsedDocument.GetAst<SemanticModel> ();
 
-			var result = base.Symbol.ToMinimalDisplayString (model, ext.Editor.CaretOffset, Ambience.LabelFormat) + " {...}";
+			var result = base.Symbol.ToMinimalDisplayString (model, declarationBegin, Ambience.LabelFormat) + " {...}";
 			var idx = result.IndexOf (Symbol.Name);
 			if (idx >= 0) {
 				result = 
@@ -79,7 +84,7 @@ namespace MonoDevelop.CSharp.Completion
 			return ApplyDiplayFlagsFormatting (result);
 		}
 
-		public CreateOverrideCompletionData (ICSharpCode.NRefactory6.CSharp.Completion.ICompletionKeyHandler keyHandler, CSharpCompletionTextEditorExtension ext, int declarationBegin, ITypeSymbol currentType, Microsoft.CodeAnalysis.ISymbol member, bool afterKeyword) : base (keyHandler, ext, member, member.ToDisplayString ())
+		public CreateOverrideCompletionData (ICSharpCode.NRefactory6.CSharp.Completion.ICompletionKeyHandler keyHandler, RoslynCodeCompletionFactory factory, int declarationBegin, ITypeSymbol currentType, Microsoft.CodeAnalysis.ISymbol member, bool afterKeyword) : base (keyHandler, factory, member, member.ToDisplayString ())
 		{
 			this.afterKeyword = afterKeyword;
 			this.currentType = currentType;
@@ -103,7 +108,7 @@ namespace MonoDevelop.CSharp.Completion
 //			if (ext.Project != null)
 //				generator.PolicyParent = ext.Project.Policies;
 			
-			var result = CSharpCodeGenerator.CreateOverridenMemberImplementation (ext.DocumentContext, ext.Editor, currentType, currentType.Locations.First (), Symbol, isExplicit);
+			var result = CSharpCodeGenerator.CreateOverridenMemberImplementation (ext.DocumentContext, ext.Editor, currentType, currentType.Locations.First (), Symbol, isExplicit, factory.SemanticModel);
 			string sb = result.Code.TrimStart ();
 			int trimStart = result.Code.Length - sb.Length;
 			sb = sb.TrimEnd ();

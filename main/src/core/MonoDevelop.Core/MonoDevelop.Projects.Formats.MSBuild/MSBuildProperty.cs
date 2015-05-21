@@ -34,13 +34,14 @@ using System.Globalization;
 
 namespace MonoDevelop.Projects.Formats.MSBuild
 {
-	
 	public class MSBuildProperty: MSBuildPropertyCore, IMetadataProperty, IMSBuildPropertyEvaluated
 	{
 		bool preserverCase;
+		MSBuildValueType valueType = MSBuildValueType.Default;
 
 		internal MSBuildProperty (MSBuildProject project, XmlElement elem): base (project, elem)
 		{
+			NotifyChanges = true;
 		}
 
 		internal override string GetName ()
@@ -53,12 +54,19 @@ namespace MonoDevelop.Projects.Formats.MSBuild
 			set;
 		}
 
+		public bool MergeToMainGroup { get; set; }
+
 		internal bool Overwritten { get; set; }
 
 		internal MSBuildPropertyGroup Owner { get; set; }
 
-		public bool MergeToMainGroup { get; set; }
 		internal bool HasDefaultValue { get; set; }
+
+		internal bool NotifyChanges { get; set; }
+
+		internal MSBuildValueType ValueType {
+			get { return valueType; }
+		}
 
 		internal MergedProperty CreateMergedProperty ()
 		{
@@ -69,6 +77,7 @@ namespace MonoDevelop.Projects.Formats.MSBuild
 		{
 			MergeToMainGroup = mergeToMainGroup;
 			this.preserverCase = preserveCase;
+			valueType = preserveCase ? MSBuildValueType.Default : MSBuildValueType.DefaultPreserveCase;
 
 			if (value == null)
 				value = String.Empty;
@@ -81,17 +90,28 @@ namespace MonoDevelop.Projects.Formats.MSBuild
 				}
 			}
 			SetPropertyValue (value);
+			if (Project != null && NotifyChanges)
+				Project.NotifyChanged ();
 		}
 
 		public void SetValue (FilePath value, bool relativeToProject = true, FilePath relativeToPath = default(FilePath), bool mergeToMainGroup = false)
 		{
 			MergeToMainGroup = mergeToMainGroup;
 			this.preserverCase = false;
+			valueType = MSBuildValueType.Path;
 
 			string baseDir = null;
 			if (relativeToPath != null) {
 				baseDir = relativeToPath;
 			} else if (relativeToProject) {
+				if (Project == null) {
+					// The project has not been set, so we can't calculate the relative path.
+					// Store the full path for now, and set the property type to UnresolvedPath.
+					// When the property gets a value, the relative path will be calculated
+					valueType = MSBuildValueType.UnresolvedPath;
+					SetPropertyValue (value.ToString ());
+					return;
+				}
 				baseDir = Project.BaseDirectory;
 			}
 
@@ -100,6 +120,16 @@ namespace MonoDevelop.Projects.Formats.MSBuild
 				return;
 
 			SetPropertyValue (MSBuildProjectService.ToMSBuildPath (baseDir, value, false));
+			if (Project != null && NotifyChanges)
+				Project.NotifyChanged ();
+		}
+
+		internal void ResolvePath ()
+		{
+			if (valueType == MSBuildValueType.UnresolvedPath) {
+				var val = Value;
+				SetPropertyValue (MSBuildProjectService.ToMSBuildPath (Project.BaseDirectory, val, false));
+			}
 		}
 
 		public void SetValue (object value, bool mergeToMainGroup = false)
@@ -109,6 +139,7 @@ namespace MonoDevelop.Projects.Formats.MSBuild
 					SetValue ((bool)value ? "True" : "False", preserveCase: true, mergeToMainGroup: mergeToMainGroup);
 				else
 					SetValue ((bool)value ? "true" : "false", preserveCase: true, mergeToMainGroup: mergeToMainGroup);
+				valueType = MSBuildValueType.Boolean;
 			}
 			else
 				SetValue (Convert.ToString (value, CultureInfo.InvariantCulture), false, mergeToMainGroup);
@@ -119,6 +150,9 @@ namespace MonoDevelop.Projects.Formats.MSBuild
 			if (Element.IsEmpty && string.IsNullOrEmpty (value))
 				return;
 
+			if (value == null)
+				value = string.Empty;
+
 			// This code is from Microsoft.Build.Internal.Utilities
 
 			if (value.IndexOf('<') != -1) {
@@ -126,7 +160,8 @@ namespace MonoDevelop.Projects.Formats.MSBuild
 				try {
 					// Attempt to store it verbatim as XML.
 					Element.InnerXml = value;
-					XmlUtil.FormatElement (Project.TextFormat, Element);
+					if (Project != null)
+						XmlUtil.FormatElement (Project.TextFormat, Element);
 					return;
 				}
 				catch (XmlException) {
@@ -138,6 +173,8 @@ namespace MonoDevelop.Projects.Formats.MSBuild
 			// The value does not contain valid XML markup.  Store it as text, so it gets 
 			// escaped properly.
 			Element.InnerText = value;
+			if (Project != null && NotifyChanges)
+				Project.NotifyChanged ();
 		}
 
 		internal override string GetPropertyValue ()
@@ -252,11 +289,21 @@ namespace MonoDevelop.Projects.Formats.MSBuild
 	class ItemMetadataProperty: MSBuildProperty
 	{
 		string value;
+		string unevaluatedValue;
 		string name;
 
-		public ItemMetadataProperty (string name): base (null, null)
+		public ItemMetadataProperty (MSBuildProject project, string name): base (project, null)
 		{
+			NotifyChanges = false;
 			this.name = name;
+		}
+
+		public ItemMetadataProperty (MSBuildProject project, string name, string value, string unevaluatedValue): base (project, null)
+		{
+			NotifyChanges = false;
+			this.name = name;
+			this.value = value;
+			this.unevaluatedValue = unevaluatedValue;
 		}
 
 		internal override string GetName ()
@@ -266,7 +313,8 @@ namespace MonoDevelop.Projects.Formats.MSBuild
 
 		internal override void SetPropertyValue (string value)
 		{
-			this.value = value;
+			if (value != this.value)
+				this.value = unevaluatedValue = value;
 		}
 
 		internal override string GetPropertyValue ()
@@ -276,173 +324,9 @@ namespace MonoDevelop.Projects.Formats.MSBuild
 
 		public override string UnevaluatedValue {
 			get {
-				return value;
+				return unevaluatedValue;
 			}
 		}
-	}
-
-	class MSBuildPropertyEvaluated: MSBuildPropertyCore, IMSBuildPropertyEvaluated
-	{
-		string value;
-		string evaluatedValue;
-		string name;
-
-		internal MSBuildPropertyEvaluated (MSBuildProject project, string name, string value, string evaluatedValue): base (project, null)
-		{
-			this.evaluatedValue = evaluatedValue;
-			this.value = value;
-			this.name = name;
-		}
-
-		internal override string GetName ()
-		{
-			return name;
-		}
-
-		public bool IsImported { get; set; }
-
-		public override string UnevaluatedValue {
-			get { return value; }
-		}
-
-		internal override string GetPropertyValue ()
-		{
-			return evaluatedValue;
-		}
-	}
-
-	public abstract class MSBuildPropertyCore: MSBuildObject
-	{
-		MSBuildProject project;
-
-		internal MSBuildPropertyCore (MSBuildProject project, XmlElement elem): base (elem)
-		{
-			this.project = project;
-		}
-
-		public MSBuildProject Project {
-			get { return project; }
-			internal set { project = value; }
-		}
-
-		public string Name {
-			get { return GetName (); }
-		}
-
-		public string Value {
-			get { return GetPropertyValue (); }
-		}
-
-		public T GetValue<T> ()
-		{
-			return (T)GetValue (typeof(T));
-		}
-
-		public object GetValue (Type t)
-		{
-			var val = GetPropertyValue ();
-			if (t == typeof(bool))
-				return (object) val.Equals ("true", StringComparison.InvariantCultureIgnoreCase);
-			if (t.IsEnum)
-				return Enum.Parse (t, val, true);
-			if (t.IsGenericType && t.GetGenericTypeDefinition () == typeof(Nullable<>)) {
-				var at = t.GetGenericArguments () [0];
-				if (string.IsNullOrEmpty (Value))
-					return null;
-				return Convert.ChangeType (Value, at, CultureInfo.InvariantCulture);
-			}
-			return Convert.ChangeType (Value, t, CultureInfo.InvariantCulture);
-		}
-
-		public FilePath GetPathValue (bool relativeToProject = true, FilePath relativeToPath = default(FilePath))
-		{
-			var val = GetPropertyValue ();
-			string baseDir = null;
-
-			if (relativeToPath != null) {
-				baseDir = relativeToPath;
-			} else if (relativeToProject) {
-				baseDir = project.BaseDirectory;
-			}
-			var p = MSBuildProjectService.FromMSBuildPath (baseDir, val);
-
-			// Remove the trailing slash
-			if (p.Length > 0 && p[p.Length - 1] == System.IO.Path.DirectorySeparatorChar && p != "." + System.IO.Path.DirectorySeparatorChar)
-				return p.TrimEnd (System.IO.Path.DirectorySeparatorChar);
-			
-			return p;
-		}
-
-		public bool TryGetPathValue (out FilePath value, bool relativeToProject = true, FilePath relativeToPath = default(FilePath))
-		{
-			var val = GetPropertyValue ();
-			string baseDir = null;
-
-			if (relativeToPath != null) {
-				baseDir = relativeToPath;
-			} else if (relativeToProject) {
-				baseDir = project.BaseDirectory;
-			}
-			string path;
-			var res = MSBuildProjectService.FromMSBuildPath (baseDir, val, out path);
-			value = path;
-			return res;
-		}
-
-		public abstract string UnevaluatedValue { get; }
-
-		internal abstract string GetPropertyValue ();
-
-		internal abstract string GetName ();
-
-		public override string ToString ()
-		{
-			return "[" + Name + " = " + Value + "]";
-		}
-	}
-
-	public interface IMSBuildPropertyEvaluated
-	{
-		bool IsImported { get; }
-
-		string Name { get; }
-
-		MSBuildProject Project { get; }
-
-		string Value { get; }
-
-		string UnevaluatedValue { get; }
-
-		T GetValue<T> ();
-
-		object GetValue (Type t);
-
-		FilePath GetPathValue (bool relativeToProject = true, FilePath relativeToPath = default(FilePath));
-
-		bool TryGetPathValue (out FilePath value, bool relativeToProject = true, FilePath relativeToPath = default(FilePath));
-	}
-
-	public interface IMetadataProperty
-	{
-		string Name { get; }
-
-		string Value { get; }
-
-		string UnevaluatedValue { get; }
-
-		T GetValue<T> ();
-
-		object GetValue (Type t);
-
-		FilePath GetPathValue (bool relativeToProject = true, FilePath relativeToPath = default(FilePath));
-
-		bool TryGetPathValue (out FilePath value, bool relativeToProject = true, FilePath relativeToPath = default(FilePath));
-
-		void SetValue (string value, bool preserveCase = false, bool mergeToMainGroup = false);
-
-		void SetValue (FilePath value, bool relativeToProject = true, FilePath relativeToPath = default(FilePath), bool mergeToMainGroup = false);
-
-		void SetValue (object value, bool mergeToMainGroup = false);
 	}
 
 	class MergedProperty

@@ -122,14 +122,14 @@ namespace MonoDevelop.Ide.Templates
 
 			string[] flavors;
 
-			if (!Services.ProjectService.CanCreateProject (projectType, projectCreateInformation, projectOptions) && projectType != lang && !string.IsNullOrEmpty (lang)) {
+			if (!Services.ProjectService.CanCreateSolutionItem (projectType, projectCreateInformation, projectOptions) && projectType != lang && !string.IsNullOrEmpty (lang)) {
 				// Maybe the type of the template is just a flavor id. In that case try using the language as project type.
 				projectType = lang;
 				flavors = splitType ?? new string[0];
 			} else
 				flavors = projectTypes.Skip (1).ToArray ();
 
-			if (!Services.ProjectService.CanCreateProject (projectType, projectCreateInformation, projectOptions)) {
+			if (!Services.ProjectService.CanCreateSolutionItem (projectType, projectCreateInformation, projectOptions)) {
 				LoggingService.LogError ("Could not create project of type '" + string.Join (",", projectTypes) + "'. Project skipped");
 				return null;
 			}
@@ -163,12 +163,13 @@ namespace MonoDevelop.Ide.Templates
 				foreach (var desc in references) {
 					if (!projectCreateInformation.ShouldCreate (desc.CreateCondition))
 						continue;
-					if (desc.ProjectReference.ReferenceType == ReferenceType.Project) {
-						string referencedProjectName = ReplaceParameters (desc.ProjectReference.Reference, substitution, projectCreateInformation);
-						var parsedReference = ProjectReference.RenameReference (desc.ProjectReference, referencedProjectName);
+					var pr = desc.Create ();
+					if (pr.ReferenceType == ReferenceType.Project) {
+						string referencedProjectName = ReplaceParameters (pr.Reference, substitution, projectCreateInformation);
+						var parsedReference = ProjectReference.RenameReference (pr, referencedProjectName);
 						dnp.References.Add (parsedReference);
 					} else
-						dnp.References.Add (desc.ProjectReference);
+						dnp.References.Add (pr);
 				}
 			}
 
@@ -292,26 +293,42 @@ namespace MonoDevelop.Ide.Templates
 
 		class ProjectReferenceDescription
 		{
+			XmlElement elem;
+
 			public ProjectReferenceDescription (XmlElement elem)
 			{
+				this.elem = elem;
 				CreateCondition = elem.GetAttribute ("if");
-				var refType = elem.GetAttribute ("type");
-				ProjectReference = new ProjectReference ((ReferenceType)Enum.Parse (typeof(ReferenceType), refType), elem.GetAttribute ("refto"));
-				string specificVersion = elem.GetAttribute ("SpecificVersion");
-				if (!string.IsNullOrEmpty (specificVersion))
-					ProjectReference.SpecificVersion = bool.Parse (specificVersion);
-				string localCopy = elem.GetAttribute ("LocalCopy");
-				if (!string.IsNullOrEmpty (localCopy) && ProjectReference.CanSetLocalCopy)
-					ProjectReference.LocalCopy = bool.Parse (localCopy);
-				string referenceOutputAssembly = elem.GetAttribute ("ReferenceOutputAssembly");
-				if (!string.IsNullOrEmpty (referenceOutputAssembly))
-					ProjectReference.ReferenceOutputAssembly = bool.Parse (referenceOutputAssembly);
-				string hintPath = elem.GetAttribute ("HintPath");
-				if (!string.IsNullOrEmpty (hintPath))
-					ProjectReference.ExtendedProperties ["_OriginalMSBuildReferenceHintPath"] = hintPath;
 			}
 
-			public ProjectReference ProjectReference { get; private set; }
+			public ProjectReference Create ()
+			{
+				var refType = elem.GetAttribute ("type");
+				var projectReference = ProjectReference.CreateCustomReference ((ReferenceType)Enum.Parse (typeof(ReferenceType), refType), elem.GetAttribute ("refto"));
+				var hintPath = GetMSBuildReferenceHintPath ();
+				if (hintPath != null)
+					projectReference.Metadata.SetValue ("HintPath", hintPath);
+				
+				string specificVersion = elem.GetAttribute ("SpecificVersion");
+				if (!string.IsNullOrEmpty (specificVersion))
+					projectReference.SpecificVersion = bool.Parse (specificVersion);
+				string localCopy = elem.GetAttribute ("LocalCopy");
+				if (!string.IsNullOrEmpty (localCopy) && projectReference.CanSetLocalCopy)
+					projectReference.LocalCopy = bool.Parse (localCopy);
+				string referenceOutputAssembly = elem.GetAttribute ("ReferenceOutputAssembly");
+				if (!string.IsNullOrEmpty (referenceOutputAssembly))
+					projectReference.ReferenceOutputAssembly = bool.Parse (referenceOutputAssembly);
+				return projectReference;
+			}
+
+			string GetMSBuildReferenceHintPath ()
+			{
+				string hintPath = elem.GetAttribute ("HintPath");
+				if (!string.IsNullOrEmpty (hintPath))
+					return hintPath;
+				return null;
+			}
+
 			public string CreateCondition { get; private set; }
 		}
 	}

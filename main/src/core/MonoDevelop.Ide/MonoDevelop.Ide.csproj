@@ -1955,6 +1955,12 @@
     <EmbeddedResource Include="icons\done-48%402x.png">
       <LogicalName>done-48@2x.png</LogicalName>
     </EmbeddedResource>
+    <EmbeddedResource Include="icons\project-nunit-overlay-32.png">
+      <LogicalName>project-nunit-overlay-32.png</LogicalName>
+    </EmbeddedResource>
+    <EmbeddedResource Include="icons\project-nunit-overlay-32%402x.png">
+      <LogicalName>project-nunit-overlay-32@2x.png</LogicalName>
+    </EmbeddedResource>
   </ItemGroup>
   <ItemGroup Condition=" '$(Configuration)' != 'DebugMac' AND '$(Configuration)' != 'ReleaseMac' ">
     <EmbeddedResource Include="icons\status-building-1-14.png">
@@ -2670,9 +2676,7 @@
     <Compile Include="MonoDevelop.Ide.ExternalTools\ExternalToolPanel.cs" />
     <Compile Include="gtk-gui\MonoDevelop.Ide.ExternalTools.ExternalToolPanelWidget.cs" />
     <Compile Include="MonoDevelop.Ide.Gui\MonoDevelopStatusBar.cs" />
-    <Compile Include="MonoDevelop.Ide.Gui\DocumentSwitcher.cs">
-      <DependentUpon>GuiSyncContext.cs</DependentUpon>
-    </Compile>
+    <Compile Include="MonoDevelop.Ide.Gui\DocumentSwitcher.cs" />
     <Compile Include="MonoDevelop.Ide.Gui.OptionPanels\IDEStyleOptionsPanel.cs" />
     <Compile Include="gtk-gui\MonoDevelop.Ide.Gui.OptionPanels.IDEStyleOptionsPanelWidget.cs" />
     <Compile Include="MonoDevelop.Ide.Gui.Content\IZoomable.cs" />
@@ -2774,9 +2778,7 @@
     <Compile Include="MonoDevelop.Ide.Extensions\IOpenFileDialogHandler.cs" />
     <Compile Include="MonoDevelop.Ide.Extensions\IAddFileDialogHandler.cs" />
     <Compile Include="MonoDevelop.Ide.Extensions\TextEditorExtensionNode.cs" />
-    <Compile Include="MonoDevelop.Ide.Gui\DockItemToolbarLoader.cs">
-      <DependentUpon>DisplayBindingService.cs</DependentUpon>
-    </Compile>
+    <Compile Include="MonoDevelop.Ide.Gui\DockItemToolbarLoader.cs" />
     <Compile Include="MonoDevelop.Ide.Gui.Components\LogView.cs" />
     <Compile Include="MonoDevelop.Ide.Gui\WorkbenchContext.cs" />
     <Compile Include="MonoDevelop.Ide.Extensions\LayoutExtensionNode.cs" />
@@ -3482,7 +3484,9 @@
     <Compile Include="MonoDevelop.Ide.Editor.Extension\AbstractBraceMatcher.cs" />
     <Compile Include="MonoDevelop.Ide.Editor.Extension\BraceMatcherTextEditorExtension.cs" />
     <Compile Include="MonoDevelop.Ide.Editor.Extension\BraceMatchingResult.cs" />
+    <Compile Include="MonoDevelop.Components.AutoTest.Operations\ChildrenOperation.cs" />
     <Compile Include="MonoDevelop.Ide.Projects.OptionPanels\CodeAnalysisPanel.cs" />
+    <Compile Include="MonoDevelop.Components.AutoTest.Results\NSObjectResult.cs" />
   </ItemGroup>
   <ItemGroup>
     <None Include="Makefile.am" />
