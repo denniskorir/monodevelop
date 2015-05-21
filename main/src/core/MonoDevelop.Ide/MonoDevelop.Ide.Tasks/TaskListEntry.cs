@@ -53,6 +53,9 @@ namespace MonoDevelop.Ide.Tasks
 		
 		[ItemProperty (DefaultValue = "")]
 		string code = string.Empty;
+
+		[ItemProperty (DefaultValue = "")]
+		string helpKeyword = string.Empty;
 		
 		[ItemProperty (DefaultValue = TaskPriority.Normal)]
 		TaskPriority priority = TaskPriority.Normal;
@@ -130,6 +133,7 @@ namespace MonoDevelop.Ide.Tasks
 			priority = TaskPriority.Normal;
 			code = error.ErrorNumber;
 			category = error.Subcategory;
+			helpKeyword = error.HelpKeyword;
 		}
 		
 		public int Column {
@@ -159,6 +163,12 @@ namespace MonoDevelop.Ide.Tasks
 		public string Code {
 			get {
 				return code;
+			}
+		}
+
+		public string HelpKeyword {
+			get {
+				return helpKeyword;
 			}
 		}
 		

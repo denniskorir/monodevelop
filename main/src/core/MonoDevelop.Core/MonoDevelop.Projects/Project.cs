@@ -769,11 +769,12 @@ namespace MonoDevelop.Projects
 						file = Path.Combine (Path.GetDirectoryName (err.ProjectFile), err.File);
 
 					br.Append (new BuildError (file, err.LineNumber, err.ColumnNumber, err.Code, err.Message) {
-								Subcategory = err.Subcategory,
-								EndLine = err.EndLineNumber,
-								EndColumn = err.EndColumnNumber,
-								IsWarning = err.IsWarning
-								});
+						Subcategory = err.Subcategory,
+						EndLine = err.EndLineNumber,
+						EndColumn = err.EndColumnNumber,
+						IsWarning = err.IsWarning,
+						HelpKeyword = err.HelpKeyword
+					});
 				}
 				return br;
 			}

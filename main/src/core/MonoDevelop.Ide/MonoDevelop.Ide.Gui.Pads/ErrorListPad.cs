@@ -450,6 +450,8 @@ namespace MonoDevelop.Ide.Gui.Pads
 						columnDescription.Active ||
 						columnFile.Active ||
 						columnPath.Active);
+				string dummyString;
+				help.Sensitive &= GetSelectedErrorReference (out dummyString);
 			};
 			
 			return menu;
@@ -511,7 +513,7 @@ namespace MonoDevelop.Ide.Gui.Pads
 		{
 			string reference = null;
 			if (GetSelectedErrorReference (out reference)) {
-				IdeApp.HelpOperations.ShowHelp ("error:" + reference);
+				Process.Start ("http://google.com/search?q=" + System.Web.HttpUtility.UrlEncode (reference));
 				return;
 			}
 		}
@@ -519,6 +521,10 @@ namespace MonoDevelop.Ide.Gui.Pads
 		bool GetSelectedErrorReference (out string reference)
 		{
 			TaskListEntry task = SelectedTask;
+			if (task != null && !String.IsNullOrEmpty (task.HelpKeyword)) {
+				reference = task.HelpKeyword;
+				return true;
+			}
 			if (task != null && !String.IsNullOrEmpty (task.Code)) {
 				reference = task.Code;
 				return true;
