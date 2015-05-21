@@ -58,7 +58,7 @@ namespace MonoDevelop.Ide.Gui.Pads
 		ScrolledWindow sw;
 		PadTreeView view;
 		LogView outputView;
-		ListStore store;
+		TreeStore store;
 		TreeModelFilter filter;
 		TreeModelSort sort;
 		ToggleButton errorBtn, warnBtn, msgBtn, logBtn;
@@ -78,6 +78,7 @@ namespace MonoDevelop.Ide.Gui.Pads
 		Xwt.Drawing.Image iconWarning;
 		Xwt.Drawing.Image iconError;
 		Xwt.Drawing.Image iconInfo;
+		Xwt.Drawing.Image iconEmpty;
 
 		public readonly ConfigurationProperty<bool> ShowErrors = ConfigurationProperty.Create ("SharpDevelop.TaskList.ShowErrors", true);
 		public readonly ConfigurationProperty<bool> ShowWarnings = ConfigurationProperty.Create ("SharpDevelop.TaskList.ShowWarnings", true);
@@ -90,6 +91,7 @@ namespace MonoDevelop.Ide.Gui.Pads
 			internal const int Type = 0;
 			internal const int Read = 1;
 			internal const int Task = 2;
+			internal const int Description = 3;
 		}
 		
 		static class VisibleColumns
@@ -184,9 +186,10 @@ namespace MonoDevelop.Ide.Gui.Pads
 		{
 			control = new HPaned ();
 
-			store = new Gtk.ListStore (typeof (Xwt.Drawing.Image), // image - type
-			                           typeof (bool),       // read?
-			                           typeof (TaskListEntry));       // read? -- use Pango weight
+			store = new Gtk.TreeStore (typeof (Xwt.Drawing.Image), // image - type
+									   typeof (bool),       // read?
+									   typeof (TaskListEntry),       // read? -- use Pango weight
+									   typeof (string));
 
 			TreeModelFilterVisibleFunc filterFunct = new TreeModelFilterVisibleFunc (FilterTasks);
 			filter = new TreeModelFilter (store, null);
@@ -198,6 +201,7 @@ namespace MonoDevelop.Ide.Gui.Pads
 			sort.SetSortFunc (VisibleColumns.File, FileIterSort);
 			
 			view = new PadTreeView (sort);
+			view.ShowExpanders = true;
 			view.RulesHint = true;
 			view.DoPopupMenu = (evnt) => IdeApp.CommandService.ShowContextMenu (view, evnt, CreateMenu ());
 			AddColumns ();
@@ -222,6 +226,7 @@ namespace MonoDevelop.Ide.Gui.Pads
 			iconWarning = ImageService.GetIcon (Ide.Gui.Stock.Warning, Gtk.IconSize.Menu);
 			iconError = ImageService.GetIcon (Ide.Gui.Stock.Error, Gtk.IconSize.Menu);
 			iconInfo = ImageService.GetIcon (Ide.Gui.Stock.Information, Gtk.IconSize.Menu);
+			iconEmpty = ImageService.GetIcon (Ide.Gui.Stock.Empty, Gtk.IconSize.Menu);
 			
 			control.Add1 (sw);
 			
@@ -564,10 +569,22 @@ namespace MonoDevelop.Ide.Gui.Pads
 			
 			col = view.AppendColumn (GettextCatalog.GetString ("Line"), view.TextRenderer);
 			col.SetCellDataFunc (view.TextRenderer, new Gtk.TreeCellDataFunc (LineDataFunc));
-			
-			col = view.AppendColumn (GettextCatalog.GetString ("Description"), view.TextRenderer);
-			col.SetCellDataFunc (view.TextRenderer, new Gtk.TreeCellDataFunc (DescriptionDataFunc));
-			col.Resizable = true;
+
+			var descriptionCellRenderer = new CellRendererText ();
+			view.RegisterRenderForFontChanges (descriptionCellRenderer);
+			var descriptionCol = view.AppendColumn (GettextCatalog.GetString ("Description"), descriptionCellRenderer);
+			descriptionCol.SetCellDataFunc (descriptionCellRenderer, new Gtk.TreeCellDataFunc (DescriptionDataFunc));
+			descriptionCol.Resizable = true;
+			descriptionCellRenderer.WrapMode = Pango.WrapMode.Word;
+			descriptionCol.AddNotification("width", delegate
+			{
+				descriptionCellRenderer.WrapWidth = descriptionCol.Width;
+				store.Foreach((model, path, iter) =>
+				{
+					model.EmitRowChanged(path, iter);
+					return false;
+				});
+			});
 			
 			col = view.AppendColumn (GettextCatalog.GetString ("File"), view.TextRenderer);
 			col.SetCellDataFunc (view.TextRenderer, new Gtk.TreeCellDataFunc (FileDataFunc));
@@ -585,40 +602,57 @@ namespace MonoDevelop.Ide.Gui.Pads
 			col.SetCellDataFunc (view.TextRenderer, new Gtk.TreeCellDataFunc (CategoryDataFunc));
 			col.Resizable = true;
 		}
-		
+
 		static void ToggleDataFunc (Gtk.TreeViewColumn column, Gtk.CellRenderer cell, Gtk.TreeModel model, Gtk.TreeIter iter)
 		{
 			Gtk.CellRendererToggle toggleRenderer = (Gtk.CellRendererToggle)cell;
-			TaskListEntry task = model.GetValue (iter, DataColumns.Task) as TaskListEntry; 
-			if (task == null)
+			TaskListEntry task = model.GetValue (iter, DataColumns.Task) as TaskListEntry;
+			if (task == null) {
+				toggleRenderer.Visible = false;
 				return;
+			}
 			toggleRenderer.Active = task.Completed;
 		}
 		
 		static void LineDataFunc (Gtk.TreeViewColumn column, Gtk.CellRenderer cell, Gtk.TreeModel model, Gtk.TreeIter iter)
 		{
 			Gtk.CellRendererText textRenderer = (Gtk.CellRendererText)cell;
-			TaskListEntry task = model.GetValue (iter, DataColumns.Task) as TaskListEntry; 
-			if (task == null)
+			TaskListEntry task = model.GetValue (iter, DataColumns.Task) as TaskListEntry;
+			if (task == null) {
+				textRenderer.Text = "";
 				return;
+			}
 			SetText (textRenderer, model, iter, task, task.Line != 0 ? task.Line.ToString () : "");
 		}
-		
+
 		static void DescriptionDataFunc (Gtk.TreeViewColumn column, Gtk.CellRenderer cell, Gtk.TreeModel model, Gtk.TreeIter iter)
 		{
-			Gtk.CellRendererText textRenderer = (Gtk.CellRendererText)cell;
-			TaskListEntry task = model.GetValue (iter, DataColumns.Task) as TaskListEntry; 
-			if (task == null)
-				return;
-			SetText (textRenderer, model, iter, task, task.Description);
+			var textRenderer = (CellRendererText)cell;
+			var task = model.GetValue (iter, DataColumns.Task) as TaskListEntry;
+			var text = model.GetValue (iter, DataColumns.Description) as string;
+			if (task == null) {
+				if (model.IterParent (out iter, iter)) {
+					task = model.GetValue (iter, DataColumns.Task) as TaskListEntry;
+					if (task == null) {
+						textRenderer.Text = "";
+						return;
+					}
+				} else {
+					textRenderer.Text = "";
+					return;
+				}
+			}
+			SetText (textRenderer, model, iter, task, text);
 		}
-		
+
 		static void FileDataFunc (Gtk.TreeViewColumn column, Gtk.CellRenderer cell, Gtk.TreeModel model, Gtk.TreeIter iter)
 		{
 			Gtk.CellRendererText textRenderer = (Gtk.CellRendererText)cell;
-			TaskListEntry task = model.GetValue (iter, DataColumns.Task) as TaskListEntry; 
-			if (task == null)
+			TaskListEntry task = model.GetValue (iter, DataColumns.Task) as TaskListEntry;
+			if (task == null) {
+				textRenderer.Text = "";
 				return;
+			}
 			
 			string tmpPath = "";
 			string fileName = "";
@@ -643,9 +677,11 @@ namespace MonoDevelop.Ide.Gui.Pads
 		static void ProjectDataFunc (Gtk.TreeViewColumn column, Gtk.CellRenderer cell, Gtk.TreeModel model, Gtk.TreeIter iter)
 		{
 			Gtk.CellRendererText textRenderer = (Gtk.CellRendererText)cell;
-			TaskListEntry task = model.GetValue (iter, DataColumns.Task) as TaskListEntry; 
-			if (task == null)
+			TaskListEntry task = model.GetValue (iter, DataColumns.Task) as TaskListEntry;
+			if (task == null) {
+				textRenderer.Text = "";
 				return;
+			}
 			SetText (textRenderer, model, iter, task, GetProject(task));
 		}
 		
@@ -657,18 +693,22 @@ namespace MonoDevelop.Ide.Gui.Pads
 		static void PathDataFunc (Gtk.TreeViewColumn column, Gtk.CellRenderer cell, Gtk.TreeModel model, Gtk.TreeIter iter)
 		{
 			Gtk.CellRendererText textRenderer = (Gtk.CellRendererText)cell;
-			TaskListEntry task = model.GetValue (iter, DataColumns.Task) as TaskListEntry; 
-			if (task == null)
+			TaskListEntry task = model.GetValue (iter, DataColumns.Task) as TaskListEntry;
+			if (task == null) {
+				textRenderer.Text = "";
 				return;
+			}
 			SetText (textRenderer, model, iter, task, GetPath (task));
 		}
 
 		static void CategoryDataFunc (Gtk.TreeViewColumn column, Gtk.CellRenderer cell, Gtk.TreeModel model, Gtk.TreeIter iter)
 		{
 			Gtk.CellRendererText textRenderer = (Gtk.CellRendererText)cell;
-			var task = model.GetValue (iter, DataColumns.Task) as TaskListEntry; 
-			if (task == null)
+			var task = model.GetValue (iter, DataColumns.Task) as TaskListEntry;
+			if (task == null) {
+				textRenderer.Text = "";
 				return;
+			}
 			SetText (textRenderer, model, iter, task, task.Category ?? "");
 		}
 		
@@ -812,8 +852,15 @@ namespace MonoDevelop.Ide.Gui.Pads
 			}
 			
 			tasks [t] = t;
-			
-			store.AppendValues (stock, false, t);
+
+			var indexOfNewLine = t.Description.IndexOfAny (new [] { '\n', '\r' });
+			if (indexOfNewLine != -1) {
+				var iter = store.AppendValues (stock, false, t, t.Description.Remove (indexOfNewLine));
+				store.AppendValues (iter, iconEmpty, false, null, t.Description);
+			} else {
+				store.AppendValues (stock, false, t, t.Description);
+			}
+
 			UpdatePadIcon ();
 		}
 
