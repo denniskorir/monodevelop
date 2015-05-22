@@ -1,10 +1,10 @@
 //
-// ISearchDataSource.cs
+// WorkspaceId.cs
 //
 // Author:
 //       Mike Krüger <mkrueger@xamarin.com>
 //
-// Copyright (c) 2012 Xamarin Inc. (http://xamarin.com)
+// Copyright (c) 2015 Xamarin Inc. (http://xamarin.com)
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal
@@ -24,29 +24,47 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 // THE SOFTWARE.
 
-using System.Threading;
-using System.Threading.Tasks;
-using MonoDevelop.Ide.CodeCompletion;
-using MonoDevelop.Core.Text;
+using System;
 
-namespace MonoDevelop.Components.MainToolbar
+namespace MonoDevelop.Ide.TypeSystem
 {
-
-	public interface ISearchDataSource
+	struct WorkspaceId
 	{
-		int ItemCount { get; }
+		static uint n = 0;
 
-		Xwt.Drawing.Image GetIcon (int item);
-		string GetMarkup (int item, bool isSelected);
-		string GetDescriptionMarkup (int item, bool isSelected);
-		Task<TooltipInformation> GetTooltip (CancellationToken token, int item);
-		double GetWeight (int item);
+		public readonly uint     Number;
+		public readonly DateTime DateTime;
 
-		ISegment GetRegion (int item);
-		string GetFileName (int item);
+		public static WorkspaceId Empty = new WorkspaceId (0, default(DateTime));
 
-		bool CanActivate (int item);
-		void Activate (int item);
+		WorkspaceId (uint number, DateTime dateTime) : this()
+		{
+			this.Number = number;
+			this.DateTime = dateTime;
+		}
+
+		public static WorkspaceId Next()
+		{
+			return new WorkspaceId (n++, DateTime.UtcNow);
+		}
+
+		public override bool Equals (object obj)
+		{
+			if (obj == null)
+				return false;
+			if (ReferenceEquals (this, obj))
+				return true;
+			if (obj.GetType () != typeof(WorkspaceId))
+				return false;
+			WorkspaceId other = (WorkspaceId)obj;
+			return Number == other.Number && DateTime == other.DateTime;
+		}
+
+		public override int GetHashCode ()
+		{
+			unchecked {
+				return Number.GetHashCode () ^ DateTime.GetHashCode ();
+			}
+		}
 	}
-	
 }

@@ -1,10 +1,10 @@
-//
-// ISearchDataSource.cs
+﻿//
+// BuildContext.cs
 //
 // Author:
-//       Mike Krüger <mkrueger@xamarin.com>
+//       Lluis Sanchez Gual <lluis@xamarin.com>
 //
-// Copyright (c) 2012 Xamarin Inc. (http://xamarin.com)
+// Copyright (c) 2015 Xamarin, Inc (http://www.xamarin.com)
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal
@@ -24,29 +24,31 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 // THE SOFTWARE.
 
-using System.Threading;
-using System.Threading.Tasks;
-using MonoDevelop.Ide.CodeCompletion;
-using MonoDevelop.Core.Text;
+using System;
 
-namespace MonoDevelop.Components.MainToolbar
+namespace MonoDevelop.Projects
 {
-
-	public interface ISearchDataSource
+	public class ProjectOperationContext: OperationContext
 	{
-		int ItemCount { get; }
+		public ProjectOperationContext ()
+		{
+			GlobalProperties = new ProjectItemMetadata ();
+		}
 
-		Xwt.Drawing.Image GetIcon (int item);
-		string GetMarkup (int item, bool isSelected);
-		string GetDescriptionMarkup (int item, bool isSelected);
-		Task<TooltipInformation> GetTooltip (CancellationToken token, int item);
-		double GetWeight (int item);
+		public ProjectOperationContext (OperationContext other): this ()
+		{
+			CopyFrom (other);
+		}
 
-		ISegment GetRegion (int item);
-		string GetFileName (int item);
+		public IPropertySet GlobalProperties { get; private set; }
 
-		bool CanActivate (int item);
-		void Activate (int item);
+		public override void CopyFrom (OperationContext other)
+		{
+			base.CopyFrom (other);
+			var o = other as ProjectOperationContext;
+			if (o != null)
+				GlobalProperties = new ProjectItemMetadata ((ProjectItemMetadata) o.GlobalProperties);
+		}
 	}
-	
 }
+

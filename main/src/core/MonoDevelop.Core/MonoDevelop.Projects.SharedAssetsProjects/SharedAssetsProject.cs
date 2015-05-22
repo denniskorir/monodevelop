@@ -215,7 +215,7 @@ namespace MonoDevelop.Projects.SharedAssetsProjects
 			return LanguageBinding.IsSourceCodeFile (fileName);
 		}
 
-		protected override Task<BuildResult> OnBuild (MonoDevelop.Core.ProgressMonitor monitor, ConfigurationSelector configuration)
+		protected override Task<BuildResult> OnBuild (MonoDevelop.Core.ProgressMonitor monitor, ConfigurationSelector configuration, OperationContext operationContext)
 		{
 			return Task.FromResult (BuildResult.Success);
 		}
@@ -249,9 +249,9 @@ namespace MonoDevelop.Projects.SharedAssetsProjects
 		/// Gets the default namespace for the file, according to the naming policy.
 		/// </summary>
 		/// <remarks>Always returns a valid namespace, even if the fileName is null.</remarks>
-		public string GetDefaultNamespace (string fileName)
+		public string GetDefaultNamespace (string fileName, bool useVisualStudioNamingPolicy = false)
 		{
-			return DotNetProject.GetDefaultNamespace (this, DefaultNamespace, fileName);
+			return DotNetProject.GetDefaultNamespace (this, DefaultNamespace, fileName, useVisualStudioNamingPolicy);
 		}
 
 		protected override void OnBoundToSolution ()

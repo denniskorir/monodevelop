@@ -40,12 +40,18 @@ using System.Collections.Concurrent;
 using MonoDevelop.Ide.CodeFormatting;
 using Gtk;
 using MonoDevelop.Ide.Editor.Projection;
+using System.Reflection;
+using Microsoft.CodeAnalysis.Host.Mef;
+using System.Text;
 
 namespace MonoDevelop.Ide.TypeSystem
 {
+
 	class MonoDevelopWorkspace : Workspace
 	{
-		readonly static HostServices services = Microsoft.CodeAnalysis.Host.Mef.MefHostServices.DefaultHost;
+		readonly static HostServices services;
+		public readonly WorkspaceId Id;
+
 		CancellationTokenSource src = new CancellationTokenSource ();
 		MonoDevelop.Projects.Solution currentMonoDevelopSolution;
 		object addLock = new object();
@@ -58,8 +64,18 @@ namespace MonoDevelop.Ide.TypeSystem
 			}
 		}
 
-		public MonoDevelopWorkspace () : base (services, "MonoDevelopWorkspace")
+		static MonoDevelopWorkspace ()
 		{
+			List<Assembly> assemblies = new List<Assembly> ();
+			assemblies.AddRange(Microsoft.CodeAnalysis.Host.Mef.MefHostServices.DefaultAssemblies);
+
+			assemblies.Add (typeof(MonoDevelopWorkspace).Assembly);
+			services = Microsoft.CodeAnalysis.Host.Mef.MefHostServices.Create (assemblies);
+		}
+
+		public MonoDevelopWorkspace () : base (services, ServiceLayer.Desktop)
+		{
+			this.Id = WorkspaceId.Next ();
 			if (IdeApp.Workspace != null) {
 				IdeApp.Workspace.ActiveConfigurationChanged += HandleActiveConfigurationChanged;
 			}

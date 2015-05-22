@@ -1,10 +1,10 @@
-//
-// ISearchDataSource.cs
+﻿//
+// BuildSession.cs
 //
 // Author:
-//       Mike Krüger <mkrueger@xamarin.com>
+//       Lluis Sanchez Gual <lluis@xamarin.com>
 //
-// Copyright (c) 2012 Xamarin Inc. (http://xamarin.com)
+// Copyright (c) 2015 Xamarin, Inc (http://www.xamarin.com)
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal
@@ -23,30 +23,39 @@
 // LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 // THE SOFTWARE.
+using System;
+using System.Collections.Generic;
 
-using System.Threading;
-using System.Threading.Tasks;
-using MonoDevelop.Ide.CodeCompletion;
-using MonoDevelop.Core.Text;
-
-namespace MonoDevelop.Components.MainToolbar
+namespace MonoDevelop.Projects
 {
-
-	public interface ISearchDataSource
+	public class OperationContext
 	{
-		int ItemCount { get; }
+		Dictionary<object, object> customData;
 
-		Xwt.Drawing.Image GetIcon (int item);
-		string GetMarkup (int item, bool isSelected);
-		string GetDescriptionMarkup (int item, bool isSelected);
-		Task<TooltipInformation> GetTooltip (CancellationToken token, int item);
-		double GetWeight (int item);
+		public OperationContext ()
+		{
+		}
 
-		ISegment GetRegion (int item);
-		string GetFileName (int item);
+		public OperationContext (OperationContext other): this ()
+		{
+			CopyFrom (other);
+		}
 
-		bool CanActivate (int item);
-		void Activate (int item);
+		public Dictionary<object, object> SessionData {
+			get {
+				if (customData == null)
+					customData = new Dictionary<object, object> ();
+				return customData;
+			}
+		}
+
+		public virtual void CopyFrom (OperationContext other)
+		{
+			if (other.customData != null)
+				customData = new Dictionary<object, object> (other.customData);
+			else
+				customData = null;
+		}
 	}
-	
 }
+
