@@ -117,11 +117,11 @@ namespace MonoDevelop.Ide.Projects.OptionPanels
 			enabled = null;
 
 			foreach (DotNetProjectConfiguration conf in configs) {
+				var runCodeAnalysisEnabled = conf.Properties.HasProperty ("RunCodeAnalysis") ? bool.Parse (conf.Properties.GetProperty ("RunCodeAnalysis").Value) : false;
 				if (!enabled.HasValue) {
-					//TODO: Analysis, get RunCodeAnalysis from configuration
-					enabled = true;
-				} else if (enabled.Value != true) {
-					//TODO: Analysis, Different values between different configs, reuturn null as inconsistant
+					enabled = runCodeAnalysisEnabled;
+				} else if (enabled.Value != runCodeAnalysisEnabled) {
+					//Different values between different configs, reuturn null as inconsistant
 					enabled = null;
 					return;
 				}
@@ -137,11 +137,17 @@ namespace MonoDevelop.Ide.Projects.OptionPanels
 		{
 			if (configurations == null)
 				return;
-
-			foreach (DotNetProjectConfiguration conf in configurations) {
-				//TODO: Set RunCodeAnalysis
+			//If Inconsistent, don't do anything
+			if (!enabledCheckBox.Inconsistent) {
+				foreach (DotNetProjectConfiguration conf in configurations) {
+					if (enabledCheckBox.Mode) {
+						conf.Properties.SetValue ("RunCodeAnalysis", "true");
+					} else {
+						conf.Properties.RemoveProperty ("RunCodeAnalysis");
+					}
+				}
+				project.SaveAsync (new ProgressMonitor ());
 			}
-			project.SaveAsync (new ProgressMonitor ());
 		}
 	}
 }
