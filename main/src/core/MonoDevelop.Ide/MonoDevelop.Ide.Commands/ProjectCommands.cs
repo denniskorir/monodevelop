@@ -531,13 +531,9 @@ namespace MonoDevelop.Ide.Commands
 
 		protected override void Run ()
 		{
-			foreach (var proj in IdeApp.ProjectOperations.CurrentSelectedSolution.GetAllProjects ()) {
-				if (proj.SupportsTarget ("RunCodeAnalysis")) {
-					//TODO: Analysis, is setting to "1" OK?
-					proj.GlobalProperties.SetValue ("RunCodeAnalysisOnce", "1");
-				}
-			}
-			IdeApp.ProjectOperations.Build (IdeApp.ProjectOperations.CurrentSelectedSolution);
+			var context = new ProjectOperationContext ();
+			context.GlobalProperties.SetValue ("RunCodeAnalysisOnce", "true");
+			IdeApp.ProjectOperations.Rebuild (IdeApp.ProjectOperations.CurrentSelectedSolution, operationContext: context);
 		}
 	}
 
@@ -559,9 +555,9 @@ namespace MonoDevelop.Ide.Commands
 
 		protected override void Run ()
 		{
-			//TODO: Analysis, is setting to "1" OK?
-			IdeApp.ProjectOperations.CurrentSelectedProject.GlobalProperties.SetValue ("RunCodeAnalysisOnce", "1");
-			IdeApp.ProjectOperations.Build (IdeApp.ProjectOperations.CurrentSelectedProject);
+			var context = new ProjectOperationContext ();
+			context.GlobalProperties.SetValue ("RunCodeAnalysisOnce", "true");
+			IdeApp.ProjectOperations.Rebuild (IdeApp.ProjectOperations.CurrentSelectedProject, operationContext: context);
 		}
 	}
 }
