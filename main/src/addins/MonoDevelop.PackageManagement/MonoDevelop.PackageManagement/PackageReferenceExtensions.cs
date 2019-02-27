@@ -24,33 +24,32 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 // THE SOFTWARE.
 
-using System;
-using System.Linq;
-using ICSharpCode.PackageManagement;
-using MonoDevelop.Projects;
-using NuGet;
+using NuGet.Packaging;
+using NuGet.Versioning;
 
 namespace MonoDevelop.PackageManagement
 {
-	public static class PackageReferenceExtensions
+	internal static class PackageReferenceExtensions
 	{
-		public static bool IsPackageInstalled (this PackageReference packageReference, DotNetProject project)
+		public static bool IsFloating (this PackageReference packageReference)
 		{
-			var packagesPath = new SolutionPackageRepositoryPath (project);
-			var fileSystem = new PhysicalFileSystem (packagesPath.PackageRepositoryPath);
-			return packageReference.IsPackageInstalled (fileSystem);
+			return packageReference.HasAllowedVersions && packageReference.AllowedVersions.IsFloating;
 		}
 
-		public static bool IsPackageInstalled (this PackageReference packageReference, PhysicalFileSystem fileSystem)
+		public static bool IsAtLeastVersion (this PackageReference packageReference, NuGetVersion requestedVersion)
 		{
-			if (packageReference.Version == null) {
-				return false;
+			var comparer = VersionComparer.VersionRelease;
+			if (packageReference.HasAllowedVersions) {
+				var versionRange = packageReference.AllowedVersions;
+				if (versionRange.HasLowerBound) {
+					var result = comparer.Compare (versionRange.MinVersion, requestedVersion);
+					return versionRange.IsMinInclusive ? result <= 0 : result < 0;
+				}
+			} else if (packageReference.PackageIdentity.HasVersion) {
+				var packageVersion = packageReference.PackageIdentity.Version;
+				return comparer.Compare (requestedVersion, packageVersion) <= 0;
 			}
-
-			var repository = new LocalPackageRepository (new DefaultPackagePathResolver (fileSystem), fileSystem);
-			return repository
-				.GetPackageLookupPaths (packageReference.Id, packageReference.Version)
-				.Any ();
+			return false;
 		}
 	}
 }

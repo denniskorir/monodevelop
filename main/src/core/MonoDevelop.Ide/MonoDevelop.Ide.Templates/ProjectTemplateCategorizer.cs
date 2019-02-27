@@ -37,6 +37,7 @@ namespace MonoDevelop.Ide.Templates
 		TemplateCategory defaultCategory;
 		Dictionary<string, TemplateCategory> mappedCategories = new Dictionary<string, TemplateCategory> ();
 		Predicate<SolutionTemplate> templateMatch;
+		bool removedEmptyCategories;
 
 		public static readonly Predicate<SolutionTemplate> MatchNewProjectTemplates = template => template.IsMatch (SolutionTemplateVisibility.NewProject);
 		public static readonly Predicate<SolutionTemplate> MatchNewSolutionTemplates = template => template.IsMatch (SolutionTemplateVisibility.NewSolution);
@@ -86,12 +87,24 @@ namespace MonoDevelop.Ide.Templates
 
 		public IEnumerable<TemplateCategory> GetCategorizedTemplates ()
 		{
+			if (!removedEmptyCategories) {
+				RemoveEmptyCategories ();
+				removedEmptyCategories = true;
+			}
+
 			return categories;
 		}
 
+		/// <summary>
+		/// The template's existing groups are cleared before being categorized.
+		/// This allows the templating provider to cache the templates and prevents
+		/// the list of groups associated with the template from increasing every
+		/// time the New Project dialog is opened.
+		/// </summary>
 		public void CategorizeTemplates (IEnumerable<SolutionTemplate> templates)
 		{
 			foreach (SolutionTemplate template in GetFilteredTemplates (templates)) {
+				template.ClearGroupedTemplates ();
 				TemplateCategory category = GetCategory (template);
 				if (category != null) {
 					category.AddTemplate (template);
@@ -99,7 +112,6 @@ namespace MonoDevelop.Ide.Templates
 					LogNoCategoryMatch (template);
 				}
 			}
-			RemoveEmptyCategories ();
 		}
 
 		IEnumerable<SolutionTemplate> GetFilteredTemplates (IEnumerable<SolutionTemplate> templates)

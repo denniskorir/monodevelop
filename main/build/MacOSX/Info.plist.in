@@ -61,6 +61,20 @@
 			<true/>
 		</dict>
 		<dict>
+			<key>CFBundleTypeIconFile</key>
+			<string>monodevelop.sln.icns</string>
+			<key>CFBundleTypeExtensions</key>
+			<array>
+				<string>binlog</string>
+			</array>
+			<key>CFBundleTypeName</key>
+			<string>@APP_NAME@ MSBuild Binary Log</string>
+			<key>CFBundleTypeRole</key>
+			<string>Editor</string>
+			<key>LSIsAppleDefaultForType</key>
+			<true/>
+		</dict>
+		<dict>
 			<key>CFBundleTypeExtensions</key>
 			<array>
 				<string>cs</string>
@@ -71,6 +85,12 @@
 			<string>Editor</string>
 			<key>LSIsAppleDefaultForType</key>
 			<true/>
+			<key>LSItemContentTypes</key>
+			<array>
+				<string>com.microsoft.c-sharp</string>
+			</array>
+			<key>LSHandlerRank</key>
+			<string>Editor</string>
 		</dict>
 		<dict>
 			<key>CFBundleTypeExtensions</key>
@@ -115,6 +135,12 @@
 			<string>Editor</string>
 			<key>LSIsAppleDefaultForType</key>
 			<true/>
+			<key>LSItemContentTypes</key>
+			<array>
+				<string>org.fsharp.f-sharp</string>
+			</array>
+			<key>LSHandlerRank</key>
+			<string>Editor</string>
 		</dict>
 		<dict>
 			<key>CFBundleTypeExtensions</key>
@@ -185,7 +211,7 @@
 	<key>LSApplicationCategoryType</key>
 	<string>public.app-category.developer-tools</string>
 	<key>LSMinimumSystemVersion</key>
-	<string>10.9</string>
+	<string>10.11</string>
 	<key>CFBundleIdentifier</key>
 	<string>com.xamarin.monodevelop</string>
 	<key>CFBundleInfoDictionaryVersion</key>
@@ -202,11 +228,78 @@
 	<string>@BUNDLE_VERSION@</string>
 	<key>NSAppleScriptEnabled</key>
 	<string>NO</string>
-	<key>QuartzGLEnable</key>
-	<false/>
 	<key>NSHighResolutionCapable</key>
+	<true/>
+	<key>NSSupportsAutomaticGraphicsSwitching</key>
 	<true/>
 	<key>ReleaseId</key>
 	<string>@RELEASE_ID@</string>
+	<key>UTImportedTypeDeclarations</key>
+	<array>
+		<dict>
+			<key>UTTypeIdentifier</key>
+			<string>com.microsoft.c-sharp</string>
+			<key>UTTypeReferenceURL</key>
+			<string>http://www.microsoft.com/en-us/download/details.aspx?id=7029</string>
+			<key>UTTypeDescription</key>
+			<string>C# source</string>
+			<key>UTTypeTagSpecification</key>
+			<dict>
+				<key>public.filename-extension</key>
+				<array>
+					<string>cs</string>
+				</array>
+			</dict>
+			<key>UTTypeConformsTo</key>
+			<array>
+				<string>public.source-code</string>
+			</array>
+		</dict>
+		<dict>
+			<key>UTTypeIdentifier</key>
+			<string>org.fsharp.f-sharp</string>
+			<key>UTTypeReferenceURL</key>
+			<string>http://fsharp.org/specs/language-spec/</string>
+			<key>UTTypeDescription</key>
+			<string>F# source</string>
+			<key>UTTypeTagSpecification</key>
+			<dict>
+				<key>public.filename-extension</key>
+				<array>
+					<string>fs</string>
+				</array>
+			</dict>
+			<key>UTTypeConformsTo</key>
+			<array>
+				<string>public.source-code</string>
+			</array>
+		</dict>
+	</array>
+	<key>Mono64Bit</key>
+	<true/>
+	<key>CFBundleLocalizations</key>
+	<array>
+		<string>cs</string>
+		<string>de</string>
+		<string>es</string>
+		<string>en</string>
+		<string>fr</string>
+		<string>it</string>
+		<string>ja</string>
+		<string>ko</string>
+		<string>pl</string>
+		<string>pt-BR</string>
+		<string>ru</string>
+		<string>tr</string>
+		<string>zh-Hans</string>
+		<string>zh-Hant</string>
+	</array>
+	<key>NSAppleEventsUsageDescription</key>
+        <string>@APP_NAME@ needs to control applications through AppleScript</string>
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<key>NSAllowsArbitraryLoads</key>
+		<true/>
+	</dict>
 </dict>
 </plist>

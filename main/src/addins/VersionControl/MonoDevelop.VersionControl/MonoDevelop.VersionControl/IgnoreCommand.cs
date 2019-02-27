@@ -62,7 +62,7 @@ namespace MonoDevelop.VersionControl
 			}
 		}
 
-		private class IgnoreWorker : Task
+		private class IgnoreWorker : VersionControlTask
 		{
 			VersionControlItemList items;
 
@@ -81,14 +81,10 @@ namespace MonoDevelop.VersionControl
 				foreach (VersionControlItemList list in items.SplitByRepository ())
 					list[0].Repository.Ignore (list.Paths);
 
-				Monitor.ReportSuccess (GettextCatalog.GetString ("Ignore operation completed."));
-				Gtk.Application.Invoke (delegate {
-					foreach (VersionControlItem item in items)
-						if (!item.IsDirectory)
-							FileService.NotifyFileChanged (item.Path);
-
+				Gtk.Application.Invoke ((o, args) => {
 					VersionControlService.NotifyFileStatusChanged (items);
 				});
+				Monitor.ReportSuccess (GettextCatalog.GetString ("Ignore operation completed."));
 			}
 		}
 	}
@@ -125,7 +121,7 @@ namespace MonoDevelop.VersionControl
 			}
 		}
 
-		private class UnignoreWorker : Task
+		private class UnignoreWorker : VersionControlTask
 		{
 			VersionControlItemList items;
 
@@ -144,14 +140,10 @@ namespace MonoDevelop.VersionControl
 				foreach (VersionControlItemList list in items.SplitByRepository ())
 					list[0].Repository.Unignore (list.Paths);
 
-				Monitor.ReportSuccess (GettextCatalog.GetString ("Unignore operation completed."));
-				Gtk.Application.Invoke (delegate {
-					foreach (VersionControlItem item in items)
-						if (!item.IsDirectory)
-							FileService.NotifyFileChanged (item.Path);
-
+				Gtk.Application.Invoke ((o, args) => {
 					VersionControlService.NotifyFileStatusChanged (items);
 				});
+				Monitor.ReportSuccess (GettextCatalog.GetString ("Unignore operation completed."));
 			}
 		}
 	}

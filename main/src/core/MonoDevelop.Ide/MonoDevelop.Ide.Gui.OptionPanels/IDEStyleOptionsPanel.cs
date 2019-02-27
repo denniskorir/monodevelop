@@ -31,11 +31,12 @@ using System;
 using System.Collections;
 using System.Collections.Generic;
 
+using MonoDevelop.Components;
+using MonoDevelop.Components.AtkCocoaHelper;
 using MonoDevelop.Core;
 using MonoDevelop.Ide.Gui.Dialogs;
 using MonoDevelop.Components.Commands;
 using Mono.Addins;
-using Gtk;
 using System.Linq;
 
 namespace MonoDevelop.Ide.Gui.OptionPanels
@@ -44,7 +45,7 @@ namespace MonoDevelop.Ide.Gui.OptionPanels
 	{
 		IDEStyleOptionsPanelWidget widget;
 
-		public override Widget CreatePanelWidget ()
+		public override Control CreatePanelWidget ()
 		{
 			return widget = new IDEStyleOptionsPanelWidget ();
 		}
@@ -55,9 +56,11 @@ namespace MonoDevelop.Ide.Gui.OptionPanels
 		}
 	}
 	
-	public partial class IDEStyleOptionsPanelWidget : Gtk.Bin
+	partial class IDEStyleOptionsPanelWidget : Gtk.Bin
 	{
-		static Lazy<List<string>> themes = new Lazy<List<string>> (() => {
+		string currentTheme;
+
+		static Lazy<Dictionary<string, string>> themes = new Lazy<Dictionary<string, string>> (() => {
 			var searchDirs = new List<string> ();
 
 			string prefix = Environment.GetEnvironmentVariable ("MONO_INSTALL_PREFIX");
@@ -68,15 +71,13 @@ namespace MonoDevelop.Ide.Gui.OptionPanels
 			if (!string.IsNullOrEmpty (prefix))
 				searchDirs.Add (new FilePath (prefix).Combine ("share").Combine ("themes"));
 			
-
-			var themes = FindThemes (searchDirs).ToList ();
-			themes.Sort ();
+			var themes = FindThemes (searchDirs);
 			return themes;
 		});
 
 		public static IList<string> InstalledThemes {
 			get {
-				return themes.Value;
+				return themes.Value.Keys.ToList ();
 			}
 		}
 		
@@ -85,42 +86,122 @@ namespace MonoDevelop.Ide.Gui.OptionPanels
 		{
 			this.Build();
 			Load ();
+
+			comboTheme.SetCommonAccessibilityAttributes ("IDEStyleOptionsPanel.Theme", labelTheme,
+			                                             GettextCatalog.GetString ("Select the user interface theme"));
+
+			comboLanguage.SetCommonAccessibilityAttributes ("IDEStyleOptionsPanel.Language", label2,
+			                                                GettextCatalog.GetString ("Select the user interface language"));
+
+			imageRestart.SetCommonAccessibilityAttributes ("IDEStyleOptionsPanel.RestartImage", labelRestart,
+			                                               GettextCatalog.GetString ("A restart is required before these changes take effect"));
 		}
-		
+
 		void Load ()
 		{
-			for (int n=1; n < isoCodes.Length; n += 2)
-				comboLanguage.AppendText (GettextCatalog.GetString (isoCodes [n]));
-			
-			int i = Array.IndexOf (isoCodes, IdeApp.Preferences.UserInterfaceLanguage);
+			currentTheme = IdeApp.Preferences.UserInterfaceThemeName;
+
+			foreach (var localeSet in LocalizationService.CurrentLocaleSet)
+				comboLanguage.AppendText (localeSet.DisplayName);
+
+			int i = LocalizationService.CurrentLocaleSet.FindIndex (ls => ls.Culture == IdeApp.Preferences.UserInterfaceLanguage);
 			if (i == -1) i = 0;
-			comboLanguage.Active = i / 2;
-			
-			comboTheme.AppendText (GettextCatalog.GetString ("(Default)"));
+			comboLanguage.Active = i;
+
+			if (Platform.IsLinux)
+				comboTheme.AppendText (GettextCatalog.GetString ("(Default)"));
 
 			foreach (string t in InstalledThemes)
 				comboTheme.AppendText (t);
-			
-			comboTheme.Active = themes.Value.IndexOf (IdeApp.Preferences.UserInterfaceTheme) + 1;
 
-			labelTheme.Visible = comboTheme.Visible = !Platform.IsMac && !Platform.IsWindows;
+			var sel = themes.Value.Values.IndexOf (IdeApp.Preferences.UserInterfaceThemeName);
+			if (sel == -1)
+				sel = 0;
+			else if (Platform.IsLinux)
+				sel++;
+			
+			comboTheme.Active = sel;
+			comboTheme.Changed += ComboThemeChanged;
+			tableRestart.Visible = separatorRestart.Visible = false;
+
+			labelRestart.LabelProp = GettextCatalog.GetString ("These preferences will take effect next time you start {0}", BrandingService.ApplicationName);
+			btnRestart.Label = GettextCatalog.GetString ("Restart {0}", BrandingService.ApplicationName);
+
+			comboLanguage.Changed += (sender, e) => UpdateRestartMessage();
+			comboTheme.Changed += (sender, e) => UpdateRestartMessage ();
+			UpdateRestartMessage ();
 		}
-		
-		// Code for getting the list of themes based on f-spot
-		static ICollection<string> FindThemes (IEnumerable<string> themeDirs)
+
+		void RestartClicked (object sender, System.EventArgs e)
 		{
-			var themes = new HashSet<string> ();
-			string gtkrc = System.IO.Path.Combine ("gtk-2.0", "gtkrc");
-			foreach (string themeDir in themeDirs) {
-				if (string.IsNullOrEmpty (themeDir) || !System.IO.Directory.Exists (themeDir))
-					continue;
-				foreach (FilePath dir in System.IO.Directory.GetDirectories (themeDir)) {
-					if (System.IO.File.Exists (dir.Combine (gtkrc))) {
-						var themeName = dir.FileName;
-						if (!IsBadGtkTheme (themeName))
-							themes.Add (themeName);
+			Store ();
+			IdeApp.Restart (true).Ignore();
+			(Toplevel as Gtk.Dialog)?.Respond (Gtk.ResponseType.Ok);
+		}
+
+		void UpdateRestartMessage ()
+		{
+			bool restartRequired = false;
+
+			if (currentTheme != IdeApp.Preferences.UserInterfaceThemeName.Value ||
+			    ((Platform.IsLinux && Gtk.Settings.Default.ThemeName != IdeApp.Preferences.UserInterfaceThemeName.Value) ||
+			     IdeTheme.UserInterfaceTheme != (IdeApp.Preferences.UserInterfaceThemeName == "Dark" ? Theme.Dark : Theme.Light)))
+				restartRequired = true;
+			
+			if (GettextCatalog.UILocale != IdeApp.Preferences.UserInterfaceLanguage ||
+				LocalizationService.CurrentLocaleSet [comboLanguage.Active].Culture != IdeApp.Preferences.UserInterfaceLanguage)
+				restartRequired = true;
+			
+			if (restartRequired) {
+				tableRestart.Visible = separatorRestart.Visible = true;
+			} else
+				tableRestart.Visible = separatorRestart.Visible = false;
+		}
+
+		void ComboThemeChanged (object sender, EventArgs e)
+		{
+			SetTheme ();
+		}
+
+		void SetTheme ()
+		{
+			string theme;
+			if (comboTheme.Active == 0 && Platform.IsLinux)
+				theme = "";
+			else
+				theme = themes.Value [comboTheme.ActiveText];
+			SetTheme (theme);
+		}
+
+		void SetTheme (string theme)
+		{
+			if (theme.Length == 0 && Platform.IsLinux) {
+				currentTheme = "";
+			} else {
+				currentTheme = theme;
+			}
+		}
+
+		// Code for getting the list of themes based on f-spot
+		static Dictionary<string, string> FindThemes (IEnumerable<string> themeDirs)
+		{
+			var themes = new Dictionary<string, string> ();
+			if (Platform.IsLinux) {
+				string gtkrc = System.IO.Path.Combine ("gtk-2.0", "gtkrc");
+				foreach (string themeDir in themeDirs) {
+					if (string.IsNullOrEmpty (themeDir) || !System.IO.Directory.Exists (themeDir))
+						continue;
+					foreach (FilePath dir in System.IO.Directory.GetDirectories (themeDir)) {
+						if (System.IO.File.Exists (dir.Combine (gtkrc))) {
+							var themeName = dir.FileName;
+							if (!IsBadGtkTheme (themeName))
+								themes.Add (themeName, themeName);
+						}
 					}
 				}
+			} else {
+				themes.Add (GettextCatalog.GetString ("Light"), "Light");
+				themes.Add (GettextCatalog.GetString ("Dark"), "Dark");
 			}
 			return themes;
 		}
@@ -136,56 +217,12 @@ namespace MonoDevelop.Ide.Gui.OptionPanels
 		
 		public void Store()
 		{
-			string lc = isoCodes [comboLanguage.Active * 2];
-			if (lc != IdeApp.Preferences.UserInterfaceLanguage) {
-				IdeApp.Preferences.UserInterfaceLanguage = lc;
-				MessageService.ShowMessage (
-					GettextCatalog.GetString (
-						"The user interface language change will take effect the next time you start {0}",
-						BrandingService.ApplicationName
-					)
-				);
-			}
-			string theme;
-			if (comboTheme.Active == 0) {
-				theme = IdeStartup.DefaultTheme;
-				IdeApp.Preferences.UserInterfaceTheme = "";
-			}
-			else {
-				theme = comboTheme.ActiveText;
-				IdeApp.Preferences.UserInterfaceTheme = theme;
-			}
-			
-			if (theme != Gtk.Settings.Default.ThemeName)
-				Gtk.Settings.Default.ThemeName = theme;
+			string lc = LocalizationService.CurrentLocaleSet [comboLanguage.Active].Culture;
+			if (lc != IdeApp.Preferences.UserInterfaceLanguage)
+				IdeApp.Preferences.UserInterfaceLanguage.Value = lc;
+
+			if (currentTheme != IdeApp.Preferences.UserInterfaceThemeName.Value)
+				IdeApp.Preferences.UserInterfaceThemeName.Value = currentTheme;
 		}
-		
-		static string[] isoCodes = new string[] {
-			"", "(Default)",
-			"ca", "Catalan",
-			"zh_CN", "Chinese - China",
-			"zh_TW", "Chinese - Taiwan",
-			"cs", "Czech",
-			"da", "Danish",
-			"nl", "Dutch",
-			"fr", "French",
-			"gl", "Galician",
-			"de", "German",
-			"en", "English",
-			"hu", "Hungarian",
-			"id", "Indonesian",
-			"it", "Italian",
-			"ja", "Japanese",
-			"ko", "Korean",
-			"pl", "Polish",
-			"pt", "Portuguese",
-			"pt_BR", "Portuguese - Brazil",
-			"ru", "Russian",
-			"sl", "Slovenian",
-			"es", "Spanish",
-			"sv", "Swedish",
-			"tr", "Turkish"
-		};
-		
 	}
 }

@@ -1,66 +1,57 @@
-<?xml version="1.0" encoding="utf-8"?>
 <Project DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003" ToolsVersion="4.0">
+  <Import Project="..\..\..\MonoDevelop.props" />
+  <Import Project="$(ReferencesGtk)" />
   <PropertyGroup>
     <Configuration Condition=" '$(Configuration)' == '' ">Debug</Configuration>
     <Platform Condition=" '$(Platform)' == '' ">AnyCPU</Platform>
-    <ProductVersion>8.0.30703</ProductVersion>
-    <SchemaVersion>2.0</SchemaVersion>
     <ProjectGuid>{7FCDB0D9-AA7D-44E4-BE74-55312B432389}</ProjectGuid>
-    <OutputType>Library</OutputType>
-    <AssemblyName>MonoDevelop.GtkCore</AssemblyName>
-    <RootNamespace>MonoDevelop.GtkCore</RootNamespace>
-    <TargetFrameworkVersion>v4.5</TargetFrameworkVersion>
-  </PropertyGroup>
-  <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Debug|AnyCPU' ">
-    <DebugSymbols>True</DebugSymbols>
-    <DebugType>full</DebugType>
-    <Optimize>false</Optimize>
+    <TargetFrameworkVersion>$(MDFrameworkVersion)</TargetFrameworkVersion>
     <OutputPath>..\..\..\build\AddIns\MonoDevelop.GtkCore</OutputPath>
-    <ErrorReport>prompt</ErrorReport>
-    <WarningLevel>4</WarningLevel>
-    <Execution>
-      <Execution clr-version="Net_2_0" />
-    </Execution>
-    <DefineConstants>DEBUG</DefineConstants>
-    <NoWarn>1591;1573</NoWarn>
-    <DocumentationFile>..\..\..\build\AddIns\MonoDevelop.GtkCore\MonoDevelop.GtkCore.xml</DocumentationFile>
   </PropertyGroup>
-  <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Release|AnyCPU' ">
-    <DebugType>pdbonly</DebugType>
-    <Optimize>True</Optimize>
-    <OutputPath>..\..\..\build\AddIns\MonoDevelop.GtkCore</OutputPath>
-    <ErrorReport>prompt</ErrorReport>
-    <WarningLevel>4</WarningLevel>
-    <Execution>
-      <Execution clr-version="Net_2_0" />
-    </Execution>
-    <DebugSymbols>true</DebugSymbols>
-    <NoWarn>1591;1573</NoWarn>
-    <DocumentationFile>..\..\..\build\AddIns\MonoDevelop.GtkCore\MonoDevelop.GtkCore.xml</DocumentationFile>
-  </PropertyGroup>
+  <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Debug|AnyCPU' " />
+  <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Release|AnyCPU' " />
+  <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'DebugGnome|AnyCPU' " />
+  <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'ReleaseGnome|AnyCPU' " />
   <ItemGroup>
     <Reference Include="System" />
     <Reference Include="System.Xml" />
-    <Reference Include="Mono.Posix" />
-    <Reference Include="glade-sharp, Version=2.12.0.0, Culture=neutral, PublicKeyToken=35e10195dab3c99f">
-      <SpecificVersion>False</SpecificVersion>
-    </Reference>
-    <Reference Include="glib-sharp, Version=2.12.0.0, Culture=neutral, PublicKeyToken=35e10195dab3c99f">
-      <SpecificVersion>False</SpecificVersion>
-    </Reference>
-    <Reference Include="pango-sharp, Version=2.12.0.0, Culture=neutral, PublicKeyToken=35e10195dab3c99f">
-      <SpecificVersion>False</SpecificVersion>
-    </Reference>
-    <Reference Include="atk-sharp, Version=2.12.0.0, Culture=neutral, PublicKeyToken=35e10195dab3c99f">
-      <SpecificVersion>False</SpecificVersion>
-    </Reference>
-    <Reference Include="gdk-sharp, Version=2.12.0.0, Culture=neutral, PublicKeyToken=35e10195dab3c99f">
-      <SpecificVersion>False</SpecificVersion>
-    </Reference>
-    <Reference Include="gtk-sharp, Version=2.12.0.0, Culture=neutral, PublicKeyToken=35e10195dab3c99f">
-      <SpecificVersion>False</SpecificVersion>
-    </Reference>
     <Reference Include="System.Core" />
+    <Reference Include="System.Reflection.Metadata">
+      <HintPath>..\..\..\build\bin\System.Reflection.Metadata.dll</HintPath>
+      <Private>False</Private>
+    </Reference>
+    <Reference Include="System.Collections.Immutable">
+      <HintPath>..\..\..\build\bin\System.Collections.Immutable.dll</HintPath>
+      <Private>False</Private>
+    </Reference>
+    <Reference Include="Microsoft.CodeAnalysis">
+      <HintPath>..\..\..\build\bin\Microsoft.CodeAnalysis.dll</HintPath>
+      <Private>False</Private>
+    </Reference>
+    <Reference Include="Microsoft.CodeAnalysis.CSharp">
+      <HintPath>..\..\..\build\bin\Microsoft.CodeAnalysis.CSharp.dll</HintPath>
+      <Private>False</Private>
+    </Reference>
+    <Reference Include="Microsoft.CodeAnalysis.Workspaces">
+      <HintPath>..\..\..\build\bin\Microsoft.CodeAnalysis.Workspaces.dll</HintPath>
+      <Private>False</Private>
+    </Reference>
+    <Reference Include="Mono.Cecil">
+      <HintPath>..\..\..\packages\Mono.Cecil.0.10.0-beta6\lib\net40\Mono.Cecil.dll</HintPath>
+      <Private>False</Private>
+    </Reference>
+    <Reference Include="Mono.Cecil.Mdb">
+      <HintPath>..\..\..\packages\Mono.Cecil.0.10.0-beta6\lib\net40\Mono.Cecil.Mdb.dll</HintPath>
+      <Private>False</Private>
+    </Reference>
+    <Reference Include="Mono.Cecil.Pdb">
+      <HintPath>..\..\..\packages\Mono.Cecil.0.10.0-beta6\lib\net40\Mono.Cecil.Pdb.dll</HintPath>
+      <Private>False</Private>
+    </Reference>
+    <Reference Include="Mono.Cecil.Rocks">
+      <HintPath>..\..\..\packages\Mono.Cecil.0.10.0-beta6\lib\net40\Mono.Cecil.Rocks.dll</HintPath>
+      <Private>False</Private>
+    </Reference>
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\..\core\MonoDevelop.Core\MonoDevelop.Core.csproj">
@@ -93,24 +84,9 @@
       <Name>libsteticui</Name>
       <Private>False</Private>
     </ProjectReference>
-    <ProjectReference Include="..\..\core\Mono.Texteditor\Mono.TextEditor.csproj">
-      <Project>{A2329308-3751-4DBD-9A75-5F7B8B024625}</Project>
-      <Name>Mono.TextEditor</Name>
-      <Private>False</Private>
-    </ProjectReference>
     <ProjectReference Include="..\MonoDevelop.Refactoring\MonoDevelop.Refactoring.csproj">
       <Project>{100568FC-F4E8-439B-94AD-41D11724E45B}</Project>
       <Name>MonoDevelop.Refactoring</Name>
-      <Private>False</Private>
-    </ProjectReference>
-    <ProjectReference Include="..\..\..\external\cecil\Mono.Cecil.csproj">
-      <Project>{D68133BD-1E63-496E-9EDE-4FBDBF77B486}</Project>
-      <Name>Mono.Cecil</Name>
-      <Private>False</Private>
-    </ProjectReference>
-    <ProjectReference Include="..\..\..\external\nrefactory\ICSharpCode.NRefactory\ICSharpCode.NRefactory.csproj">
-      <Project>{3B2A5653-EC97-4001-BB9B-D90F1AF2C371}</Project>
-      <Name>ICSharpCode.NRefactory</Name>
       <Private>False</Private>
     </ProjectReference>
     <ProjectReference Include="..\..\..\external\mono-addins\Mono.Addins\Mono.Addins.csproj">
@@ -123,58 +99,37 @@
       <Name>Xwt</Name>
       <Private>False</Private>
     </ProjectReference>
+    <ProjectReference Include="..\CSharpBinding\CSharpBinding.csproj">
+      <Project>{07CC7654-27D6-421D-A64C-0FFA40456FA2}</Project>
+      <Name>CSharpBinding</Name>
+      <Private>False</Private>
+    </ProjectReference>
+    <ProjectReference Include="..\..\..\external\nrefactory\ICSharpCode.NRefactory.CSharp\ICSharpCode.NRefactory.CSharp.csproj">
+      <Project>{53DCA265-3C3C-42F9-B647-F72BA678122B}</Project>
+      <Name>ICSharpCode.NRefactory.CSharp</Name>
+      <Private>False</Private>
+    </ProjectReference>
   </ItemGroup>
   <ItemGroup>
-    <None Include="Makefile.am" />
     <None Include="icons\window.png" />
     <None Include="icons\dialog.png" />
+    <None Include="packages.config" />
   </ItemGroup>
   <ItemGroup>
-    <EmbeddedResource Include="MonoDevelop.GtkCore.addin.xml">
-      <LogicalName>MonoDevelop.GtkCore.addin.xml</LogicalName>
-    </EmbeddedResource>
-    <EmbeddedResource Include="templates\Dialog.xft.xml">
-      <LogicalName>Dialog.xft.xml</LogicalName>
-    </EmbeddedResource>
-    <EmbeddedResource Include="templates\Window.xft.xml">
-      <LogicalName>Window.xft.xml</LogicalName>
-    </EmbeddedResource>
-    <EmbeddedResource Include="templates\Widget.xft.xml">
-      <LogicalName>Widget.xft.xml</LogicalName>
-    </EmbeddedResource>
-    <EmbeddedResource Include="templates\ActionGroup.xft.xml">
-      <LogicalName>ActionGroup.xft.xml</LogicalName>
-    </EmbeddedResource>
-    <EmbeddedResource Include="gui.glade">
-      <LogicalName>gui.glade</LogicalName>
-    </EmbeddedResource>
-    <EmbeddedResource Include="templates\ActionGroupPartial.xft.xml">
-      <LogicalName>ActionGroupPartial.xft.xml</LogicalName>
-    </EmbeddedResource>
-    <EmbeddedResource Include="templates\DialogPartial.xft.xml">
-      <LogicalName>DialogPartial.xft.xml</LogicalName>
-    </EmbeddedResource>
-    <EmbeddedResource Include="templates\WidgetPartial.xft.xml">
-      <LogicalName>WidgetPartial.xft.xml</LogicalName>
-    </EmbeddedResource>
-    <EmbeddedResource Include="templates\DrawingArea.xft.xml">
-      <LogicalName>DrawingArea.xft.xml</LogicalName>
-    </EmbeddedResource>
-    <EmbeddedResource Include="templates\WindowPartial.xft.xml">
-      <LogicalName>WindowPartial.xft.xml</LogicalName>
-    </EmbeddedResource>
-    <EmbeddedResource Include="icons\widget.png">
-      <LogicalName>widget.png</LogicalName>
-    </EmbeddedResource>
-    <EmbeddedResource Include="icons\actiongroup.png">
-      <LogicalName>actiongroup.png</LogicalName>
-    </EmbeddedResource>
-    <EmbeddedResource Include="icons\image-x-generic.png">
-      <LogicalName>image-x-generic.png</LogicalName>
-    </EmbeddedResource>
-    <EmbeddedResource Include="gtk-gui\gui.stetic">
-      <LogicalName>gui.stetic</LogicalName>
-    </EmbeddedResource>
+    <EmbeddedResource Include="MonoDevelop.GtkCore.addin.xml" />
+    <EmbeddedResource Include="templates\Dialog.xft.xml" />
+    <EmbeddedResource Include="templates\Window.xft.xml" />
+    <EmbeddedResource Include="templates\Widget.xft.xml" />
+    <EmbeddedResource Include="templates\ActionGroup.xft.xml" />
+    <EmbeddedResource Include="gui.glade" />
+    <EmbeddedResource Include="templates\ActionGroupPartial.xft.xml" />
+    <EmbeddedResource Include="templates\DialogPartial.xft.xml" />
+    <EmbeddedResource Include="templates\WidgetPartial.xft.xml" />
+    <EmbeddedResource Include="templates\DrawingArea.xft.xml" />
+    <EmbeddedResource Include="templates\WindowPartial.xft.xml" />
+    <EmbeddedResource Include="icons\widget.png" />
+    <EmbeddedResource Include="icons\actiongroup.png" />
+    <EmbeddedResource Include="icons\image-x-generic.png" />
   </ItemGroup>
   <ItemGroup>
     <Compile Include="MonoDevelop.GtkCore.Commands\GladeCommands.cs" />
@@ -209,15 +164,14 @@
     <Compile Include="MonoDevelop.GtkCore.NodeBuilders\StockIconsNodeBuilder.cs" />
     <Compile Include="MonoDevelop.GtkCore.Dialogs\GtkFeatureWidget.cs" />
     <Compile Include="MonoDevelop.GtkCore.GuiBuilder\ToolboxLoader.cs" />
-    <Compile Include="gtk-gui\generated.cs" />
     <Compile Include="MonoDevelop.GtkCore\ObjectsDocument.cs" />
     <Compile Include="MonoDevelop.GtkCore\WidgetParser.cs" />
     <Compile Include="MonoDevelop.GtkCore\ReferenceManager.cs" />
     <Compile Include="AssemblyInfo.cs" />
     <Compile Include="MonoDevelop.GtkCore.Dialogs\GtkDesignerOptionsPanelWidget.cs" />
-    <Compile Include="gtk-gui\MonoDevelop.GtkCore.Dialogs.GtkDesignerOptionsPanelWidget.cs" />
     <Compile Include="MonoDevelop.GtkCore\Counters.cs" />
     <Compile Include="AddinInfo.cs" />
+    <Compile Include="Gui\MonoDevelop.GtkCore.Dialogs.GtkDesignerOptionsPanelWidget.cs" />
   </ItemGroup>
   <Import Project="$(MSBuildBinPath)\Microsoft.CSharp.targets" />
 </Project>

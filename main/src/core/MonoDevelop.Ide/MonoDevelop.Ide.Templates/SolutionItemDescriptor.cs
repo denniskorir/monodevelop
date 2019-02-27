@@ -28,6 +28,7 @@
 
 using System;
 using System.IO;
+using System.Threading.Tasks;
 using System.Xml;
 using System.Collections;
 using System.Collections.Specialized;
@@ -60,7 +61,7 @@ namespace MonoDevelop.Ide.Templates
 			template = element;
 		}
 		
-		public SolutionEntityItem CreateItem (ProjectCreateInformation projectCreateInformation, string defaultLanguage)
+		public SolutionItem CreateItem (ProjectCreateInformation projectCreateInformation, string defaultLanguage)
 		{
 			Type type = addin.GetType (typeName, false);
 			
@@ -68,9 +69,10 @@ namespace MonoDevelop.Ide.Templates
 				MessageService.ShowError (GettextCatalog.GetString ("Can't create project with type : {0}", typeName));
 				return null;
 			}
-			
-			SolutionEntityItem item = (SolutionEntityItem) Activator.CreateInstance (type);
-			item.InitializeFromTemplate (template);
+
+			// TODO NPM: should use the project service
+			SolutionItem item = (SolutionItem) Activator.CreateInstance (type);
+			item.InitializeFromTemplate (projectCreateInformation, template);
 			
 			string newProjectName = StringParserService.Parse (name, new string[,] { 
 				{"ProjectName", projectCreateInformation.ProjectName}
@@ -82,8 +84,9 @@ namespace MonoDevelop.Ide.Templates
 			return item;
 		}
 		
-		public void InitializeItem (SolutionItem policyParent, ProjectCreateInformation projectCreateInformation, string defaultLanguage, SolutionEntityItem item)
+		public Task InitializeItem (SolutionFolderItem policyParent, ProjectCreateInformation projectCreateInformation, string defaultLanguage, SolutionItem item)
 		{
+			return Task.CompletedTask;
 		}
 		
 		public static SolutionItemDescriptor CreateDescriptor (RuntimeAddin addin, XmlElement element)

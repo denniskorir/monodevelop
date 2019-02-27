@@ -31,15 +31,15 @@ using MonoDevelop.Projects.Text;
 
 namespace MonoDevelop.VersionControl
 {
-	public class DefaultBlameViewHandler : IBlameViewHandler
+	public class DefaultBlameViewHandler : IVersionControlViewHandler
 	{
 		public bool CanHandle (VersionControlItem item, DocumentView primaryView)
 		{
-			return (primaryView == null || primaryView.GetContent <ITextFile> () != null)
-				&& DesktopService.GetFileIsText (item.Path);
+			return (primaryView == null || primaryView.GetContent <MonoDevelop.SourceEditor.SourceEditorView> () != null)
+				&& item.Repository.GetFileIsText (item.Path);
 		}
 
-		public IBlameView CreateView (VersionControlDocumentInfo info)
+		public BaseViewContent CreateView (VersionControlDocumentInfo info)
 		{
 			return new BlameView (info);
 		}

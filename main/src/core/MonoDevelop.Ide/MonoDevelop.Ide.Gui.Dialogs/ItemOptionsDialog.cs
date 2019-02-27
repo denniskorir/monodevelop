@@ -27,8 +27,11 @@
 
 using System;
 using Mono.Addins;
+using MonoDevelop.Components;
 using MonoDevelop.Projects.Extensions;
 using MonoDevelop.Ide.Gui.Dialogs;
+using MonoDevelop.Projects;
+using MonoDevelop.Core.AddIns;
 
 namespace MonoDevelop.Ide.Gui.Dialogs
 {
@@ -38,7 +41,7 @@ namespace MonoDevelop.Ide.Gui.Dialogs
 		{
 		}
 		
-		public ItemOptionsDialog (Gtk.Window parentWindow, object dataObject)
+		public ItemOptionsDialog (Window parentWindow, object dataObject)
 			: base (parentWindow, dataObject, "/MonoDevelop/ProjectModel/Gui/ItemOptionPanels")
 		{
 		}
@@ -48,6 +51,16 @@ namespace MonoDevelop.Ide.Gui.Dialogs
 			base.InitializeContext (extensionContext);
 			extensionContext.RegisterCondition ("ItemType", new ItemTypeCondition (DataObject.GetType ()));
 			extensionContext.RegisterCondition ("ActiveLanguage", new ProjectLanguageCondition (DataObject));
+			if (DataObject is Project) {
+				extensionContext.RegisterCondition ("AppliesTo", new AppliesToCondition ((Project)DataObject));
+				extensionContext.RegisterCondition ("FlavorType", new FlavorTypeCondition ((Project)DataObject));
+				extensionContext.RegisterCondition ("ProjectTypeId", new ProjectTypeIdCondition ((Project)DataObject));
+				extensionContext.RegisterCondition ("SupportsTarget", new SupportsTargetCondition ((Project)DataObject));
+			} else {
+				extensionContext.RegisterCondition ("AppliesTo", FalseCondition.Instance);
+				extensionContext.RegisterCondition ("FlavorType", FalseCondition.Instance);
+				extensionContext.RegisterCondition ("ProjectTypeId", FalseCondition.Instance);
+			}
 		}
 	}
 }

@@ -201,7 +201,7 @@ namespace MonoDevelop.Gettext
 		/// <summary>
 		/// Loads catalog from .po file.
 		/// </summary>
-		public bool Load (IProgressMonitor monitor, string poFile)
+		public bool Load (ProgressMonitor monitor, string poFile)
 		{
 			Clear ();
 			isOk = false;
@@ -395,7 +395,7 @@ namespace MonoDevelop.Gettext
 		{
 			foreach (EncodingInfo info in Encoding.GetEncodings ()) {
 				try {
-					if (info.Name.ToLower () == charset.ToLower ())
+					if (string.Equals (info.Name, charset, StringComparison.OrdinalIgnoreCase))
 						return true;
 				} catch (Exception) {
 					// info.Name may fail.
@@ -429,7 +429,7 @@ namespace MonoDevelop.Gettext
 		{
 			foreach (EncodingInfo info in Encoding.GetEncodings ()) {
 				try {
-					if (info.Name.ToLower () == charset.ToLower ())
+					if (string.Equals (info.Name, charset, StringComparison.OrdinalIgnoreCase))
 						return info.GetEncoding ();
 				} catch (Exception) {
 					// info.Name may fail.
@@ -439,7 +439,7 @@ namespace MonoDevelop.Gettext
 		}
 		
 		// Updates the catalog from POT file.
-		public bool UpdateFromPOT (IProgressMonitor mon, string potFile, bool summary)
+		public bool UpdateFromPOT (ProgressMonitor mon, string potFile, bool summary)
 		{
 			if (! isOk)
 				return false;
@@ -685,7 +685,7 @@ namespace MonoDevelop.Gettext
 		// (in the sense of msgmerge -- this catalog is old one with
 		// translations, \a refcat is reference catalog created by Update().)
 		// return true if the merge was successfull, false otherwise.
-		public bool Merge (IProgressMonitor mon, Catalog refCat)
+		public bool Merge (ProgressMonitor mon, Catalog refCat)
 		{
 			// TODO: implement via monitor, not in a GUI thread...
 			// But mind about it as it would be used during build.
@@ -976,7 +976,8 @@ namespace MonoDevelop.Gettext
 				foreach (string line in value.Split (new string[] {Environment.NewLine}, StringSplitOptions.None)) {
 					if (sb.Length != 0)
 						sb.AppendLine ();
-					sb.Append ("# " + line);
+					sb.Append ("# ");
+					sb.Append (line);
 				}
 				this.Comment = sb.ToString ();
 			}

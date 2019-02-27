@@ -27,7 +27,6 @@
 using Gdk;
 using Gtk;
 using MonoDevelop.Components.Docking;
-using Mono.TextEditor;
 using MonoDevelop.Ide;
 using System.Collections.Generic;
 using MonoDevelop.Ide.Gui;
@@ -52,7 +51,7 @@ namespace MonoDevelop.Components.DockNotebook
 				var doc = IdeApp.Workbench.ActiveDocument;
 				if (doc == null)
 					return;
-				var rootWindow = doc.Window.ActiveViewContent.Control.Toplevel as DockWindow;
+				var rootWindow = doc.Window.ActiveViewContent.Control.GetNativeWidget<Gtk.Widget> ().Toplevel as DockWindow;
 				if (rootWindow == null)
 					return;
 				
@@ -80,6 +79,7 @@ namespace MonoDevelop.Components.DockNotebook
 
 			titleWindow.FocusOutEvent += delegate {
 				timeout = GLib.Timeout.Add (100, () => {
+					timeout = 0;
 					titleWindow.Close ();
 					return false;
 				});
@@ -106,7 +106,7 @@ namespace MonoDevelop.Components.DockNotebook
 		protected override void OnDestroyed ()
 		{
 			base.OnDestroyed ();
-			Gtk.Application.Invoke (delegate {
+			Gtk.Application.Invoke ((o, args) => {
 				titleWindow.Destroy ();
 			});
 			IdeApp.Workbench.UnlockActiveWindowChangeEvent ();
@@ -233,6 +233,7 @@ namespace MonoDevelop.Components.DockNotebook
 		protected override bool OnFocusOutEvent (EventFocus evt)
 		{
 			timeout = GLib.Timeout.Add (100, () => {
+				timeout = 0;
 				titleWindow.Close ();
 				return false;
 			});
@@ -406,13 +407,19 @@ namespace MonoDevelop.Components.DockNotebook
 			Child.ShowAll ();
 		}
 
-		Xwt.Drawing.Image RenderWidget (Widget w)
+		static Xwt.Drawing.Image RenderWidget (Widget w)
 		{
 			Gdk.Window win = w.GdkWindow;
-			if (win != null && win.IsViewable)
-				return Xwt.Toolkit.CurrentEngine.WrapImage (Gdk.Pixbuf.FromDrawable (win, Colormap.System, w.Allocation.X, w.Allocation.Y, 0, 0, w.Allocation.Width, w.Allocation.Height));
-			else
+			if (win == null || !win.IsViewable) {
 				return null;
+			}
+
+#if MAC
+			//WORKAROUND: Pixbuf.FromDrawable (and by extension XWT's RenderWidget) is broken on Mac
+			return Xwt.Toolkit.NativeEngine.WrapImage (Mac.GtkMacInterop.RenderGtkWidget (w));
+#else
+			return Xwt.Toolkit.CurrentEngine.RenderWidget (Xwt.Toolkit.CurrentEngine.WrapWidget (w));
+#endif
 		}
 
 		public void SetDectorated (bool decorated)
@@ -464,7 +471,7 @@ namespace MonoDevelop.Components.DockNotebook
 
 		public void Close ()
 		{
-			Application.Invoke (delegate {
+			Application.Invoke ((o, args) => {
 				placeholder.Destroy ();
 			});
 		}

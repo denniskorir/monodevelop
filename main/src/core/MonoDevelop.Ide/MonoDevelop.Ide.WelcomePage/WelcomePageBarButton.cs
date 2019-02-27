@@ -28,6 +28,7 @@ using Gtk;
 using MonoDevelop.Core;
 using System.Xml.Linq;
 using MonoDevelop.Components;
+using MonoDevelop.Components.AtkCocoaHelper;
 
 namespace MonoDevelop.Ide.WelcomePage
 {
@@ -74,23 +75,37 @@ namespace MonoDevelop.Ide.WelcomePage
 
 		public WelcomePageBarButton (string title, string href, string iconResource = null)
 		{
-			FontFamily = Platform.IsMac ? Styles.WelcomeScreen.FontFamilyMac : Styles.WelcomeScreen.FontFamilyWindows;
-			HoverColor = Styles.WelcomeScreen.Links.HoverColor;
-			Color = Styles.WelcomeScreen.Links.Color;
-			FontSize = Styles.WelcomeScreen.Links.FontSize;
+			var actionHandler = new ActionDelegate (this);
+			actionHandler.PerformPress += HandlePress;
+
+			Accessible.Role = Atk.Role.Link;
+
+			Accessible.SetTitle (title);
+			if (!string.IsNullOrEmpty (href)) {
+				Accessible.SetUrl (href);
+			}
+			Accessible.Description = "Opens the link in a web browser";
+
+			UpdateStyle ();
 
 			VisibleWindow = false;
-			this.Text = GettextCatalog.GetString (title);
+			this.Text = title;
 			this.actionLink = href;
 			if (!string.IsNullOrEmpty (iconResource)) {
 				imageHover = Xwt.Drawing.Image.FromResource (iconResource);
 				imageNormal = imageHover.WithAlpha (0.7);
 			}
 
+			box.Accessible.SetShouldIgnore (true);
+
 			IconTextSpacing = Styles.WelcomeScreen.Links.IconTextSpacing;
 			image = new Xwt.ImageView ();
 			label = CreateLabel ();
 			imageWidget = image.ToGtkWidget ();
+
+			label.Accessible.SetShouldIgnore (true);
+			imageWidget.Accessible.SetShouldIgnore (true);
+
 			box.PackStart (imageWidget, false, false, 0);
 			if (imageNormal == null)
 				imageWidget.NoShowAll = true;
@@ -98,9 +113,31 @@ namespace MonoDevelop.Ide.WelcomePage
 			box.ShowAll ();
 			Add (box);
 
+			Gui.Styles.Changed += UpdateStyle;
 			Update ();
 
 			Events |= (Gdk.EventMask.EnterNotifyMask | Gdk.EventMask.LeaveNotifyMask | Gdk.EventMask.ButtonReleaseMask);
+		}
+
+		void UpdateStyle (object sender = null, EventArgs e = null)
+		{
+			OnUpdateStyle ();
+			if (label != null) {
+				box.Remove (label);
+				box.PackStart (label = CreateLabel ());
+				box.ShowAll ();
+				Update ();
+			}
+			QueueResize ();
+		}
+
+		protected virtual void OnUpdateStyle ()
+		{
+			FontFamily = Platform.IsMac ? Styles.WelcomeScreen.FontFamilyMac : Styles.WelcomeScreen.FontFamilyWindows;
+			HoverColor = Styles.WelcomeScreen.Links.HoverColor;
+			Color = Styles.WelcomeScreen.Links.Color;
+			FontSize = Styles.WelcomeScreen.Links.FontSize;
+			FontWeight = Pango.Weight.Bold;
 		}
 
 		protected virtual Label CreateLabel ()
@@ -149,6 +186,11 @@ namespace MonoDevelop.Ide.WelcomePage
 			return base.OnButtonReleaseEvent (evnt);
 		}
 
+		void HandlePress (object sender, EventArgs args)
+		{
+			OnClicked ();
+		}
+
 		protected virtual void OnClicked ()
 		{
 			WelcomePageSection.DispatchLink (actionLink);
@@ -160,6 +202,12 @@ namespace MonoDevelop.Ide.WelcomePage
 				image.Image = mouseOver ? imageHover : imageNormal;
 			var color = mouseOver ? HoverColor : Color;
 			label.Markup = WelcomePageSection.FormatText (FontFamily, FontSize, FontWeight, color, Text);
+		}
+
+		protected override void OnDestroyed ()
+		{
+			Gui.Styles.Changed -= UpdateStyle;
+			base.OnDestroyed ();
 		}
 	}
 }

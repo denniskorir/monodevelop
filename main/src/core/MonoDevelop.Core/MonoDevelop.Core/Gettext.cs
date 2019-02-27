@@ -33,6 +33,8 @@ using Mono.Unix;
 using System.Globalization;
 using System.Runtime.InteropServices;
 using System.Threading;
+using Mono.Addins;
+using System.Collections.Generic;
 
 namespace MonoDevelop.Core
 {
@@ -43,6 +45,60 @@ namespace MonoDevelop.Core
 		[DllImport ("kernel32.dll", SetLastError = true)]
 		static extern int SetThreadUILanguage (int LangId);
 
+		const int LOCALE_CUSTOM_UNSPECIFIED = 4096;
+
+		public static void Initialize ()
+		{
+			// no-op, triggers static ctor.
+		}
+
+		static Dictionary<string, string> localeToCulture = new Dictionary<string, string> {
+			{ "cs", "cs-CZ" },
+			{ "de", "de-DE" },
+			{ "es", "es-ES" },
+			{ "fr", "fr-FR" },
+			{ "it", "it-IT" },
+			{ "ja", "ja-JP" },
+			{ "ko", "ko-KR" },
+			{ "pl", "pl-PL" },
+			{ "pt", "pt-BR" },
+			{ "ru", "ru-RU" },
+			{ "tr", "tr-TR" },
+			{ "zh_CN", "zh-CN" },
+			{ "zh_TW", "zh-TW" },
+		};
+
+		static void SetLocale (string locale)
+		{
+			string cultureLang;
+			if (!localeToCulture.TryGetValue (locale, out cultureLang))
+				cultureLang = locale.Replace ("_", "-");
+
+			CultureInfo ci;
+			try {
+				ci = CultureInfo.GetCultureInfo (cultureLang);
+			} catch (Exception e) {
+				LoggingService.LogError ($"Failed to grab culture {cultureLang}, using default", e);
+				return;
+			}
+
+			if (ci.IsNeutralCulture) {
+				// We need a non-neutral culture
+				foreach (CultureInfo c in CultureInfo.GetCultures (CultureTypes.AllCultures & ~CultureTypes.NeutralCultures))
+					if (c.Parent != null && c.Parent.Name == ci.Name && c.LCID != LOCALE_CUSTOM_UNSPECIFIED) {
+						ci = c;
+						break;
+					}
+			}
+			if (!ci.IsNeutralCulture) {
+				if (Platform.IsWindows)
+					SetThreadUILanguage (ci.LCID);
+				mainThread.CurrentUICulture = ci;
+			}
+			if (!Platform.IsWindows)
+				Environment.SetEnvironmentVariable ("LANGUAGE", locale);
+		}
+
 		static GettextCatalog ()
 		{
 			mainThread = Thread.CurrentThread;
@@ -51,27 +107,11 @@ namespace MonoDevelop.Core
 			string catalog = Environment.GetEnvironmentVariable ("MONODEVELOP_LOCALE_PATH");
 
 			// Set the user defined language
-			string lang = PropertyService.Get ("MonoDevelop.Ide.UserInterfaceLanguage", "");
-			if (!string.IsNullOrEmpty (lang)) {
-				if (Platform.IsWindows) {
-					lang = lang.Replace("_", "-");
-					CultureInfo ci = CultureInfo.GetCultureInfo(lang);
-					if (ci.IsNeutralCulture) {
-						// We need a non-neutral culture
-						foreach (CultureInfo c in CultureInfo.GetCultures (CultureTypes.AllCultures & ~CultureTypes.NeutralCultures))
-							if (c.Parent != null && c.Parent.Name == ci.Name) {
-								ci = c;
-								break;
-							}
-					}
-					if (!ci.IsNeutralCulture) {
-						SetThreadUILanguage (ci.LCID);
-						mainThread.CurrentUICulture = ci;
-					}
-				}
-				else
-					Environment.SetEnvironmentVariable ("LANGUAGE", lang);
-			}
+			var locale = UILocale = Runtime.Preferences.UserInterfaceLanguage;
+			if (string.IsNullOrEmpty (UILocale))
+				locale = Environment.GetEnvironmentVariable ("MONODEVELOP_STUB_LANGUAGE");
+			if (!string.IsNullOrEmpty (locale))
+				SetLocale (locale);
 			
 			if (string.IsNullOrEmpty (catalog) || !Directory.Exists (catalog)) {
 				string location = System.Reflection.Assembly.GetExecutingAssembly ().Location;
@@ -100,65 +140,95 @@ namespace MonoDevelop.Core
 			}
 		}
 
+		public static string UILocale { get; private set; }
+
 		public static CultureInfo UICulture {
 			get { return mainThread.CurrentUICulture; }
 		}
 		
 		#region GetString
+
+		static string GetStringInternal (string phrase)
+		{
+			if (Platform.IsWindows && Thread.CurrentThread.CurrentUICulture != UICulture) {
+				Thread.CurrentThread.CurrentUICulture = UICulture;
+				SetThreadUILanguage (UICulture.LCID);
+			}
+			try {
+				return Catalog.GetString (phrase);
+			} catch (Exception e) {
+				LoggingService.LogError ("Failed to localize string", e);
+				return phrase;
+			}
+		}
 		
 		public static string GetString (string phrase)
 		{
-			return Catalog.GetString (phrase);
+			return GetStringInternal (phrase);
 		}
 		
 		public static string GetString (string phrase, object arg0)
 		{
-			return string.Format (Catalog.GetString (phrase), arg0);
+			return string.Format (GetStringInternal (phrase), arg0);
 		}
 		
 		public static string GetString (string phrase, object arg0, object arg1)
 		{
-			return string.Format (Catalog.GetString (phrase), arg0, arg1);
+			return string.Format (GetStringInternal (phrase), arg0, arg1);
 		}
 		
 		public static string GetString (string phrase, object arg0, object arg1, object arg2)
 		{
-			return string.Format (Catalog.GetString (phrase), arg0, arg1, arg2);
+			return string.Format (GetStringInternal (phrase), arg0, arg1, arg2);
 		}
 		
 		public static string GetString (string phrase, params object[] args)
 		{
-			return string.Format (Catalog.GetString (phrase), args);
+			return string.Format (GetStringInternal (phrase), args);
 		}
 		
 		#endregion
 		
 		#region GetPluralString
+
+		static string GetPluralStringInternal (string singular, string plural, int number)
+		{
+			if (Platform.IsWindows && Thread.CurrentThread.CurrentUICulture != UICulture) {
+				Thread.CurrentThread.CurrentUICulture = UICulture;
+				SetThreadUILanguage (UICulture.LCID);
+			}
+			try {
+				return Catalog.GetPluralString (singular, plural, number);
+			} catch (Exception e) {
+				LoggingService.LogError ("Failed to localize string", e);
+				return number == 1 ? singular : plural;
+			}
+		}
 		
 		public static string GetPluralString (string singular, string plural, int number)
 		{
-			return Catalog.GetPluralString (singular, plural, number);
+			return GetPluralStringInternal (singular, plural, number);
 		}
 		
 		public static string GetPluralString (string singular, string plural, int number, object arg0)
 		{
-			return string.Format (Catalog.GetPluralString (singular, plural, number), arg0);
+			return string.Format (GetPluralStringInternal (singular, plural, number), arg0);
 		}
 		
 		public static string GetPluralString (string singular, string plural, int number, object arg0, object arg1)
 		{
-			return string.Format (Catalog.GetPluralString (singular, plural, number), arg0, arg1);
+			return string.Format (GetPluralStringInternal (singular, plural, number), arg0, arg1);
 		}
 		
 		public static string GetPluralString (string singular, string plural, int number, 
 			object arg0, object arg1, object arg2)
 		{
-			return string.Format (Catalog.GetPluralString (singular, plural, number), arg0, arg1, arg2);
+			return string.Format (GetPluralStringInternal (singular, plural, number), arg0, arg1, arg2);
 		}
 		
 		public static string GetPluralString (string singular, string plural, int number, params object[] args)
 		{
-			return string.Format (Catalog.GetPluralString (singular, plural, number), args);
+			return string.Format (GetPluralStringInternal (singular, plural, number), args);
 		}
 		#endregion
 	}

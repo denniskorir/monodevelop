@@ -2,6 +2,7 @@
 VERSION=2.1.0
 profile=default
 tests=no
+release=no
 prefix=NONE
 test -e "$CONFIG_SITE" && . "$CONFIG_SITE"
 test "$prefix" = NONE && prefix=/usr/local
@@ -10,7 +11,7 @@ usage ()
 {
 	profiles=`ls profiles | sed -e "s/$/,/g" | fmt | sed -e 's/,$//' -e "s/ChangeLog, //"`
 	echo ""
-	echo "Usage : configure [--prefix=PREFIX] [--select] [--profile=PROFILE]"
+	echo "Usage : configure [--prefix=PREFIX] [--select] [--profile=PROFILE] [--release-builds]"
 	echo ""
 	echo "This script allows selecting and configuring a set of MonoDevelop"
 	echo "modules to be included in an integrated build."
@@ -48,6 +49,12 @@ usage ()
 	echo ""
 	echo "--enable-tests"
 	echo "  Build the md test suite"
+	echo ""
+	echo "--enable-release"
+	echo "  Builds md in release mode"
+	echo ""
+	echo "--enable-mac32"
+	echo "  Build for i386 on OS X"
 	echo ""
 	echo "--profile=PROFILE"
 	echo ""
@@ -136,7 +143,7 @@ handle_config_error ()
 {
 	if test `uname` = "Darwin"; then
 		echo ""
-		echo "Have you followed http://monodevelop.com/Developers/Mac_Support/Building_MonoDevelop_on_OS_X ?"
+		echo "Have you followed http://www.monodevelop.com/developers/building-monodevelop/#macosx ?"
 		echo ""
 	fi
 	exit 1
@@ -155,6 +162,12 @@ configure_packages ()
 			enable_tests=" "
 		fi
 
+		if test `uname` != "Darwin" || test xno == x$x64; then
+			enable_x64=--with-macarch=i386
+		else
+			enable_x64=--with-macarch=x86_64
+		fi
+
 		prefixarg="--prefix=$prefix"
 		builddir=`pwd`/$path/build
 
@@ -167,6 +180,9 @@ configure_packages ()
 				prefixarg=""
 			fi
 		done
+		if test xyes == x$release; then
+			ops="$ops --enable-release"
+		fi
 
 		title="Configuring package: $path"
 		nc=`echo $title | wc -m`
@@ -175,13 +191,16 @@ configure_packages ()
 		echo
 		echo "Configuration options: $ops"
 		if test -a $path/autogen.sh; then
-			sct="./autogen.sh $enable_tests"
+			sct="./autogen.sh $enable_tests $enable_x64"
 		elif test -a $path/configure; then
 			sct=./configure
 		elif test -a $path/configure.sh; then
 			sct=./configure.sh
 		else
-			echo Configuration script not found in directory: $p
+			echo -en '\033[0;31m'
+			echo Configuration script not found in directory: $path
+			echo Try running $ git submodule update --init --recursive
+			echo -en '\033[0m'
 			exit 1
 		fi
 		pushd $path > /dev/null
@@ -224,6 +243,12 @@ while test x$1 != x; do
 	case $1 in
 		--enable-tests)
 			tests=yes
+			;;
+		--enable-release)
+			release=yes
+			;;
+		--enable-mac32)
+			x64=no
 			;;
 		--prefix=*)
 			prefix=`echo $1 | sed 's/--prefix=//'`
@@ -283,6 +308,8 @@ if test `uname` = "Darwin"; then
 	fi
 	# add in libsvn's directory as a fallback path. user-set paths will override it
 	export DYLD_FALLBACK_LIBRARY_PATH="$DYLD_FALLBACK_LIBRARY_PATH:/Library/Developer/CommandLineTools/usr/lib:/usr/local/lib:`pwd`/main/build/bin"
+
+	ruby dependency_checker.rb || exit 1
 fi
 
 configure_packages

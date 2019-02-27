@@ -27,70 +27,167 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using ICSharpCode.PackageManagement;
-using MonoDevelop.Ide;
+using System.Threading;
+using System.Threading.Tasks;
+using MonoDevelop.Core;
 using MonoDevelop.Projects;
-using NuGet;
+using NuGet.Configuration;
+using NuGet.PackageManagement;
+using NuGet.Packaging.Core;
+using NuGet.ProjectManagement;
+using NuGet.Protocol.Core.Types;
+using NuGet.Versioning;
 
 namespace MonoDevelop.PackageManagement
 {
-	public class PackageManagementProjectOperations : IPackageManagementProjectOperations
+	internal class PackageManagementProjectOperations : IPackageManagementProjectOperations
 	{
-		IPackageManagementSolution solution;
-		IRegisteredPackageRepositories registeredPackageRepositories;
 		BackgroundPackageActionRunner backgroundActionRunner;
-		IPackageManagementEvents packageManagementEvents;
 
 		public PackageManagementProjectOperations (
-			IPackageManagementSolution solution,
-			IRegisteredPackageRepositories registeredPackageRepositories,
 			BackgroundPackageActionRunner backgroundActionRunner,
 			IPackageManagementEvents packageManagementEvents)
 		{
-			this.solution = solution;
-			this.registeredPackageRepositories = registeredPackageRepositories;
 			this.backgroundActionRunner = backgroundActionRunner;
-			this.packageManagementEvents = packageManagementEvents;
 
-			packageManagementEvents.ParentPackageInstalled += PackageInstalled;
-			packageManagementEvents.ParentPackageUninstalled += PackageUninstalled;
+			packageManagementEvents.PackageInstalled += PackageInstalled;
+			packageManagementEvents.PackageUninstalled += PackageUninstalled;
+			packageManagementEvents.PackagesRestored += OnPackagesRestored;
 		}
 
 		public event EventHandler<PackageManagementPackageReferenceEventArgs> PackageReferenceAdded;
 		public event EventHandler<PackageManagementPackageReferenceEventArgs> PackageReferenceRemoved;
+		public event EventHandler PackagesRestored;
 
 		public void InstallPackages (
 			string packageSourceUrl,
 			Project project,
 			IEnumerable<PackageManagementPackageReference> packages)
 		{
-			List<IPackageAction> actions = null;
-
-			DispatchService.GuiSyncDispatch (() => {
-				IPackageRepository repository = CreatePackageRepository (packageSourceUrl);
-				IPackageManagementProject packageManagementProject = solution.GetProject (repository, new DotNetProjectProxy ((DotNetProject)project));
-				actions = packages.Select (packageReference => {
-					InstallPackageAction action = packageManagementProject.CreateInstallPackageAction ();
-					action.PackageId = packageReference.Id;
-					action.PackageVersion = new SemanticVersion (packageReference.Version);
-					return (IPackageAction)action;
-				}).ToList ();
-			});
-
-			ProgressMonitorStatusMessage progressMessage = GetProgressMonitorStatusMessages (actions);
-			backgroundActionRunner.RunAndWait (progressMessage, actions);
+			InstallPackages (packageSourceUrl, project, packages, licensesAccepted: false);
 		}
 
-		IPackageRepository CreatePackageRepository (string packageSourceUrl)
+		public void InstallPackages (
+			string packageSourceUrl,
+			Project project,
+			IEnumerable<PackageManagementPackageReference> packages,
+			bool licensesAccepted)
 		{
-			IPackageRepository repository = registeredPackageRepositories.CreateRepository (new PackageSource (packageSourceUrl));
-			return new PriorityPackageRepository (MachineCache.Default, repository);
+			var repositoryProvider = SourceRepositoryProviderFactory.CreateSourceRepositoryProvider ();
+			var repository = repositoryProvider.CreateRepository (new PackageSource (packageSourceUrl));
+
+			InstallPackages (new [] { repository }, project, packages, licensesAccepted);
 		}
 
-		ProgressMonitorStatusMessage GetProgressMonitorStatusMessages (List<IPackageAction> packageActions)
+		public void InstallPackages (
+			Project project,
+			IEnumerable<PackageManagementPackageReference> packages)
+		{
+			var repositoryProvider = SourceRepositoryProviderFactory.CreateSourceRepositoryProvider ();
+			var repositories = repositoryProvider.GetRepositories ().ToList ();
+			InstallPackages (repositories, project, packages, licensesAccepted: false);
+		}
+
+		/// <summary>
+		/// Installs NuGet packages into the selected project using the enabled package sources.
+		/// </summary>
+		/// <param name="project">Project.</param>
+		/// <param name="packages">Packages.</param>
+		public Task InstallPackagesAsync (Project project, IEnumerable<PackageManagementPackageReference> packages)
+		{
+			var repositoryProvider = SourceRepositoryProviderFactory.CreateSourceRepositoryProvider ();
+			var repositories = repositoryProvider.GetRepositories ().ToList ();
+
+			var actions = CreateInstallActions (repositories, project, packages, licensesAccepted: false).ToList ();
+
+			ProgressMonitorStatusMessage progressMessage = GetInstallingStatusMessages (actions);
+			return backgroundActionRunner.RunAsync (progressMessage, actions);
+		}
+
+		/// <summary>
+		/// Installs NuGet packages into the selected project using the enabled package sources.
+		/// </summary>
+		public Task InstallPackagesAsync (Project project, IEnumerable<PackageManagementPackageReference> packages, bool licensesAccepted)
+		{
+			var repositoryProvider = SourceRepositoryProviderFactory.CreateSourceRepositoryProvider ();
+			var repositories = repositoryProvider.GetRepositories ().ToList ();
+
+			var actions = CreateInstallActions (repositories, project, packages, licensesAccepted).ToList ();
+
+			ProgressMonitorStatusMessage progressMessage = GetInstallingStatusMessages (actions);
+			return backgroundActionRunner.RunAsync (progressMessage, actions);
+		}
+
+		void InstallPackages (
+			IEnumerable<SourceRepository> repositories,
+			Project project,
+			IEnumerable<PackageManagementPackageReference> packages,
+			bool licensesAccepted)
+		{
+			var actions = CreateInstallActions (repositories, project, packages, licensesAccepted).ToList ();
+			ProgressMonitorStatusMessage progressMessage = GetInstallingStatusMessages (actions);
+			backgroundActionRunner.Run (progressMessage, actions);
+		}
+
+		internal IEnumerable<INuGetPackageAction> CreateInstallActions (
+			string packageSourceUrl,
+			Project project,
+			IEnumerable<PackageManagementPackageReference> packages)
+		{
+			var repositoryProvider = SourceRepositoryProviderFactory.CreateSourceRepositoryProvider ();
+			var repository = repositoryProvider.CreateRepository (new PackageSource (packageSourceUrl));
+
+			return CreateInstallActions (new [] { repository }, project, packages, false);
+		}
+
+		IEnumerable<INuGetPackageAction> CreateInstallActions (
+			IEnumerable<SourceRepository> repositories,
+			Project project,
+			IEnumerable<PackageManagementPackageReference> packages,
+			bool licensesAccepted)
+		{
+			List<INuGetPackageAction> actions = null;
+
+			Runtime.RunInMainThread (() => {
+				var solutionManager = PackageManagementServices.Workspace.GetSolutionManager (project.ParentSolution);
+				var dotNetProject = new DotNetProjectProxy ((DotNetProject)project);
+				var context = new NuGetProjectContext (solutionManager.Settings);
+
+				actions = packages.Select (packageReference => {
+					var action = new InstallNuGetPackageAction (
+						repositories,
+						solutionManager,
+						dotNetProject,
+						context);
+					action.PackageId = packageReference.Id;
+					action.Version = packageReference.GetNuGetVersion ();
+					action.LicensesMustBeAccepted = !licensesAccepted;
+					return (INuGetPackageAction)action;
+				}).ToList ();
+			}).Wait ();
+
+			return actions;
+		}
+
+		public Task InstallPackagesAsync (
+			string packageSourceUrl,
+			Project project,
+			IEnumerable<PackageManagementPackageReference> packages)
+		{
+			var repositoryProvider = SourceRepositoryProviderFactory.CreateSourceRepositoryProvider ();
+			var repository = repositoryProvider.CreateRepository (new PackageSource (packageSourceUrl));
+			var repositories = new [] { repository };
+
+			var actions = CreateInstallActions (repositories, project, packages, licensesAccepted: false).ToList ();
+
+			ProgressMonitorStatusMessage progressMessage = GetInstallingStatusMessages (actions);
+			return backgroundActionRunner.RunAsync (progressMessage, actions);
+		}
+
+		ProgressMonitorStatusMessage GetInstallingStatusMessages (List<INuGetPackageAction> packageActions)
 		{
 			if (packageActions.Count == 1) {
-				string packageId = packageActions.OfType<ProcessPackageAction> ().First ().PackageId;
+				string packageId = packageActions.OfType<INuGetPackageAction> ().First ().PackageId;
 				return ProgressMonitorStatusMessageFactory.CreateInstallingSinglePackageMessage (packageId);
 			}
 			return ProgressMonitorStatusMessageFactory.CreateInstallingMultiplePackagesMessage (packageActions.Count);
@@ -98,32 +195,121 @@ namespace MonoDevelop.PackageManagement
 
 		public IEnumerable<PackageManagementPackageReference> GetInstalledPackages (Project project)
 		{
-			List<PackageManagementPackageReference> packageReferences = null;
-		
-			DispatchService.GuiSyncDispatch (() => {
-				string url = RegisteredPackageSources.DefaultPackageSourceUrl;
-				var repository = registeredPackageRepositories.CreateRepository (new PackageSource (url));
-				IPackageManagementProject packageManagementProject = solution.GetProject (repository, new DotNetProjectProxy ((DotNetProject)project));
-				packageReferences = packageManagementProject
-					.GetPackageReferences ()
-					.Select (packageReference => new PackageManagementPackageReference (packageReference.Id, packageReference.Version.ToString ()))
-					.ToList ();
-			});
+			try {
+				return Runtime.RunInMainThread (async () => {
+					if (!IsValidProject (project)) {
+						return Enumerable.Empty<PackageManagementPackageReference> ();
+					}
 
-			return packageReferences;
+					var dotNetProject = (DotNetProject)project;
+					var solutionManager = GetSolutionManager (dotNetProject);
+					var nugetProject = CreateNuGetProject (solutionManager, dotNetProject);
+					var pathResolver = CreatePathResolver (solutionManager);
+
+					var packagesBeingInstalled = GetPackagesBeingInstalled (dotNetProject).ToList ();
+
+					var packages = await Task.Run (() => nugetProject.GetInstalledPackagesAsync (CancellationToken.None)).ConfigureAwait (false);
+
+					var packageReferences = packages
+						.Select (package => CreatePackageReference (package.PackageIdentity, nugetProject, pathResolver))
+						.ToList ();
+
+					packageReferences.AddRange (GetMissingPackagesBeingInstalled (packageReferences, packagesBeingInstalled));
+
+					return packageReferences;
+				}).Result;
+			} catch (Exception ex) {
+				LoggingService.LogError ("GetInstalledPackages error.", ex);
+				throw ExceptionUtility.Unwrap (ex);
+			}
 		}
 
-		void PackageUninstalled (object sender, ParentPackageOperationEventArgs e)
+		static bool IsValidProject (Project project)
+		{
+			return project is DotNetProject &&
+				!String.IsNullOrEmpty (project.Name);
+		}
+
+		IMonoDevelopSolutionManager GetSolutionManager (DotNetProject project)
+		{
+			if (project.ParentSolution != null) {
+				return PackageManagementServices.Workspace.GetSolutionManager (project.ParentSolution);
+			}
+			return null;
+		}
+
+		NuGetProject CreateNuGetProject (IMonoDevelopSolutionManager solutionManager, DotNetProject project)
+		{
+			if (solutionManager != null) {
+				return solutionManager.GetNuGetProject (new DotNetProjectProxy (project));
+			}
+
+			return new MonoDevelopNuGetProjectFactory ().CreateNuGetProject (project);
+		}
+
+		PackageManagementPathResolver CreatePathResolver (IMonoDevelopSolutionManager solutionManager)
+		{
+			if (solutionManager != null)
+				return new PackageManagementPathResolver (solutionManager);
+			return new PackageManagementPathResolver ();
+		}
+
+		IEnumerable<PackageManagementPackageReference> GetMissingPackagesBeingInstalled (
+			IEnumerable<PackageManagementPackageReference> existingPackages,
+			IEnumerable<PackageManagementPackageReference> packagesBeingInstalled)
+		{
+			return packagesBeingInstalled
+				.Where (package => !existingPackages.Any (existingPackage => existingPackage.Id == package.Id));
+		}
+
+		static IEnumerable<PackageManagementPackageReference> GetPackagesBeingInstalled (DotNetProject project)
+		{
+			return PackageManagementServices.BackgroundPackageActionRunner.PendingInstallActionsForProject (project)
+				.Select (CreatePackageReference);
+		}
+
+		static PackageManagementPackageReference CreatePackageReference (
+			PackageIdentity package,
+			NuGetProject nugetProject,
+			PackageManagementPathResolver pathResolver)
+		{
+			return new PackageManagementPackageReference (
+				package.Id,
+				package.Version?.ToString (),
+				pathResolver.GetPackageInstallPath (nugetProject, package));
+		}
+
+		static PackageManagementPackageReference CreatePackageReference (IInstallNuGetPackageAction installAction)
+		{
+			return new PackageManagementPackageReference (
+				installAction.PackageId, 
+				GetNuGetVersionString (installAction.Version));
+		}
+
+		static string GetNuGetVersionString (NuGetVersion version)
+		{
+			if (version != null)
+				return version.ToString ();
+
+			return null;
+		}
+
+		void PackageUninstalled (object sender, PackageManagementEventArgs e)
 		{
 			OnPackageReferencedRemoved (e);
 		}
 
-		void PackageInstalled (object sender, ParentPackageOperationEventArgs e)
+		void PackageInstalled (object sender, PackageManagementEventArgs e)
 		{
 			OnPackageReferenceAdded (e);
 		}
 
-		void OnPackageReferencedRemoved (ParentPackageOperationEventArgs e)
+		void OnPackagesRestored (object sender, EventArgs e)
+		{
+			PackagesRestored?.Invoke (sender, e);
+		}
+
+		void OnPackageReferencedRemoved (PackageManagementEventArgs e)
 		{
 			var handler = PackageReferenceRemoved;
 			if (handler != null) {
@@ -131,7 +317,7 @@ namespace MonoDevelop.PackageManagement
 			}
 		}
 
-		void OnPackageReferenceAdded (ParentPackageOperationEventArgs e)
+		void OnPackageReferenceAdded (PackageManagementEventArgs e)
 		{
 			var handler = PackageReferenceAdded;
 			if (handler != null) {
@@ -139,12 +325,66 @@ namespace MonoDevelop.PackageManagement
 			}
 		}
 
-		PackageManagementPackageReferenceEventArgs CreateEventArgs (ParentPackageOperationEventArgs e)
+		PackageManagementPackageReferenceEventArgs CreateEventArgs (PackageManagementEventArgs e)
 		{
 			return new PackageManagementPackageReferenceEventArgs (
 				e.Project.DotNetProject,
 				e.Package.Id,
 				e.Package.Version.ToString ());
+		}
+
+		public void UninstallPackages (
+			Project project,
+			IEnumerable<string> packages,
+			bool removeDependencies = false)
+		{
+			var actions = CreateUninstallActions (project, packages, removeDependencies).ToList ();
+			ProgressMonitorStatusMessage progressMessage = GetUninstallingStatusMessages (actions);
+			backgroundActionRunner.Run (progressMessage, actions);
+		}
+
+		IEnumerable<INuGetPackageAction> CreateUninstallActions (
+			Project project,
+			IEnumerable<string> packages,
+			bool removeDependencies)
+		{
+			List<INuGetPackageAction> actions = null;
+
+			Runtime.RunInMainThread (() => {
+				var solutionManager = PackageManagementServices.Workspace.GetSolutionManager (project.ParentSolution);
+				var dotNetProject = new DotNetProjectProxy ((DotNetProject)project);
+
+				actions = packages.Select (packageId => {
+					var action = new UninstallNuGetPackageAction (
+						solutionManager,
+						dotNetProject);
+					action.PackageId = packageId;
+					action.RemoveDependencies = removeDependencies;
+					action.IsErrorWhenPackageNotInstalled = false;
+					return (INuGetPackageAction)action;
+				}).ToList ();
+			}).Wait ();
+
+			return actions;
+		}
+
+		ProgressMonitorStatusMessage GetUninstallingStatusMessages (List<INuGetPackageAction> packageActions)
+		{
+			if (packageActions.Count == 1) {
+				string packageId = packageActions.OfType<INuGetPackageAction> ().First ().PackageId;
+				return ProgressMonitorStatusMessageFactory.CreateRemoveSinglePackageMessage (packageId);
+			}
+			return ProgressMonitorStatusMessageFactory.CreateRemovingMultiplePackagesMessage (packageActions.Count);
+		}
+
+		public Task UninstallPackagesAsync (
+			Project project,
+			IEnumerable<string> packages,
+			bool removeDependencies = false)
+		{
+			var actions = CreateUninstallActions (project, packages, removeDependencies).ToList ();
+			ProgressMonitorStatusMessage progressMessage = GetUninstallingStatusMessages (actions);
+			return backgroundActionRunner.RunAsync (progressMessage, actions);
 		}
 	}
 }

@@ -47,7 +47,7 @@ namespace MonoDevelop.Ide.Projects.OptionPanels
 	{
 		RuntimeOptionsPanelWidget widget;
 
-		public override Widget CreatePanelWidget()
+		public override Control CreatePanelWidget()
 		{
 			return (widget = new RuntimeOptionsPanelWidget ((DotNetProject)ConfiguredProject, ItemConfigurations));
 		}
@@ -74,7 +74,7 @@ namespace MonoDevelop.Ide.Projects.OptionPanels
 			}
 			
 			frameworks = Runtime.SystemAssemblyService.GetTargetFrameworks ()
-				.Where (fx => !fx.Hidden && project.TargetRuntime.IsInstalled (fx) && project.SupportsFramework (fx))
+				.Where (fx => project.TargetRuntime.IsInstalled (fx) && project.SupportsFramework (fx))
 				.ToList ();
 			
 			bool notInstalled = false;

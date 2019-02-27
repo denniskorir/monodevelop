@@ -29,7 +29,7 @@
 
 using System;
 using System.IO;
-using System.Threading;
+using System.Threading.Tasks;
 using System.Diagnostics;
 using System.Linq;
 using MonoDevelop.Core;
@@ -42,6 +42,7 @@ using MonoDevelop.Components.Commands;
 using System.Collections.Generic;
 using System.Xml;
 using Mono.Addins;
+using MonoDevelop.Projects.MSBuild;
 
 namespace MonoDevelop.Ide.Templates
 {
@@ -100,7 +101,7 @@ namespace MonoDevelop.Ide.Templates
             return solutionDescriptor;
         }
 
-		public WorkspaceItemCreatedInformation CreateEntry (ProjectCreateInformation projectCreateInformation, string defaultLanguage)
+		public async Task<WorkspaceItemCreatedInformation> CreateEntry (ProjectCreateInformation projectCreateInformation, string defaultLanguage)
         {
             WorkspaceItem workspaceItem = null;
 
@@ -157,11 +158,11 @@ namespace MonoDevelop.Ide.Templates
 
 					var solutionItemDesc = entryDescriptors[i];
 
-					SolutionEntityItem info = solutionItemDesc.CreateItem (entryProjectCI, defaultLanguage);
+					SolutionItem info = solutionItemDesc.CreateItem (entryProjectCI, defaultLanguage);
 					if (info == null)
 						continue;
 
-					solutionItemDesc.InitializeItem (solution.RootFolder, entryProjectCI, defaultLanguage, info);
+					await solutionItemDesc.InitializeItem (solution.RootFolder, entryProjectCI, defaultLanguage, info);
 
                     IConfigurationTarget configurationTarget = info as IConfigurationTarget;
                     if (configurationTarget != null) {
@@ -185,10 +186,12 @@ namespace MonoDevelop.Ide.Templates
                 }
             }
 
-			if (!workspaceItem.FileFormat.CanWrite (workspaceItem)) {
+			var sol = workspaceItem as Solution;
+
+			if (sol != null && !sol.SupportsFormat (sol.FileFormat)) {
 				// The default format can't write solutions of this type. Find a compatible format.
-				FileFormat f = IdeApp.Services.ProjectService.FileFormats.GetFileFormatsForObject (workspaceItem).First ();
-				workspaceItem.ConvertToFormat (f, true);
+				var f = MSBuildFileFormat.GetSupportedFormats ().First (ff => ff.CanWriteFile (sol));
+				sol.ConvertToFormat (f);
 			}
 			
 			return workspaceItemCreatedInfo;

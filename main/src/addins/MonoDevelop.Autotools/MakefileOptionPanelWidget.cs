@@ -205,7 +205,7 @@ namespace MonoDevelop.Autotools
 			
 			// Data validation
 
-			MakefileData oldData = project.ExtendedProperties ["MonoDevelop.Autotools.MakefileInfo"] as MakefileData;
+			MakefileData oldData = project.GetMakefileData ();
 			MakefileData tmpData = data;
 
 			if (tmpData.IntegrationEnabled) {
@@ -266,9 +266,9 @@ namespace MonoDevelop.Autotools
 				}
 
 				//FIXME: Do this only if there are changes b/w tmpData and Data
-				project.ExtendedProperties ["MonoDevelop.Autotools.MakefileInfo"] = tmpData;
+				project.SetMakefileData (tmpData);
 
-				using (IProgressMonitor monitor = IdeApp.Workbench.ProgressMonitors.GetStatusProgressMonitor (
+				using (ProgressMonitor monitor = IdeApp.Workbench.ProgressMonitors.GetStatusProgressMonitor (
 					GettextCatalog.GetString ("Updating project"), "gtk-run", true)) {
 
 					tmpData.UpdateProject (monitor, oldData == null || (!oldData.IntegrationEnabled && tmpData.IntegrationEnabled));
@@ -354,7 +354,7 @@ namespace MonoDevelop.Autotools
 			foreach (string s in MakefileData.CompilerMessageRegex.Keys)
 				comboMessageType.AppendText (s);
 				
-			comboMessageType.AppendText ("Custom");		
+			comboMessageType.AppendText (GettextCatalog.GetString ("Custom"));		
 			comboMessageType.Active = 0;
 		}
 
@@ -720,7 +720,7 @@ namespace MonoDevelop.Autotools
 				List<string> list = new List<string> (vars);
 				list.Sort ();
 				
-				comboFilesVar.AppendText ("(None)");
+				comboFilesVar.AppendText (GettextCatalog.GetString ("(None)"));
 				foreach (string item in list)
 					combos [0].AppendText (item);
 

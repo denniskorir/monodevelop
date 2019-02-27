@@ -23,81 +23,130 @@
 // LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 // THE SOFTWARE.
+
 using System;
 using System.Collections.Generic;
-using MonoDevelop.Core;
-using ICSharpCode.NRefactory.CSharp.Resolver;
-using MonoDevelop.Ide.FindInFiles;
-using ICSharpCode.NRefactory.Semantics;
-using ICSharpCode.NRefactory.CSharp;
+using System.Collections.Immutable;
+using System.Linq;
 using System.Threading;
-using MonoDevelop.SourceEditor;
+using System.Threading.Tasks;
+
+using ICSharpCode.NRefactory6.CSharp;
+
+using Microsoft.CodeAnalysis;
+using Microsoft.CodeAnalysis.CSharp;
+using Microsoft.CodeAnalysis.CSharp.Syntax;
+using Microsoft.CodeAnalysis.CSharp.Extensions;
+using Microsoft.CodeAnalysis.Editor.Implementation.Highlighting;
+using Microsoft.CodeAnalysis.FindSymbols;
+using Roslyn.Utilities;
+
+using MonoDevelop.Core;
+using MonoDevelop.Ide;
+using MonoDevelop.Ide.Editor.Extension;
+using MonoDevelop.Ide.FindInFiles;
+using MonoDevelop.Ide.TypeSystem;
+using MonoDevelop.Refactoring;
+using MonoDevelop.CSharp.Refactoring;
+using MonoDevelop.Ide.Editor.Highlighting;
+using Microsoft.CodeAnalysis.DocumentHighlighting;
+using Microsoft.VisualStudio.Platform;
+using MonoDevelop.Ide.Composition;
 
 namespace MonoDevelop.CSharp.Highlighting
 {
-	public class HighlightUsagesExtension : AbstractUsagesExtension<ResolveResult>
+	class HighlightUsagesExtension : AbstractUsagesExtension<ImmutableArray<DocumentHighlights>>
 	{
-		CSharpSyntaxMode syntaxMode;
+		IDocumentHighlightsService highlightsService; 
 
-		public override void Initialize ()
+		protected override void Initialize ()
 		{
 			base.Initialize ();
+			highlightsService = DocumentContext.RoslynWorkspace.Services.GetLanguageServices (LanguageNames.CSharp).GetService<IDocumentHighlightsService> ();
 
-			TextEditorData.SelectionSurroundingProvider = new CSharpSelectionSurroundingProvider (Document);
-			syntaxMode = new CSharpSyntaxMode (Document);
-			TextEditorData.Document.SyntaxMode = syntaxMode;
+			Editor.SetSelectionSurroundingProvider (new CSharpSelectionSurroundingProvider (Editor, DocumentContext));
+			fallbackHighlighting = Editor.SyntaxHighlighting;
+			UpdateHighlighting ();
+			DocumentContext.AnalysisDocumentChanged += HandleAnalysisDocumentChanged;
+		}
+
+		void HandleAnalysisDocumentChanged (object sender, EventArgs args)
+		{
+			Runtime.RunInMainThread (delegate {
+				UpdateHighlighting ();
+			});
+		}
+
+		ISyntaxHighlighting fallbackHighlighting;
+		void UpdateHighlighting ()
+		{
+			if (DocumentContext?.AnalysisDocument == null) {
+				if (Editor.SyntaxHighlighting != fallbackHighlighting)
+					Editor.SyntaxHighlighting = fallbackHighlighting;
+				return;
+			}
+			var old = Editor.SyntaxHighlighting as TagBasedSyntaxHighlighting;
+			if (old == null) {
+				Editor.SyntaxHighlighting = CompositionManager.GetExportedValue<ITagBasedSyntaxHighlightingFactory> ().CreateSyntaxHighlighting (Editor.TextView, "source.cs");
+			}
 		}
 
 		public override void Dispose ()
 		{
-			if (syntaxMode != null) {
-				TextEditorData.Document.SyntaxMode = null;
-				syntaxMode.Dispose ();
-				syntaxMode = null;
-			}
+			DocumentContext.AnalysisDocumentChanged -= HandleAnalysisDocumentChanged;
+			Editor.SyntaxHighlighting = fallbackHighlighting;
 			base.Dispose ();
 		}
 
-		protected override bool TryResolve (out ResolveResult resolveResult)
+		protected async override Task<ImmutableArray<DocumentHighlights>> ResolveAsync (CancellationToken token)
 		{
-			AstNode node;
-			resolveResult = null;
-			if (!Document.TryResolveAt (Document.Editor.Caret.Location, out resolveResult, out node)) {
-				return false;
-			}
-			if (node is PrimitiveType) {
-				return false;
-			}
-			return true;
+			var analysisDocument = DocumentContext?.AnalysisDocument;
+			if (analysisDocument == null)
+				return ImmutableArray<DocumentHighlights>.Empty;
+
+			return await highlightsService.GetDocumentHighlightsAsync (analysisDocument, Editor.CaretOffset, ImmutableHashSet<Document>.Empty.Add (analysisDocument), token);
 		}
 
-
-		protected override IEnumerable<MemberReference> GetReferences (ResolveResult resolveResult, CancellationToken token)
+		protected override Task<IEnumerable<MemberReference>> GetReferencesAsync (ImmutableArray<DocumentHighlights> resolveResult, CancellationToken token)
 		{
-			var finder = new MonoDevelop.CSharp.Refactoring.CSharpReferenceFinder ();
-			if (resolveResult is MemberResolveResult) {
-				finder.SetSearchedMembers (new [] { ((MemberResolveResult)resolveResult).Member });
-			} else if (resolveResult is TypeResolveResult) {
-				finder.SetSearchedMembers (new [] { resolveResult.Type });
-			} else if (resolveResult is MethodGroupResolveResult) { 
-				finder.SetSearchedMembers (((MethodGroupResolveResult)resolveResult).Methods);
-			} else if (resolveResult is NamespaceResolveResult) { 
-				finder.SetSearchedMembers (new [] { ((NamespaceResolveResult)resolveResult).Namespace });
-			} else if (resolveResult is LocalResolveResult) { 
-				finder.SetSearchedMembers (new [] { ((LocalResolveResult)resolveResult).Variable });
-			} else if (resolveResult is NamedArgumentResolveResult) { 
-				finder.SetSearchedMembers (new [] { ((NamedArgumentResolveResult)resolveResult).Parameter });
-			} else {
-				return EmptyList;
+			var result = new List<MemberReference> ();
+			foreach (var highlight in resolveResult) {
+				foreach (var span in highlight.HighlightSpans) {
+					result.Add (new MemberReference (highlight, highlight.Document.FilePath, span.TextSpan.Start, span.TextSpan.Length) {
+						ReferenceUsageType = ConvertKind (span.Kind)
+					});
+				}
 			}
+			return Task.FromResult((IEnumerable<MemberReference>)result);
+		}
 
-			try {
-				return new List<MemberReference> (finder.FindInDocument (Document, token));
-			} catch (Exception e) {
-				LoggingService.LogError ("Error in highlight usages extension.", e);
+		static ReferenceUsageType ConvertKind (HighlightSpanKind kind)
+		{
+			switch (kind) {
+			case HighlightSpanKind.Definition:
+				return ReferenceUsageType.Declaration;
+			case HighlightSpanKind.Reference:
+				return ReferenceUsageType.Read;
+			case HighlightSpanKind.WrittenReference:
+				return ReferenceUsageType.ReadWrite;
+			default:
+				return ReferenceUsageType.Unknown;
 			}
-			return EmptyList;
+		}
+
+		internal static ReferenceUsageType GetUsage (SyntaxNode node)
+		{
+			if (node == null)
+				return ReferenceUsageType.Read;
+
+			var parent = node.AncestorsAndSelf ().OfType<ExpressionSyntax> ().FirstOrDefault ();
+			if (parent == null)
+				return ReferenceUsageType.Read;
+			if (parent.IsOnlyWrittenTo ())
+				return ReferenceUsageType.Write;
+			if (parent.IsWrittenTo ())
+				return ReferenceUsageType.ReadWrite;
+			return ReferenceUsageType.Read;
 		}
 	}
 }
-

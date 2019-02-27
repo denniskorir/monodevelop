@@ -27,11 +27,11 @@
 //
 
 using System;
-using NuGet;
+using NuGet.ProjectManagement;
 
-namespace ICSharpCode.PackageManagement
+namespace MonoDevelop.PackageManagement
 {
-	public class PackageOperationMessage
+	internal class PackageOperationMessage
 	{
 		string message;
 		object[] args;
@@ -50,7 +50,9 @@ namespace ICSharpCode.PackageManagement
 		
 		public override string ToString()
 		{
-			return String.Format(message, args);
+			if (args.Length > 0)
+				return String.Format(message, args);
+			return message;
 		}
 	}
 }

@@ -24,8 +24,11 @@
 // THE SOFTWARE.
 
 using System;
+using MonoDevelop.Components;
 using MonoDevelop.Ide.Gui.Dialogs;
 using MonoDevelop.Projects;
+using MonoDevelop.Components.AtkCocoaHelper;
+using MonoDevelop.Core;
 
 namespace MonoDevelop.Ide.Projects.OptionPanels
 {
@@ -33,7 +36,7 @@ namespace MonoDevelop.Ide.Projects.OptionPanels
 	{
 		CombineBuildOptionsWidget widget;
 		
-		public override Gtk.Widget CreatePanelWidget()
+		public override Control CreatePanelWidget()
 		{
 			return widget = new  CombineBuildOptionsWidget (ConfiguredSolution);
 		}
@@ -53,6 +56,16 @@ namespace MonoDevelop.Ide.Projects.OptionPanels
 			Build ();
 			this.solution = solution;
 			folderEntry.Path = solution.OutputDirectory;
+			SetupAccessibility ();
+		}
+
+		private void SetupAccessibility ()
+		{
+			
+			folderEntry.SetCommonAccessibilityAttributes ("CombineBuildOptions.folderEntry", 
+			                                              "", 
+			                                              GettextCatalog.GetString ("Enter the output directory"));
+			folderEntry.SetAccessibilityLabelRelationship (this.label73);
 		}
 		
 		public void Store()

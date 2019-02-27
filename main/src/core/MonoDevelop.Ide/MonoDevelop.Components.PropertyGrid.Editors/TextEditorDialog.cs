@@ -48,6 +48,7 @@ namespace MonoDevelop.Components.PropertyGrid.PropertyEditors
 			sc.Add (textview);
 			
 			dialog = new Gtk.Dialog ();
+			IdeTheme.ApplyTheme (dialog);
 			dialog.AddButton (Gtk.Stock.Cancel, Gtk.ResponseType.Cancel);
 			dialog.AddButton (Gtk.Stock.Ok, Gtk.ResponseType.Ok);
 			dialog.VBox.Add (sc);
@@ -67,12 +68,12 @@ namespace MonoDevelop.Components.PropertyGrid.PropertyEditors
 			dialog.DefaultWidth = 500;
 			dialog.DefaultHeight = 400;
 			dialog.ShowAll ();
-			return MonoDevelop.Ide.MessageService.RunCustomDialog (dialog, dialog.TransientFor);
+			return MonoDevelop.Ide.MessageService.ShowCustomDialog (dialog, dialog.TransientFor);
 		}
 		
 		public void Dispose ()
 		{
-			dialog.Destroy ();
+			dialog.Dispose ();
 		}
 	}
 }

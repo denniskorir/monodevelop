@@ -38,6 +38,7 @@ using MonoDevelop.Components.MainToolbar;
 
 using StockIcons = MonoDevelop.Ide.Gui.Stock;
 using MonoDevelop.Ide;
+using System.Threading;
 
 namespace MonoDevelop.Components.MainToolbar
 {
@@ -71,6 +72,7 @@ namespace MonoDevelop.Components.MainToolbar
 		public void ShowReady ()
 		{
 			statusBar.ShowReady ();
+			statusBar.SetMessageSourcePad (null);
 		}
 		
 		public void SetMessageSourcePad (Pad pad)
@@ -78,6 +80,13 @@ namespace MonoDevelop.Components.MainToolbar
 			StatusSourcePad = pad;
 			if (statusHandler.IsCurrentContext (this))
 				statusBar.SetMessageSourcePad (pad);
+		}
+
+		public void SetCancellationTokenSource (CancellationTokenSource source)
+		{
+			CancellationTokenSource = source;
+			if (statusHandler.IsCurrentContext (this))
+				statusBar.SetCancellationTokenSource (source);
 		}
 		
 		protected override void OnMessageChanged ()

@@ -8,4 +8,3 @@ using System.Runtime.CompilerServices;
 [assembly: AssemblyDescription ("CSharp Language Binding")]
 [assembly: AssemblyVersion ("2.6")]
 [assembly: AssemblyCopyright ("MIT X11")]
-[assembly: InternalsVisibleTo("UnitTests")]

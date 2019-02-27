@@ -31,12 +31,13 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Xml;
 
-using MonoDevelop.Projects.Formats.MSBuild;
-using NuGet;
+using MonoDevelop.Projects;
+using MonoDevelop.Projects.MSBuild;
+using NuGet.ProjectManagement;
 
-namespace ICSharpCode.PackageManagement
+namespace MonoDevelop.PackageManagement
 {
-	public static class MSBuildProjectExtensions
+	internal static class MSBuildProjectExtensions
 	{
 		static readonly XmlNamespaceManager namespaceManager =
 			new XmlNamespaceManager (new NameTable ());
@@ -49,7 +50,7 @@ namespace ICSharpCode.PackageManagement
 		public static void AddImportIfMissing (
 			this MSBuildProject project,
 			string importedProjectFile,
-			ProjectImportLocation importLocation,
+			ImportLocation importLocation,
 			string condition)
 		{
 			if (project.ImportExists (importedProjectFile))
@@ -61,66 +62,73 @@ namespace ICSharpCode.PackageManagement
 		public static void AddImport (
 			this MSBuildProject project,
 			string importedProjectFile,
-			ProjectImportLocation importLocation,
+			ImportLocation importLocation,
 			string condition)
 		{
-			XmlElement import = project.AddImportElement (importedProjectFile, importLocation);
-			import.SetAttribute ("Condition", condition);
+			MSBuildObject before = GetInsertBeforeObject (project, importLocation);
+			project.AddNewImport (importedProjectFile, condition, before);
 		}
-		
-		static XmlElement AddImportElement(
-			this MSBuildProject project,
-			string importedProjectFile,
-			ProjectImportLocation importLocation)
+
+		static MSBuildObject GetInsertBeforeObject (MSBuildProject project, ImportLocation importLocation)
 		{
-			if (importLocation == ProjectImportLocation.Top) {
-				return project.AddImportElementAtTop (importedProjectFile);
+			if (importLocation == ImportLocation.Top) {
+				return project.GetAllObjects ().FirstOrDefault ();
 			}
-			XmlElement import = project.CreateImportElement (importedProjectFile);
-			project.Document.DocumentElement.AppendChild (import);
-			return import;
-		}
-		
-		static XmlElement CreateImportElement(this MSBuildProject project, string importedProjectFile)
-		{
-			XmlElement import = project.Document.CreateElement ("Import", MSBuildProject.Schema);
-			import.SetAttribute ("Project", importedProjectFile);
-			return import;
-		}
-		
-		static XmlElement AddImportElementAtTop (this MSBuildProject project, string importedProjectFile)
-		{
-			XmlElement import = project.CreateImportElement (importedProjectFile);
-			XmlElement projectRoot = project.Document.DocumentElement;
-			projectRoot.InsertBefore (import, projectRoot.FirstChild);
-			return import;
+
+			// Return an unknown MSBuildItem instead of null so the MSBuildProject adds the import as the last
+			// child in the project.
+			return new MSBuildItem ();
 		}
 		
 		public static void RemoveImportIfExists (this MSBuildProject project, string importedProjectFile)
 		{
-			XmlElement import = project.FindImportElement (importedProjectFile);
-			if (import != null) {
-				import.ParentNode.RemoveChild (import);
-			}
+			project.RemoveImport (importedProjectFile);
 		}
 		
 		public static bool ImportExists (this MSBuildProject project, string importedProjectFile)
 		{
-			return project.FindImportElement (importedProjectFile) != null;
+			return project.GetImport (importedProjectFile) != null;
 		}
-		
-		static XmlElement FindImportElement (this MSBuildProject project, string importedProjectFile)
+
+		public static IEnumerable<ProjectPackageReference> GetEvaluatedPackageReferences (this MSBuildProject project)
 		{
-			return project
-				.Imports ()
-				.FirstOrDefault (import => String.Equals (import.GetAttribute ("Project"), importedProjectFile, StringComparison.OrdinalIgnoreCase));
+			return project.GetEvaluatedPackageReferenceItems ()
+				.Select (ProjectPackageReference.Create);
 		}
-		
-		static IEnumerable <XmlElement> Imports (this MSBuildProject project)
+
+		static IEnumerable<IMSBuildItemEvaluated> GetEvaluatedPackageReferenceItems (this MSBuildProject project)
 		{
-			foreach (XmlElement import in project.Document.DocumentElement.SelectNodes ("tns:Import", namespaceManager)) {
-				yield return import;
+			if (project.EvaluatedItems != null) {
+				return project.EvaluatedItems
+					.Where (item => item.Name == "PackageReference");
 			}
+
+			return Enumerable.Empty<IMSBuildItemEvaluated> ();
+		}
+
+		public static bool HasEvaluatedPackageReferences (this MSBuildProject project)
+		{
+			return project.GetEvaluatedPackageReferenceItems ().Any ();
+		}
+
+		/// <summary>
+		/// Returns package references (e.g. NETStandard.Library) that are not directly defined
+		/// in the project file but included due to the sdk and target framework being used.
+		/// </summary>
+		public static IEnumerable<ProjectPackageReference> GetImportedPackageReferences (this MSBuildProject project, DotNetProject dotNetProject)
+		{
+			return project.GetEvaluatedPackageReferenceItems ()
+				.Where (item => item.IsImported)
+				.Select (item => CreateImportedPackageReference (item, dotNetProject));
+		}
+
+		public static Action<ProjectPackageReference, DotNetProject> ModifyImportedPackageReference;
+
+		static ProjectPackageReference CreateImportedPackageReference (IMSBuildItemEvaluated item, DotNetProject project)
+		{
+			var packageReference = ProjectPackageReference.Create (item);
+			ModifyImportedPackageReference?.Invoke (packageReference, project);
+			return packageReference;
 		}
 	}
 }

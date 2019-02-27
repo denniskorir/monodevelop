@@ -28,21 +28,35 @@
 
 
 using System;
-using System.Reflection;
 using System.Collections;
 using System.Collections.Generic;
+using System.Diagnostics;
+using System.IO;
 using System.Linq;
+using System.Reflection;
+using System.Text;
+using System.Xml;
 
 using MonoDevelop.Components.Commands.ExtensionNodes;
-using Mono.TextEditor;
 using Mono.Addins;
 using MonoDevelop.Core;
 using MonoDevelop.Ide;
+using System.Threading.Tasks;
+using System.Threading;
 
 namespace MonoDevelop.Components.Commands
 {
 	public class CommandManager: IDisposable
 	{
+		// Carbon.framework/Versions/A/Frameworks/HIToolbox.framework/Versions/A/Headers/Events.h
+		enum JIS_VKS {
+			Yen         = 0x5d,
+			Underscore  = 0x5e,
+			KeypadComma = 0x5f,
+			Eisu        = 0x66,
+			Kana        = 0x68
+		}
+
 		Gtk.Window rootWidget;
 		KeyBindingManager bindings;
 		Gtk.AccelGroup accelGroup;
@@ -50,18 +64,16 @@ namespace MonoDevelop.Components.Commands
 		DateTime lastUserInteraction;
 		KeyboardShortcut[] chords;
 		string chord;
-		internal const int SlowCommandWarningTime = 50;
+		internal const int SlowCommandWarningTime = 25;
 		
 		Dictionary<object,Command> cmds = new Dictionary<object,Command> ();
 		Hashtable handlerInfo = new Hashtable ();
 		List<ICommandBar> toolbars = new List<ICommandBar> ();
 		CommandTargetChain globalHandlerChain;
-		ArrayList commandUpdateErrors = new ArrayList ();
-		ArrayList visitors = new ArrayList ();
+		List<object> commandUpdateErrors = new List<object> ();
+		List<ICommandTargetVisitor> visitors = new List<ICommandTargetVisitor> ();
 		LinkedList<Gtk.Window> topLevelWindows = new LinkedList<Gtk.Window> ();
 		Stack delegatorStack = new Stack ();
-
-		List<Gtk.Window> activeWindowStack = new List<Gtk.Window> ();
 
 		HashSet<object> visitedTargets = new HashSet<object> ();
 		
@@ -81,21 +93,32 @@ namespace MonoDevelop.Components.Commands
 		internal bool handlerFoundInMulticast;
 		Gtk.Widget lastActiveWidget;
 
+#if MAC
+		Foundation.NSObject keyMonitor;
+		uint throttleLastEventTime = 0;
+#endif
+
+		Dictionary<Command, HashSet<Command>> conflicts;
+		internal Dictionary<Command, HashSet<Command>> Conflicts {
+			get {
+				if (conflicts == null)
+					LoadConflicts ();
+				return conflicts;
+			}
+		}
+
 		public CommandManager (): this (null)
 		{
 		}
 		
-		public CommandManager (Gtk.Window root)
+		public CommandManager (Window root)
 		{
-			rootWidget = root;
+			if (root != null)
+				rootWidget = root;
 			bindings = new KeyBindingManager ();
 			ActionCommand c = new ActionCommand (CommandSystemCommands.ToolbarList, "Toolbar List", null, null, ActionType.Check);
 			c.CommandArray = true;
 			RegisterCommand (c);
-
-			#if MAC
-			AppKit.NSEvent.AddLocalMonitorForEventsMatchingMask (AppKit.NSEventMask.KeyDown, OnNSEventKeyPress);
-			#endif
 		}
 
 		/// <summary>
@@ -134,35 +157,10 @@ namespace MonoDevelop.Components.Commands
 		/// <summary>
 		/// Creates a menu bar from the menu definition at the provided extension path
 		/// </summary>
-		public Gtk.MenuBar CreateMenuBar (string addinPath)
+		internal Gtk.MenuBar CreateMenuBar (string addinPath)
 		{
 			CommandEntrySet cset = CreateCommandEntrySet (addinPath);
 			return CreateMenuBar (addinPath, cset);
-		}
-		
-		/// <summary>
-		/// Creates a set of toolbars from the provided extension path
-		/// </summary>
-		public Gtk.Toolbar[] CreateToolbarSet (string addinPath)
-		{
-			ArrayList bars = new ArrayList ();
-			
-			CommandEntrySet cset = CreateCommandEntrySet (addinPath);
-			foreach (CommandEntry ce in cset) {
-				CommandEntrySet ces = ce as CommandEntrySet;
-				if (ces != null)
-					bars.Add (CreateToolbar (addinPath + "/" + ces.CommandId, ces));
-			}
-			return (Gtk.Toolbar[]) bars.ToArray (typeof(Gtk.Toolbar));
-		}
-		
-		/// <summary>
-		/// Creates a toolbar from the provided extension path
-		/// </summary>
-		public Gtk.Toolbar CreateToolbar (string addinPath)
-		{
-			CommandEntrySet cset = CreateCommandEntrySet (addinPath);
-			return CreateToolbar (addinPath, cset);
 		}
 		
 		/// <summary>
@@ -186,7 +184,7 @@ namespace MonoDevelop.Components.Commands
 		/// <param name='addinPath'>
 		/// Extension path to the definition of the menu
 		/// </param>
-		public void ShowContextMenu (Gtk.Widget parent, Gdk.EventButton evt, string addinPath)
+		public void ShowContextMenu (Control parent, Gdk.EventButton evt, string addinPath)
 		{
 			ShowContextMenu (parent, evt, CreateCommandEntrySet (addinPath));
 		}
@@ -206,7 +204,7 @@ namespace MonoDevelop.Components.Commands
 		/// <param name='addinPath'>
 		/// Extension path to the definition of the menu
 		/// </param>
-		public void ShowContextMenu (Gtk.Widget parent, Gdk.EventButton evt,
+		public void ShowContextMenu (Control parent, Gdk.EventButton evt,
 			ExtensionContext ctx, string addinPath)
 		{
 			ShowContextMenu (parent, evt, CreateCommandEntrySet (ctx, addinPath));
@@ -299,7 +297,7 @@ namespace MonoDevelop.Components.Commands
 					}
 				}
 			}
-			
+
 			isChord = false;
 			binding = null;
 			
@@ -308,7 +306,7 @@ namespace MonoDevelop.Components.Commands
 		
 		public event EventHandler<KeyBindingFailedEventArgs> KeyBindingFailed;
 
-		#if MAC
+#if MAC
 		AppKit.NSEvent OnNSEventKeyPress (AppKit.NSEvent ev)
 		{
 			// If we have a native window that can handle this command, let it process
@@ -326,11 +324,26 @@ namespace MonoDevelop.Components.Commands
 				if (window.PerformKeyEquivalent (ev))
 					return null;
 
-				// If the window is a gtk window and is registered in the command manager
-				// process the events through the handler.
-				var gtkWindow = MonoDevelop.Components.Mac.GtkMacInterop.GetGtkWindow (window);
-				if (gtkWindow != null && !TopLevelWindowStack.Contains (gtkWindow))
+				// Try the default NSApplication handlers, like copy/paste commands inside native entries
+				if (PerformDefaultNSAppAction (window, ev))
 					return null;
+
+				// If this is Eisu or Kana on a Japanese keyboard make sure not to exit yet or
+				// the input source will not switch as expected.
+				if (ev.KeyCode != (ushort)JIS_VKS.Eisu && ev.KeyCode != (ushort)JIS_VKS.Kana)
+				{
+					// If the window is a gtk window and is registered in the command manager
+					// process the events through the handler.
+					var gtkWindow = MonoDevelop.Components.Mac.GtkMacInterop.GetGtkWindow(window);
+					if (gtkWindow != null && !TopLevelWindowStack.Contains(gtkWindow))
+						return null;
+				}
+			}
+
+			// If a modal dialog is running then the menus are disabled, even if the commands are not
+			// See MDMenuItem::IsGloballyDisabled
+			if (DesktopService.IsModalDialogRunning ()) {
+				return ev;
 			}
 
 			var gdkev = MonoDevelop.Components.Mac.GtkMacInterop.ConvertKeyEvent (ev);
@@ -340,7 +353,78 @@ namespace MonoDevelop.Components.Commands
 			}
 			return ev;
 		}
-		#endif
+
+		bool PerformDefaultNSAppAction (AppKit.NSWindow window, AppKit.NSEvent ev)
+		{
+			// Try the user defined bindings first
+			var gdkev = Mac.GtkMacInterop.ConvertKeyEvent (ev);
+			if (gdkev != null) {
+				bool complete;
+				KeyboardShortcut [] accels = KeyBindingManager.AccelsFromKey (gdkev, out complete);
+				if (complete) {
+					foreach (var accel in accels) {
+						var binding = KeyBindingManager.AccelLabelFromKey (accel.Key, accel.Modifier);
+
+						if (IsCommandBinding (Ide.Commands.EditCommands.Copy, binding))
+							return AppKit.NSApplication.SharedApplication.SendAction (new ObjCRuntime.Selector ("copy:"), null, window);
+
+						if (IsCommandBinding (Ide.Commands.EditCommands.Paste, binding))
+							return AppKit.NSApplication.SharedApplication.SendAction (new ObjCRuntime.Selector ("paste:"), null, window);
+
+						if (IsCommandBinding (Ide.Commands.EditCommands.Cut, binding))
+							return AppKit.NSApplication.SharedApplication.SendAction (new ObjCRuntime.Selector ("cut:"), null, window);
+
+						if (IsCommandBinding (Ide.Commands.EditCommands.SelectAll, binding))
+							return AppKit.NSApplication.SharedApplication.SendAction (new ObjCRuntime.Selector ("selectAll:"), null, window);
+
+						if (IsCommandBinding (Ide.Commands.EditCommands.Undo, binding))
+							return AppKit.NSApplication.SharedApplication.SendAction (new ObjCRuntime.Selector ("undo:"), null, window);
+
+						if (IsCommandBinding (Ide.Commands.EditCommands.Redo, binding))
+							return AppKit.NSApplication.SharedApplication.SendAction (new ObjCRuntime.Selector ("redo:"), null, window);
+					}
+				}
+			}
+
+			// Try default OSX selectors
+			bool actionResult = false;
+			if (ev.Type == AppKit.NSEventType.KeyDown) {
+				if ((ev.ModifierFlags & AppKit.NSEventModifierMask.CommandKeyMask) != 0) {
+					switch (ev.CharactersIgnoringModifiers) {
+					case "c":
+						actionResult = AppKit.NSApplication.SharedApplication.SendAction (new ObjCRuntime.Selector ("copy:"), null, window);
+						break;
+					case "v":
+						actionResult = AppKit.NSApplication.SharedApplication.SendAction (new ObjCRuntime.Selector ("paste:"), null, window);
+						break;
+					case "x":
+						actionResult = AppKit.NSApplication.SharedApplication.SendAction (new ObjCRuntime.Selector ("cut:"), null, window);
+						break;
+					case "a":
+						actionResult = AppKit.NSApplication.SharedApplication.SendAction (new ObjCRuntime.Selector ("selectAll:"), null, window);
+						break;
+					case "z":
+						actionResult = AppKit.NSApplication.SharedApplication.SendAction (new ObjCRuntime.Selector ("undo:"), null, window);
+						break;
+					case "Z":
+						actionResult = AppKit.NSApplication.SharedApplication.SendAction (new ObjCRuntime.Selector ("redo:"), null, window);
+						break;
+					}
+				}
+			}
+			return actionResult;
+		}
+
+		bool IsCommandBinding (object commandId, string binding)
+		{
+			var cmd = GetCommand (ToCommandId (commandId));
+			if (cmd != null) {
+				var bds = KeyBindingService.CurrentKeyBindingSet.GetBindings (cmd);
+				return bds.Contains (binding);
+			}
+			return false;
+		}
+#endif
 
 		[GLib.ConnectBefore]
 		void OnKeyPressed (object o, Gtk.KeyPressEventArgs e)
@@ -348,7 +432,20 @@ namespace MonoDevelop.Components.Commands
 			e.RetVal = ProcessKeyEvent (e.Event);
 		}
 
-		bool ProcessKeyEvent (Gdk.EventKey ev)
+		[GLib.ConnectBefore]
+		void OnKeyReleased (object o, Gtk.KeyReleaseEventArgs e)
+		{
+			bool complete;
+			// KeyboardShortcut[] accels = 
+			KeyBindingManager.AccelsFromKey (e.Event, out complete);
+
+			if (!complete) {
+				// incomplete accel
+				NotifyIncompleteKeyReleased (e.Event);
+			}
+		}
+
+		internal bool ProcessKeyEvent (Gdk.EventKey ev)
 		{
 			if (!IsEnabled)
 				return true;
@@ -360,6 +457,7 @@ namespace MonoDevelop.Components.Commands
 
 			if (!complete) {
 				// incomplete accel
+				NotifyIncompleteKeyPressed (ev);
 				return true;
 			}
 			
@@ -397,17 +495,49 @@ namespace MonoDevelop.Components.Commands
 			}
 
 			var toplevelFocus = IdeApp.Workbench.HasToplevelFocus;
+
+			var conflict = new List<Command> ();
+
 			bool bypass = false;
+			var dispatched = false;
+
 			for (int i = 0; i < commands.Count; i++) {
 				CommandInfo cinfo = GetCommandInfo (commands[i].Id, new CommandTargetRoute ());
+				if (cinfo.IsUpdatingAsynchronously)
+					cinfo.UpdateTask.Wait (); // Not nice, but we need a synchronous result here
 				if (cinfo.Bypass) {
 					bypass = true;
 					continue;
 				}
 
-				if (cinfo.Enabled && cinfo.Visible && DispatchCommand (commands[i].Id, CommandSource.Keybinding))
-					return result;
+				if (cinfo.Enabled && cinfo.Visible) {
+					if (!dispatched)
+						dispatched = DispatchCommand (commands [i].Id, null, null, CommandSource.Keybinding, ev.Time, cinfo);
+					conflict.Add (commands [i]);
+				} else
+					bypass = true; // allow Gtk to handle the event if the command is disabled
 			}
+
+			if (conflict.Count > 1) {
+				bool newConflict = false;
+				foreach (var item in conflict) {
+					HashSet<Command> itemConflicts;
+					if (!Conflicts.TryGetValue (item, out itemConflicts))
+						Conflicts [item] = itemConflicts = new HashSet<Command> ();
+					var tmp = conflict.Where (c => c != item);
+					if (!itemConflicts.IsSupersetOf (tmp)) {
+						itemConflicts.UnionWith (tmp);
+						newConflict = true;
+					}
+				}
+				if (newConflict)
+					SaveConflicts ();
+				if (KeyBindingFailed != null)
+					KeyBindingFailed (this, new KeyBindingFailedEventArgs (GettextCatalog.GetString ("The key combination ({0}) has conflicts.", KeyBindingManager.BindingToDisplayLabel (binding.ToString (), false))));
+			}
+
+			if (dispatched)
+				return result;
 
 			// The command has not been handled.
 			// If there is at least a handler that sets the bypass flag, allow gtk to execute the default action
@@ -422,17 +552,118 @@ namespace MonoDevelop.Components.Commands
 			chords = null;
 			return result;
 		}
+
+		void LoadConflicts ()
+		{
+			if (conflicts == null)
+				conflicts = new Dictionary<Command, HashSet<Command>> ();
+
+			var file = UserProfile.Current.CacheDir.Combine ("CommandConflicts.xml");
+
+			if (!File.Exists (file))
+				return;
+
+			try {
+				using (var reader = new XmlTextReader (file)) {
+					bool foundConflicts = false;
+					conflicts.Clear ();
+
+					while (reader.Read ()) {
+						if (reader.IsStartElement ("conflicts")) {
+							foundConflicts = true;
+							break;
+						}
+					}
+
+					if (!foundConflicts || reader.GetAttribute ("version") != "1.0")
+						return;
+
+					while (reader.Read ()) {
+						if (reader.IsStartElement ("conflict")) {
+							var conflictId = reader.GetAttribute ("id");
+							var command = GetCommand (conflictId);
+							if (command == null)
+								continue;
+
+							var conflict = new HashSet<Command> ();
+							conflicts.Add (command, conflict);
+							while (reader.Read ()) {
+								if (reader.IsStartElement ("command")) {
+									var cmdId = reader.ReadElementContentAsString ();
+									var cmd = GetCommand (cmdId);
+									if (cmd == null)
+										continue;
+									conflict.Add (cmd);
+								} else
+									break;
+							}
+						}
+					}
+				}
+			} catch (Exception e) {
+				conflicts.Clear ();
+				LoggingService.LogError ("Loading command conflicts from " + file + " failed.", e);
+			}
+		}
+
+		void SaveConflicts ()
+		{
+			if (!Directory.Exists (UserProfile.Current.CacheDir))
+				Directory.CreateDirectory (UserProfile.Current.CacheDir);
+
+			string file = UserProfile.Current.CacheDir.Combine ("CommandConflicts.xml");
+
+			try {
+				using (var stream = new FileStream (file + '~', FileMode.Create))
+				using (var writer = new XmlTextWriter (stream, Encoding.UTF8)) {
+					writer.Formatting = Formatting.Indented;
+					writer.IndentChar = ' ';
+					writer.Indentation = 2;
+
+					writer.WriteStartElement ("conflicts");
+					writer.WriteAttributeString ("version", "1.0");
+
+					foreach (var conflict in conflicts) {
+						writer.WriteStartElement ("conflict");
+						writer.WriteAttributeString ("id", conflict.Key.Id.ToString ());
+						foreach (var cmd in conflict.Value) {
+							writer.WriteStartElement ("command");
+							writer.WriteString (cmd.Id.ToString ());
+							writer.WriteEndElement ();
+						}
+						writer.WriteEndElement ();
+					}
+
+					writer.WriteEndElement ();
+				}
+				FileService.SystemRename (file + '~', file);
+			} catch (Exception e) {
+				LoggingService.LogError ("Saving command conflicts to " + file + " failed.", e);
+			}
+		}
 		
 		void NotifyKeyPressed (Gdk.EventKey ev)
 		{
 			if (KeyPressed != null)
-				KeyPressed (this, new KeyPressArgs () { Key = ev.Key, Modifiers = ev.State });
+				KeyPressed (this, new KeyPressArgs () { Key = ev.Key, KeyValue = ev.KeyValue, Modifiers = ev.State });
+		}
+
+		void NotifyIncompleteKeyPressed (Gdk.EventKey ev)
+		{
+			if (IncompleteKeyPressed != null)
+				IncompleteKeyPressed (this, new KeyPressArgs () { Key = ev.Key, KeyValue = ev.KeyValue, Modifiers = ev.State });
+		}
+
+		void NotifyIncompleteKeyReleased (Gdk.EventKey ev)
+		{
+			if (IncompleteKeyReleased != null)
+				IncompleteKeyReleased (this, new KeyPressArgs () { Key = ev.Key, KeyValue = ev.KeyValue, Modifiers = ev.State });
 		}
 		
 		/// <summary>
 		/// Sets the root window. The manager will start the command route at this window, if no other is active.
 		/// </summary>
-		public void SetRootWindow (Gtk.Window root)
+		public void SetRootWindow (Window root)
 		{
 			if (rootWidget != null)
 				rootWidget.KeyPressEvent -= OnKeyPressed;
@@ -451,6 +682,12 @@ namespace MonoDevelop.Components.Commands
 			if (topLevelWindows.First != null && topLevelWindows.First.Value == win)
 				return;
 
+#if MAC
+			if (topLevelWindows.Count == 0) {
+				keyMonitor = AppKit.NSEvent.AddLocalMonitorForEventsMatchingMask (AppKit.NSEventMask.KeyDown, OnNSEventKeyPress);
+			}
+#endif
+
 			// Ensure all events that were subscribed in StartWaitingForUserInteraction are unsubscribed
 			// before doing any change to the topLevelWindows list
 			EndWaitingForUserInteraction ();
@@ -464,6 +701,7 @@ namespace MonoDevelop.Components.Commands
 			} else {
 				topLevelWindows.AddFirst (win);
 				win.KeyPressEvent += OnKeyPressed;
+				win.KeyReleaseEvent += OnKeyReleased;
 				win.ButtonPressEvent += HandleButtonPressEvent;
 				win.Destroyed += TopLevelDestroyed;
 			}
@@ -474,16 +712,26 @@ namespace MonoDevelop.Components.Commands
 		{
 			RegisterUserInteraction ();
 		}
-		
+
 		void TopLevelDestroyed (object o, EventArgs args)
 		{
 			RegisterUserInteraction ();
 
-			Gtk.Window w = (Gtk.Window) o;
+			Gtk.Window w = (Gtk.Window)o;
 			w.Destroyed -= TopLevelDestroyed;
 			w.KeyPressEvent -= OnKeyPressed;
+			w.KeyReleaseEvent -= OnKeyReleased;
 			w.ButtonPressEvent -= HandleButtonPressEvent;
 			topLevelWindows.Remove (w);
+#if MAC
+			if (topLevelWindows.Count == 0) {
+				if (keyMonitor != null) {
+					AppKit.NSEvent.RemoveMonitor (keyMonitor);
+					keyMonitor = null;
+				}
+			}
+#endif
+
 			if (w == lastFocused)
 				lastFocused = null;
 		}
@@ -491,7 +739,17 @@ namespace MonoDevelop.Components.Commands
 		public void Dispose ()
 		{
 			disposed = true;
-			bindings.Dispose ();
+			if (bindings != null) {
+				bindings.Dispose ();
+				bindings = null;
+			}
+
+#if MAC
+			if (keyMonitor != null) {
+				AppKit.NSEvent.RemoveMonitor (keyMonitor);
+				keyMonitor = null;
+			}
+#endif
 			lastFocused = null;
 		}
 		
@@ -631,6 +889,8 @@ namespace MonoDevelop.Components.Commands
 		public void UnregisterCommandTargetVisitor (ICommandTargetVisitor visitor)
 		{
 			visitors.Remove (visitor);
+
+			StopStatusUpdaterIfNeeded ();
 		}
 		
 		/// <summary>
@@ -675,6 +935,18 @@ namespace MonoDevelop.Components.Commands
 		{
 			return GetCommand (cmdId) as ActionCommand;
 		}
+
+		/// <summary>
+		/// Gets all registered commands with the specified binding
+		/// </summary>
+		internal IEnumerable<Command> GetCommands (KeyBinding binding)
+		{
+			var commands = bindings.Commands (binding);
+			if (commands == null)
+				yield break;
+			foreach (var cmd in commands)
+				yield return cmd;
+		}
 		
 		/// <summary>
 		/// Creates a menu bar.
@@ -688,7 +960,7 @@ namespace MonoDevelop.Components.Commands
 		/// <param name='entrySet'>
 		/// Entry set with the definition of the commands to be included in the menu bar
 		/// </param>
-		public Gtk.MenuBar CreateMenuBar (string name, CommandEntrySet entrySet)
+		internal Gtk.MenuBar CreateMenuBar (string name, CommandEntrySet entrySet)
 		{
 			Gtk.MenuBar topMenu = new CommandMenuBar (this);
 			foreach (CommandEntry entry in entrySet) {
@@ -719,7 +991,7 @@ namespace MonoDevelop.Components.Commands
 		/// <param name='menu'>
 		/// The menu where to add the commands
 		/// </param>
-		public Gtk.Menu CreateMenu (CommandEntrySet entrySet, CommandMenu menu)
+		internal Gtk.Menu CreateMenu (CommandEntrySet entrySet, CommandMenu menu)
 		{
 			foreach (CommandEntry entry in entrySet) {
 				Gtk.MenuItem mi = entry.CreateMenuItem (this);
@@ -760,7 +1032,27 @@ namespace MonoDevelop.Components.Commands
 		/// </param>
 		public AppKit.NSMenu CreateNSMenu (CommandEntrySet entrySet, object initialTarget)
 		{
-			return new MonoDevelop.Components.Mac.MDMenu (this, entrySet, CommandSource.ContextMenu, initialTarget);
+			return CreateNSMenu (entrySet, initialTarget, null);
+		}
+
+		/// <summary>
+		/// Creates the menu.
+		/// </summary>
+		/// <returns>
+		/// The menu.
+		/// </returns>
+		/// <param name='entrySet'>
+		/// Entry with the command definitions
+		/// </param>
+		/// <param name='initialTarget'>
+		/// Initial command route target. The command handler will start looking for command handlers in this object.
+		/// </param>
+		/// <param name='closeHandler'>
+		/// EventHandler to be run when the menu closes
+		/// </param>
+		public AppKit.NSMenu CreateNSMenu (CommandEntrySet entrySet, object initialTarget, EventHandler closeHandler)
+		{
+			return new MonoDevelop.Components.Mac.MDMenu (this, entrySet, CommandSource.ContextMenu, initialTarget, closeHandler);
 		}
 #endif
 
@@ -777,7 +1069,24 @@ namespace MonoDevelop.Components.Commands
 		{
 			return CreateMenu (entrySet, new CommandMenu (this));
 		}
-		
+
+		/// <summary>
+		/// Creates a menu.
+		/// </summary>
+		/// <returns>
+		/// The menu.
+		/// </returns>
+		/// <param name='entrySet'>
+		/// Entry with the command definitions
+		/// </param>
+		/// <param name='closeHandler'>
+		/// EventHandler to be run when the menu closes
+		/// </param> 
+		public Gtk.Menu CreateMenu (CommandEntrySet entrySet, EventHandler closeHandler)
+		{
+			return CreateMenu (entrySet, new CommandMenu (this), closeHandler);
+		}
+
 		/// <summary>
 		/// Creates the menu.
 		/// </summary>
@@ -792,11 +1101,34 @@ namespace MonoDevelop.Components.Commands
 		/// </param>
 		public Gtk.Menu CreateMenu (CommandEntrySet entrySet, object initialTarget)
 		{
-			var menu = (CommandMenu) CreateMenu (entrySet, new CommandMenu (this));
-			menu.InitialCommandTarget = initialTarget;
-			return menu;
+			return CreateMenu (entrySet, initialTarget, null);
 		}
 		
+		/// <summary>
+		/// Creates the menu.
+		/// </summary>
+		/// <returns>
+		/// The menu.
+		/// </returns>
+		/// <param name='entrySet'>
+		/// Entry with the command definitions
+		/// </param>
+		/// <param name='initialTarget'>
+		/// Initial command route target. The command handler will start looking for command handlers in this object.
+		/// </param>
+		/// <param name='closeHandler'>
+		/// EventHandler to be run when the menu closes
+		/// </param> 
+		public Gtk.Menu CreateMenu (CommandEntrySet entrySet, object initialTarget, EventHandler closeHandler)
+		{
+			var menu = (CommandMenu) CreateMenu (entrySet, new CommandMenu (this));
+			menu.InitialCommandTarget = initialTarget;
+			if (closeHandler != null) {
+				menu.Hidden += closeHandler;
+			}
+			return menu;
+		}
+
 		/// <summary>
 		/// Shows a context menu.
 		/// </summary>
@@ -812,20 +1144,74 @@ namespace MonoDevelop.Components.Commands
 		/// <param name='initialCommandTarget'>
 		/// Initial command route target. The command handler will start looking for command handlers in this object.
 		/// </param>
-		public bool ShowContextMenu (Gtk.Widget parent, Gdk.EventButton evt, CommandEntrySet entrySet,
+		public bool ShowContextMenu (Control parent, Gdk.EventButton evt, CommandEntrySet entrySet,
 			object initialCommandTarget = null)
 		{
+			return ShowContextMenu (parent, evt, entrySet, initialCommandTarget, null);
+		}
+
+		/// <summary>
+		/// Shows a context menu.
+		/// </summary>
+		/// <param name='parent'>
+		/// Widget for which the context menu is being shown
+		/// </param>
+		/// <param name='evt'>
+		/// Current event
+		/// </param>
+		/// <param name='entrySet'>
+		/// Entry with the command definitions
+		/// </param>
+		/// <param name='initialCommandTarget'>
+		/// Initial command route target. The command handler will start looking for command handlers in this object.
+		/// </param>
+		/// <param name='closeHandler'>
+		/// An event handler which will be called when the menu closes
+		/// </param>
+		public bool ShowContextMenu (Control parent, Gdk.EventButton evt, CommandEntrySet entrySet,
+			object initialCommandTarget, EventHandler closeHandler)
+		{
 #if MAC
-			var menu = CreateNSMenu (entrySet, initialCommandTarget);
-			ContextMenuExtensionsMac.ShowContextMenu (parent, evt, menu);
+			var menu = CreateNSMenu (entrySet, initialCommandTarget ?? parent, closeHandler);
+			if (parent.nativeWidget is AppKit.NSView)
+				ContextMenuExtensionsMac.ShowContextMenu ((AppKit.NSView)parent.nativeWidget, evt, menu);
+			else
+				ContextMenuExtensionsMac.ShowContextMenu ((Gtk.Widget)parent, evt, menu);
 #else
-			var menu = CreateMenu (entrySet);
+			var menu = CreateMenu (entrySet, closeHandler);
 			if (menu != null)
 				ShowContextMenu (parent, evt, menu, initialCommandTarget);
 #endif
 			return true;
 		}
-		
+
+		/// <summary>
+		/// Shows the context menu.
+		/// </summary>
+		/// <returns><c>true</c>, if context menu was shown, <c>false</c> otherwise.</returns>
+		/// <param name="parent">Widget for which the context menu is shown</param>
+		/// <param name="x">The x coordinate.</param>
+		/// <param name="y">The y coordinate.</param>
+		/// <param name="entrySet">Entry set with the command definitions</param>
+		/// <param name="initialCommandTarget">Initial command target.</param>
+		public bool ShowContextMenu (Control parent, int x, int y, CommandEntrySet entrySet,
+			object initialCommandTarget = null)
+		{
+#if MAC
+			var menu = CreateNSMenu (entrySet, initialCommandTarget ?? parent);
+			if (parent.nativeWidget is AppKit.NSView)
+				ContextMenuExtensionsMac.ShowContextMenu ((AppKit.NSView)parent.nativeWidget, x, y, menu);
+			else
+				ContextMenuExtensionsMac.ShowContextMenu ((Gtk.Widget)parent, x, y, menu);
+#else
+			var menu = CreateMenu (entrySet);
+			if (menu != null)
+				ShowContextMenu (parent, x, y, menu, initialCommandTarget);
+#endif
+
+			return true;
+		}
+
 		/// <summary>
 		/// Shows a context menu.
 		/// </summary>
@@ -841,96 +1227,53 @@ namespace MonoDevelop.Components.Commands
 		/// <param name='initialCommandTarget'>
 		/// Initial command route target. The command handler will start looking for command handlers in this object.
 		/// </param>
-		public void ShowContextMenu (Gtk.Widget parent, Gdk.EventButton evt, Gtk.Menu menu,
+		public void ShowContextMenu (Control parent, Gdk.EventButton evt, Gtk.Menu menu,
+			object initialCommandTarget = null)
+		{
+			if (menu is CommandMenu) {
+				((CommandMenu)menu).InitialCommandTarget = initialCommandTarget ?? parent;
+			}
+			
+			MonoDevelop.Components.GtkWorkarounds.ShowContextMenu (menu, parent, evt);
+		}
+
+		public void ShowContextMenu (Control parent, int x, int y, Gtk.Menu menu,
 			object initialCommandTarget = null)
 		{
 			if (menu is CommandMenu) {
 				((CommandMenu)menu).InitialCommandTarget = initialCommandTarget ?? parent;
 			}
 
-			Mono.TextEditor.GtkWorkarounds.ShowContextMenu (menu, parent, evt);
+			MonoDevelop.Components.GtkWorkarounds.ShowContextMenu (menu, parent, x, y);
 		}
-		
+
 		/// <summary>
-		/// Creates a toolbar.
+		/// Shows the context menu.
 		/// </summary>
-		/// <returns>
-		/// The toolbar.
-		/// </returns>
-		/// <param name='entrySet'>
-		/// Entry with the command definitions
-		/// </param>
-		public Gtk.Toolbar CreateToolbar (CommandEntrySet entrySet)
+		/// <returns><c>true</c>, if context menu was shown, <c>false</c> otherwise.</returns>
+		/// <param name="parent">Widget for which the context menu is shown</param>
+		/// <param name="x">The x coordinate.</param>
+		/// <param name="y">The y coordinate.</param>
+		/// <param name="entrySet">Entry set with the command definitions</param>
+		/// <param name="initialCommandTarget">Initial command target.</param>
+		internal bool ShowContextMenu (Xwt.Widget parent, int x, int y, CommandEntrySet entrySet,
+			object initialCommandTarget = null)
 		{
-			return CreateToolbar ("", entrySet, null);
+			#if MAC
+			var menu = CreateNSMenu (entrySet, initialCommandTarget ?? parent);
+			if (parent.Surface.NativeWidget is AppKit.NSView view)
+				ContextMenuExtensionsMac.ShowContextMenu (view, x, y, menu);
+			else
+				ContextMenuExtensionsMac.ShowContextMenu ((Gtk.Widget)parent.Surface.NativeWidget, x, y, menu);
+			#else
+			var menu = CreateMenu (entrySet);
+			if (menu != null)
+				ShowContextMenu ((Gtk.Widget)parent.Surface.NativeWidget, x, y, menu, initialCommandTarget);
+			#endif
+
+			return true;
 		}
-		
-		/// <summary>
-		/// Creates a toolbar.
-		/// </summary>
-		/// <returns>
-		/// The toolbar.
-		/// </returns>
-		/// <param name='entrySet'>
-		/// Entry with the command definitions
-		/// </param>
-		/// <param name='initialTarget'>
-		/// Initial command route target. The command handler will start looking for command handlers in this object.
-		/// </param>
-		public Gtk.Toolbar CreateToolbar (CommandEntrySet entrySet, object initialTarget)
-		{
-			return CreateToolbar ("", entrySet, initialTarget);
-		}
-		
-		/// <summary>
-		/// Creates a toolbar.
-		/// </summary>
-		/// <returns>
-		/// The toolbar.
-		/// </returns>
-		/// <param name='id'>
-		/// Identifier of the toolbar
-		/// </param>
-		/// <param name='entrySet'>
-		/// Entry with the command definitions
-		/// </param>
-		public Gtk.Toolbar CreateToolbar (string id, CommandEntrySet entrySet)
-		{
-			return CreateToolbar (id, entrySet, null);
-		}
-		
-		/// <summary>
-		/// Creates a toolbar.
-		/// </summary>
-		/// <returns>
-		/// The toolbar.
-		/// </returns>
-		/// <param name='id'>
-		/// Identifier of the toolbar
-		/// </param>
-		/// <param name='entrySet'>
-		/// Entry with the command definitions
-		/// </param>
-		/// <param name='initialTarget'>
-		/// Initial command route target. The command handler will start looking for command handlers in this object.
-		/// </param>
-		public Gtk.Toolbar CreateToolbar (string id, CommandEntrySet entrySet, object initialTarget)
-		{
-			CommandToolbar toolbar = new CommandToolbar (this, id, entrySet.Name);
-			toolbar.InitialCommandTarget = initialTarget;
-			
-			foreach (CommandEntry entry in entrySet) {
-				Gtk.ToolItem ti = entry.CreateToolItem (this);
-				CustomItem ci = ti.Child as CustomItem;
-				if (ci != null)
-					ci.SetToolbarStyle (toolbar);
-				toolbar.Add (ti);
-			}
-			ToolbarTracker tt = new ToolbarTracker ();
-			tt.Track (toolbar);
-			return toolbar;
-		}
-		
+
 		/// <summary>
 		/// Dispatches a command.
 		/// </summary>
@@ -1042,15 +1385,77 @@ namespace MonoDevelop.Components.Commands
 		/// </param>
 		public bool DispatchCommand (object commandId, object dataItem, object initialTarget, CommandSource source)
 		{
+			return DispatchCommand (commandId, dataItem, initialTarget, source, null, null);
+		}
+
+		/// <summary>
+		/// Dispatches a command.
+		/// </summary>
+		/// <returns>
+		/// True if a handler for the command was found
+		/// </returns>
+		/// <param name='commandId'>
+		/// Identifier of the command
+		/// </param>
+		/// <param name='dataItem'>
+		/// Data item for the command. It must be one of the data items obtained by calling GetCommandInfo.
+		/// </param>
+		/// <param name='initialTarget'>
+		/// Initial command route target. The command handler will start looking for command handlers in this object.
+		/// </param>
+		/// <param name='source'>
+		/// What is causing the command to be dispatched
+		/// </param>
+		/// <param name='time'>
+		/// The time of the event, if any, that triggered this command
+		/// </param>
+		public bool DispatchCommand (object commandId, object dataItem, object initialTarget, CommandSource source, uint? time)
+		{
+			return DispatchCommand (commandId, dataItem, initialTarget, source, time, null);
+		}
+
+		internal bool DispatchCommand (object commandId, object dataItem, object initialTarget, CommandSource source, CommandInfo sourceUpdateInfo)
+		{
+			return DispatchCommand (commandId, dataItem, initialTarget, source, null, sourceUpdateInfo);
+		}
+
+		internal bool DispatchCommand (object commandId, object dataItem, object initialTarget, CommandSource source, uint? time, CommandInfo sourceUpdateInfo)
+		{
+			// (*) Before executing the command, DispatchCommand executes the command update handler to make sure the command is enabled in the given
+			// context. This is necessary because the status of the command may have changed since it was last checked (for example, since the menu
+			// was shown). In general this is not a problem because command update handlers are fast and cheap. However, it may be a problem
+			// for async command update handlers. The sourceUpdateInfo argument can be used in this case to provide the update info that was obtained
+			// when checking the status of the command before showing it to the user, so it doesn't need to be queried again.
+
+			// (**) The above special case works when the command is being executed from a menu, because the command update info has already been
+			// obtained to build the menu. However in other cases, such as execution through keyboard shortcuts or direct executions of
+			// the DispatchCommand method from code, sourceUpdateInfo may not be available. In those cases, if the command update handler is asynchronous,
+			// DispatchCommand will *not* wait for the update handler to end, it will use whatever value the handler sets before starting the
+			// async operation.
+
 			RegisterUserInteraction ();
 			
 			if (guiLock > 0)
 				return false;
 
+#if MAC
+			if (time != null) {
+				nint timeVal = 0;
+
+				timeVal = Foundation.NSUserDefaults.StandardUserDefaults.IntForKey ("KeyRepeat") * 25;
+
+				if (time - throttleLastEventTime < timeVal)
+					return false;
+
+				throttleLastEventTime = (uint)time;
+			}
+#endif
+
 			commandId = CommandManager.ToCommandId (commandId);
-			
+
 			List<HandlerCallback> handlers = new List<HandlerCallback> ();
 			ActionCommand cmd = null;
+
 			try {
 				cmd = GetActionCommand (commandId);
 				if (cmd == null)
@@ -1069,10 +1474,16 @@ namespace MonoDevelop.Components.Commands
 					
 					CommandUpdaterInfo cui = typeInfo.GetCommandUpdater (commandId);
 					if (cui != null) {
-						if (cmd.CommandArray) {
+						if (sourceUpdateInfo != null && cmdTarget == sourceUpdateInfo.SourceTarget && sourceUpdateInfo.IsUpdatingAsynchronously) {
+							// If the source update info was provided and it was part of an asynchronous command update, reuse it to avoid
+							// running the asynchronous update again. In other cases, the command update should be fast, so the check will be run again.
+							// See (*) above.
+							info = sourceUpdateInfo;
+						} else if (cmd.CommandArray) {
 							// Make sure that the option is still active
 							info.ArrayInfo = new CommandArrayInfo (info);
 							cui.Run (cmdTarget, info.ArrayInfo);
+							info.ArrayInfo.CancelAsyncUpdate (); // See (**) above
 							if (!info.ArrayInfo.Bypass) {
 								if (info.ArrayInfo.FindCommandInfo (dataItem) == null)
 									return false;
@@ -1081,6 +1492,7 @@ namespace MonoDevelop.Components.Commands
 						} else {
 							info.Bypass = false;
 							cui.Run (cmdTarget, info);
+							info.CancelAsyncUpdate (); // See (**) above
 							bypass = info.Bypass;
 							
 							if (!bypass && (!info.Enabled || !info.Visible))
@@ -1151,6 +1563,7 @@ namespace MonoDevelop.Components.Commands
 		bool DefaultDispatchCommand (ActionCommand cmd, CommandInfo info, object dataItem, object target, CommandSource source)
 		{
 			DefaultUpdateCommandInfo (cmd, info);
+			info.CancelAsyncUpdate ();
 			
 			if (cmd.CommandArray) {
 				//if (info.ArrayInfo.FindCommandInfo (dataItem) == null)
@@ -1210,7 +1623,7 @@ namespace MonoDevelop.Components.Commands
 		{
 			return GetCommandInfo (commandId, new CommandTargetRoute ());
 		}
-		
+
 		/// <summary>
 		/// Retrieves status information about a command by looking for a handler in the active command route.
 		/// </summary>
@@ -1224,6 +1637,23 @@ namespace MonoDevelop.Components.Commands
 		/// Command route origin
 		/// </param>
 		public CommandInfo GetCommandInfo (object commandId, CommandTargetRoute targetRoute)
+		{
+			return GetCommandInfo (commandId, targetRoute, default (CancellationToken));
+		}
+		
+		/// <summary>
+		/// Retrieves status information about a command by looking for a handler in the active command route.
+		/// </summary>
+		/// <returns>
+		/// The command information.
+		/// </returns>
+		/// <param name='commandId'>
+		/// Identifier of the command.
+		/// </param>
+		/// <param name='targetRoute'>
+		/// Command route origin
+		/// </param>
+		public CommandInfo GetCommandInfo (object commandId, CommandTargetRoute targetRoute, CancellationToken cancelToken)
 		{
 			commandId = CommandManager.ToCommandId (commandId);
 			ActionCommand cmd = GetActionCommand (commandId);
@@ -1286,6 +1716,8 @@ namespace MonoDevelop.Components.Commands
 								info.Visible = true;
 							return info;
 						}
+						if (info.Enabled && !info.Bypass)
+							return info;
 						continue;
 					}
 					else if (!bypass && typeInfo.GetCommandHandler (commandId) != null) {
@@ -1470,11 +1902,11 @@ namespace MonoDevelop.Components.Commands
 					ICommandArrayUpdateHandler customArrayHandlerChain = null;
 					ICommandTargetHandler customTargetHandlerChain = null;
 					ICommandArrayTargetHandler customArrayTargetHandlerChain = null;
-					List<CommandHandlerInfo> methodHandlers = new List<CommandHandlerInfo> ();
+					int handlersStart = handlers.Count;
 					
 					foreach (object attr in method.GetCustomAttributes (true)) {
 						if (attr is CommandHandlerAttribute)
-							methodHandlers.Add (new CommandHandlerInfo (method, (CommandHandlerAttribute) attr));
+							handlers.Add(new CommandHandlerInfo (method, (CommandHandlerAttribute)attr));
 						else if (attr is CommandUpdateHandlerAttribute)
 							AddUpdater (updaters, method, (CommandUpdateHandlerAttribute) attr);
 						else {
@@ -1492,21 +1924,20 @@ namespace MonoDevelop.Components.Commands
 						customArrayTargetHandlerChain = ChainHandler (customArrayTargetHandlerChain, attr);
 					}
 					
-					if (methodHandlers.Count > 0) {
+					if (handlers.Count > handlersStart) {
 						if (customHandlerChain != null || customArrayHandlerChain != null) {
 							// There are custom handlers. Create update handlers for all commands
 							// that the method handles so the custom update handlers can be chained
-							foreach (CommandHandlerInfo ci in methodHandlers) {
-								CommandUpdaterInfo c = AddUpdateHandler (updaters, ci.CommandId);
+							for (int i = handlersStart; i < handlers.Count; ++i) {
+								CommandUpdaterInfo c = AddUpdateHandler (updaters, handlers[i].CommandId);
 								c.AddCustomHandlers (customHandlerChain, customArrayHandlerChain);
 							}
 						}
 						if (customTargetHandlerChain != null || customArrayTargetHandlerChain != null) {
-							foreach (CommandHandlerInfo ci in methodHandlers)
-								ci.AddCustomHandlers (customTargetHandlerChain, customArrayTargetHandlerChain);
+							for (int i = handlersStart; i < handlers.Count; ++i)
+								handlers[i].AddCustomHandlers (customTargetHandlerChain, customArrayTargetHandlerChain);
 						}
 					}
-					handlers.AddRange (methodHandlers);
 				}
 				curType = curType.BaseType;
 			}
@@ -1534,8 +1965,9 @@ namespace MonoDevelop.Components.Commands
 
 		void AddUpdater (List<CommandUpdaterInfo> methodUpdaters, MethodInfo method, CommandUpdateHandlerAttribute attr)
 		{
+			var attrCommandId = CommandManager.ToCommandId (attr.CommandId);
 			foreach (CommandUpdaterInfo ci in methodUpdaters) {
-				if (ci.CommandId.Equals (CommandManager.ToCommandId (attr.CommandId))) {
+				if (ci.CommandId.Equals (attrCommandId)) {
 					ci.Init (method, attr);
 					return;
 				}
@@ -1646,7 +2078,7 @@ namespace MonoDevelop.Components.Commands
 				cmdTarget = null;
 			
 			if (cmdTarget == null || !visitedTargets.Add (cmdTarget)) {
-				if (delegatorStack.Count > 0) {
+				while (delegatorStack.Count > 0) {
 					var del = delegatorStack.Pop ();
 					if (del is ICommandDelegatorRouter)
 						cmdTarget = ((ICommandDelegatorRouter)del).GetNextCommandTarget ();
@@ -1696,8 +2128,19 @@ namespace MonoDevelop.Components.Commands
 					}
 				}
 			}
-			
+
+#if MAC
+			if (!hasFocus) {
+				var nsWindow = AppKit.NSApplication.SharedApplication.KeyWindow;
+				hasFocus = nsWindow != null;
+				lastFocused = win = Mac.GtkMacInterop.GetGtkWindow (nsWindow);
+			} else {
+				lastFocused = newFocused;
+			}
+#else
 			lastFocused = newFocused;
+#endif
+
 			UpdateAppFocusStatus (hasFocus, lastFocusedExists);
 			
 			if (win != null && win.IsRealized) {
@@ -1810,6 +2253,8 @@ namespace MonoDevelop.Components.Commands
 				newWait = 500;
 			else if (secs < 30)
 				newWait = 700;
+			else if (appHasFocus)
+				newWait = 2000;
 			else {
 				// The application seems to be idle. Stop the status updater and
 				// start a pasive wait for user interaction
@@ -1838,6 +2283,14 @@ namespace MonoDevelop.Components.Commands
 				toolbarUpdaterRunning = true;
 			}
 		}
+
+		void StopStatusUpdaterIfNeeded ()
+		{
+			if (toolbars.Count != 0 || visitors.Count != 0)
+				return;
+
+			StopStatusUpdater ();
+		}
 		
 		void StopStatusUpdater ()
 		{
@@ -1854,8 +2307,10 @@ namespace MonoDevelop.Components.Commands
 			
 			waitingForUserInteraction = true;
 			toolbarUpdaterRunning = false;
-			foreach (var win in topLevelWindows)
+			foreach (var win in topLevelWindows) {
 				win.MotionNotifyEvent += HandleWinMotionNotifyEvent;
+				win.FocusInEvent += HandleFocusInEventHandler;
+			}
 		}
 		
 		void EndWaitingForUserInteraction ()
@@ -1863,8 +2318,10 @@ namespace MonoDevelop.Components.Commands
 			if (!waitingForUserInteraction)
 				return;
 			waitingForUserInteraction = false;
-			foreach (var win in topLevelWindows)
+			foreach (var win in topLevelWindows) {
 				win.MotionNotifyEvent -= HandleWinMotionNotifyEvent;
+				win.FocusInEvent -= HandleFocusInEventHandler;
+			}
 
 			StartStatusUpdater ();
 		}
@@ -1877,9 +2334,18 @@ namespace MonoDevelop.Components.Commands
 			}
 		}
 
+		void HandleFocusInEventHandler (object o, Gtk.FocusInEventArgs args)
+		{
+			RegisterUserInteraction ();
+		}
+
 		void HandleWinMotionNotifyEvent (object o, Gtk.MotionNotifyEventArgs args)
 		{
 			RegisterUserInteraction ();
+		}
+
+		internal DateTime LastUserInteraction {
+			get { return lastUserInteraction; }
 		}
 		
 		public void RegisterCommandBar (ICommandBar commandBar)
@@ -1899,6 +2365,8 @@ namespace MonoDevelop.Components.Commands
 		public void UnregisterCommandBar (ICommandBar commandBar)
 		{
 			toolbars.Remove (commandBar);
+
+			StopStatusUpdaterIfNeeded ();
 		}
 		
 		void UpdateToolbars ()
@@ -1907,7 +2375,7 @@ namespace MonoDevelop.Components.Commands
 			// It then queries widgets, which resurrects widget wrappers, which breaks on managed widgets
 			if (this.disposed)
 				return;
-			
+
 			var activeWidget = GetActiveWidget (rootWidget);
 			foreach (ICommandBar toolbar in toolbars) {
 				toolbar.Update (activeWidget);
@@ -2021,6 +2489,16 @@ namespace MonoDevelop.Components.Commands
 		public event EventHandler<KeyPressArgs> KeyPressed;
 
 		/// <summary>
+		/// Occurs when incomplete key is pressed.
+		/// </summary>
+		public event EventHandler<KeyPressArgs> IncompleteKeyPressed;
+
+		/// <summary>
+		/// Occurs when incomplete key is released.
+		/// </summary>
+		public event EventHandler<KeyPressArgs> IncompleteKeyReleased;
+
+		/// <summary>
 		/// Occurs when active widget (the current command target) changes
 		/// </summary>
 		public event EventHandler<ActiveWidgetEventArgs> ActiveWidgetChanged;
@@ -2029,8 +2507,8 @@ namespace MonoDevelop.Components.Commands
 
 	public class ActiveWidgetEventArgs: EventArgs
 	{
-		public Gtk.Widget OldActiveWidget { get; internal set; }
-		public Gtk.Widget NewActiveWidget { get; internal set; }
+		public Control OldActiveWidget { get; internal set; }
+		public Control NewActiveWidget { get; internal set; }
 	}
 
 	internal class HandlerTypeInfo
@@ -2142,15 +2620,23 @@ namespace MonoDevelop.Components.Commands
 		{
 			base.Init (method, attr);
 			ParameterInfo[] pars = method.GetParameters ();
-			if (pars.Length == 1) {
-				Type t = pars[0].ParameterType;
-				
-				if (t == typeof(CommandArrayInfo)) {
+			if (pars.Length > 0 && pars.Length <= 2) {
+				if (pars.Length == 2) {
+					if (method.ReturnType != typeof (Task) || pars [1].ParameterType != typeof (CancellationToken))
+						ReportInvalidSignature (method);
+				}
+				Type t = pars [0].ParameterType;
+				if (t == typeof (CommandArrayInfo)) {
 					isArray = true;
 					return;
-				} else if (t == typeof(CommandInfo))
+				} else if (t == typeof (CommandInfo))
 					return;
 			}
+			ReportInvalidSignature (method);
+		}
+
+		void ReportInvalidSignature (MethodInfo method)
+		{
 			throw new InvalidOperationException ("Invalid signature for command update handler: " + method.DeclaringType + "." + method.Name + "()");
 		}
 
@@ -2165,24 +2651,29 @@ namespace MonoDevelop.Components.Commands
 			if (customHandlerChain != null) {
 				info.UpdateHandlerData = Method;
 
-				DateTime t = DateTime.Now;
+				var sw = Stopwatch.StartNew ();
 				customHandlerChain.CommandUpdate (cmdTarget, info);
-				var time = DateTime.Now - t;
-				if (time.TotalMilliseconds > CommandManager.SlowCommandWarningTime)
-					LoggingService.LogWarning ("Slow command update ({0}ms): Command:{1}, CustomUpdater:{2}", (int)time.TotalMilliseconds, CommandId, customHandlerChain);
+				sw.Stop ();
+				if (sw.ElapsedMilliseconds > CommandManager.SlowCommandWarningTime)
+					LoggingService.LogWarning ("Slow command update ({0}ms): Command:{1}, CustomUpdater:{2}, CommandTargetType:{3}", (int)sw.ElapsedMilliseconds, CommandId, customHandlerChain, cmdTarget.GetType ());
 			} else {
 				if (Method == null)
 					throw new InvalidOperationException ("Invalid custom update handler. An implementation of ICommandUpdateHandler was expected.");
 				if (isArray)
 					throw new InvalidOperationException ("Invalid signature for command update handler: " + Method.DeclaringType + "." + Method.Name + "()");
 
-				DateTime t = DateTime.Now;
+				var sw = Stopwatch.StartNew ();
 
-				Method.Invoke (cmdTarget, new object[] {info} );
+				if (Method.ReturnType == typeof (Task)) {
+					var t = (Task) Method.Invoke (cmdTarget, new object [] { info, info.AsyncUpdateCancellationToken });
+					info.SetUpdateTask (t);
+				}
+				else
+					Method.Invoke (cmdTarget, new object [] { info });
 
-				var time = DateTime.Now - t;
-				if (time.TotalMilliseconds > CommandManager.SlowCommandWarningTime)
-					LoggingService.LogWarning ("Slow command update ({0}ms): Command:{1}, Method:{2}", (int)time.TotalMilliseconds, CommandId, Method.DeclaringType + "." + Method.Name);
+				sw.Stop ();
+				if (sw.ElapsedMilliseconds > CommandManager.SlowCommandWarningTime)
+					LoggingService.LogWarning ("Slow command update ({0}ms): Command:{1}, Method:{2}, CommandTargetType:{3}", (int)sw.ElapsedMilliseconds, CommandId, Method.DeclaringType + "." + Method.Name, cmdTarget.GetType ());
 			}
 		}
 		
@@ -2190,20 +2681,31 @@ namespace MonoDevelop.Components.Commands
 		{
 			if (customArrayHandlerChain != null) {
 				info.UpdateHandlerData = Method;
+
+				var sw = Stopwatch.StartNew ();
+
 				customArrayHandlerChain.CommandUpdate (cmdTarget, info);
+
+				sw.Stop ();
+				if (sw.ElapsedMilliseconds > CommandManager.SlowCommandWarningTime)
+					LoggingService.LogWarning ("Slow command update ({0}ms): Command:{1}, Method:{2}, CommandTargetType:{3}", (int)sw.ElapsedMilliseconds, CommandId, Method.DeclaringType + "." + Method.Name, cmdTarget.GetType ());
 			} else {
 				if (Method == null)
 					throw new InvalidOperationException ("Invalid custom update handler. An implementation of ICommandArrayUpdateHandler was expected.");
 				if (!isArray)
 					throw new InvalidOperationException ("Invalid signature for command update handler: " + Method.DeclaringType + "." + Method.Name + "()");
 
-				DateTime t = DateTime.Now;
+				var sw = Stopwatch.StartNew ();
 
-				Method.Invoke (cmdTarget, new object[] {info} );
-				
-				var time = DateTime.Now - t;
-				if (time.TotalMilliseconds > CommandManager.SlowCommandWarningTime)
-					LoggingService.LogWarning ("Slow command update ({0}ms): Command:{1}, Method:{2}", (int)time.TotalMilliseconds, CommandId, Method.DeclaringType + "." + Method.Name);
+				if (Method.ReturnType == typeof (Task)) {
+					var t = (Task)Method.Invoke (cmdTarget, new object [] { info, info.AsyncUpdateCancellationToken });
+					info.SetUpdateTask (t);
+				} else
+					Method.Invoke (cmdTarget, new object [] { info });
+
+				sw.Stop ();
+				if (sw.ElapsedMilliseconds > CommandManager.SlowCommandWarningTime)
+					LoggingService.LogWarning ("Slow command update ({0}ms): Command:{1}, Method:{2}, CommandTargetType:{3}", (int)sw.ElapsedMilliseconds, CommandId, Method.DeclaringType + "." + Method.Name, cmdTarget.GetType ());
 			}
 		}
 	}
@@ -2215,15 +2717,26 @@ namespace MonoDevelop.Components.Commands
 		public void CommandUpdate (object target, CommandInfo info)
 		{
 			MethodInfo mi = (MethodInfo) info.UpdateHandlerData;
-			if (mi != null)
-				mi.Invoke (target, new object[] {info} );
+			if (mi != null) {
+				if (mi.ReturnType == typeof (Task)) {
+					var t = (Task) mi.Invoke (target, new object [] { info, info.AsyncUpdateCancellationToken });
+					info.SetUpdateTask (t);
+				}
+				else
+					mi.Invoke (target, new object [] { info });
+			}
 		}
 		
 		public void CommandUpdate (object target, CommandArrayInfo info)
 		{
 			MethodInfo mi = (MethodInfo) info.UpdateHandlerData;
-			if (mi != null)
-				mi.Invoke (target, new object[] {info} );
+			if (mi != null) {
+				if (mi.ReturnType == typeof (Task)) {
+					var t = (Task)mi.Invoke (target, new object [] { info, info.AsyncUpdateCancellationToken });
+					info.SetUpdateTask (t);
+				} else
+					mi.Invoke (target, new object [] { info });
+			}
 		}
 
 		public void Run (object target, Command cmd)
@@ -2484,6 +2997,7 @@ namespace MonoDevelop.Components.Commands
 	public class KeyPressArgs: EventArgs
 	{
 		public Gdk.Key Key { get; internal set; }
+		public uint KeyValue { get; internal set; }
 		public Gdk.ModifierType Modifiers { get; internal set; }
 	}
 	

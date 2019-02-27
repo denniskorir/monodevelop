@@ -31,16 +31,44 @@ using System.ComponentModel;
 using MonoDevelop.Projects;
 using MonoDevelop.Core;
 using MonoDevelop.Ide;
+using System.Linq;
 
 namespace MonoDevelop.DesignerSupport
 {
-	class ProjectFileDescriptor: CustomDescriptor
+	class ProjectFileDescriptor: CustomDescriptor, IDisposable
 	{
 		ProjectFile file;
-		
+		Project project;
+
 		public ProjectFileDescriptor (ProjectFile file)
 		{
 			this.file = file;
+			project = file.Project;
+			if (project != null) {
+				project.FilePropertyChangedInProject += OnFilePropertyChangedInProject;
+			}
+		}
+
+		void OnFilePropertyChangedInProject (object sender, ProjectFileEventArgs args)
+		{
+			var pad = IdeApp.Workbench.GetPad <PropertyPad> ();
+			if (pad == null)
+				return;
+
+			var grid = ((PropertyPad)pad.Content).PropertyGrid;
+			if (grid.IsEditing)
+				return;
+
+			if (args.Any (arg => arg.ProjectFile == file))
+				grid.Populate (saveEditSession: false);
+		}
+
+		void IDisposable.Dispose ()
+		{
+			if (project != null) {
+				project.FilePropertyChangedInProject -= OnFilePropertyChangedInProject;
+				project = null;
+			}
 		}
 		
 		[LocalizedCategory ("Misc")]
@@ -71,6 +99,7 @@ namespace MonoDevelop.DesignerSupport
 		[LocalizedDisplayName ("Build action")]
 		[LocalizedDescription ("Action to perform when building this file.")]
 		[TypeConverter (typeof (BuildActionStringsConverter))]
+		[RefreshProperties(RefreshProperties.All)]
 		public string BuildAction {
 			get { return file.BuildAction; }
 			set { file.BuildAction = value; }
@@ -122,7 +151,7 @@ namespace MonoDevelop.DesignerSupport
 					context.Instance as ProjectFileDescriptor : null;
 				
 				if (descriptor != null && descriptor.file != null && descriptor.file.Project != null) {
-					return descriptor.file.Project.GetBuildActions ();
+					return descriptor.file.Project.GetBuildActions (descriptor.file.FilePath);
 				} else {
 					return new string[] {"Content", "None", "Compile"};
 				}

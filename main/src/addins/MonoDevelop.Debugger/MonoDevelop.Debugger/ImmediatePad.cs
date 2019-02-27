@@ -37,12 +37,13 @@ using MonoDevelop.Components;
 
 namespace MonoDevelop.Debugger
 {
-	public class ImmediatePad: IPadContent
+	public class ImmediatePad: PadContent
 	{
 		static readonly object mutex = new object();
 		DebuggerConsoleView view;
+		readonly Dictionary<DebuggerSession, List<uint>> timersList = new Dictionary<DebuggerSession, List<uint>> ();
 		
-		public void Initialize (IPadWindow container)
+		protected override void Initialize (IPadWindow container)
 		{
 			view = new DebuggerConsoleView ();
 			view.ConsoleInput += OnViewConsoleInput;
@@ -64,7 +65,7 @@ namespace MonoDevelop.Debugger
 				FinishPrinting ();
 			} else {
 				var frame = DebuggingService.CurrentFrame;
-				var ops = GetEvaluationOptions ();
+				var ops = GetEvaluationOptions (false);
 				var expression = e.Text;
 
 				var vres = frame.ValidateExpression (expression, ops);
@@ -76,7 +77,7 @@ namespace MonoDevelop.Debugger
 
 				var val = frame.GetExpressionValue (expression, ops);
 				if (val.IsEvaluating) {
-					WaitForCompleted (val);
+					WaitForCompleted (val, frame.DebuggerSession);
 					return;
 				}
 
@@ -84,15 +85,18 @@ namespace MonoDevelop.Debugger
 			}
 		}	
 
-		static EvaluationOptions GetEvaluationOptions ()
+		static EvaluationOptions GetEvaluationOptions (bool membersPrint)
 		{
-			var ops = EvaluationOptions.DefaultOptions;
-			ops.AllowMethodEvaluation = true;
-			ops.AllowToStringCalls = true;
-			ops.AllowTargetInvoke = true;
+			var ops = DebuggingService.GetUserOptions ().EvaluationOptions;
+			if (!membersPrint) {
+				ops.AllowMethodEvaluation = true;
+				ops.AllowToStringCalls = true;
+				ops.AllowTargetInvoke = true;
+			}
 			ops.EvaluationTimeout = 20000;
 			ops.EllipsizeStrings = false;
 			ops.MemberEvaluationTimeout = 20000;
+			ops.GroupPrivateMembers = false;
 			return ops;
 		}
 
@@ -115,7 +119,7 @@ namespace MonoDevelop.Debugger
 				view.WriteOutput (GetErrorText (val));
 				FinishPrinting ();
 			} else {
-				var ops = GetEvaluationOptions ();
+				var ops = GetEvaluationOptions (true);
 				var children = val.GetAllChildren (ops);
 				var hasMore = false;
 
@@ -194,15 +198,23 @@ namespace MonoDevelop.Debugger
 			view.Buffer.Insert (ref start, text + "\n");
 		}
 
-		void WaitForCompleted (ObjectValue val)
+		void WaitForCompleted (ObjectValue val, DebuggerSession session)
 		{
 			var mark = view.Buffer.CreateMark (null, view.InputLineEnd, true);
 			var iteration = 0;
+			uint timerId = 0;
 
-			GLib.Timeout.Add (100, () => {
+			timerId = GLib.Timeout.Add (100, () => {
+				List<uint> list;
+				if (!timersList.TryGetValue (session, out list) || !list.Contains (timerId)) {
+					SetLineText (GettextCatalog.GetString ("Debugging stopped"), mark);
+					FinishPrinting ();
+					return false;
+				}
 				if (!val.IsEvaluating) {
 					if (iteration >= 5)
 						DeleteLineAtMark (mark);
+					list.Remove (timerId);
 
 					PrintValue (val);
 
@@ -218,6 +230,10 @@ namespace MonoDevelop.Debugger
 
 				return true;
 			});
+			List<uint> tList;
+			if (!timersList.TryGetValue (session, out tList))
+				timersList [session] = tList = new List<uint> ();
+			tList.Add (timerId);
 		}
 
 		void WaitChildForCompleted (ObjectValue val, IDictionary<ObjectValue, bool> evaluatingList, bool hasMore)
@@ -254,36 +270,34 @@ namespace MonoDevelop.Debugger
 			});
 		}	
 
-		public void RedrawContent ()
-		{
-		}
-		
-		public Gtk.Widget Control {
+		public override Control Control {
 			get {
 				return view;
 			}
 		}
 
-		public void Dispose ()
+		public override void Dispose ()
 		{
 			DebuggingService.PausedEvent -= DebuggerPaused;
 			DebuggingService.ResumedEvent -= DebuggerResumed;
 			DebuggingService.StoppedEvent -= DebuggerStopped;
+			base.Dispose ();
 		}
 
 		void DebuggerResumed (object sender, EventArgs e)
 		{
-			view.Editable = false;
+			view.Editable = DebuggingService.IsPaused;
 		}
 
 		void DebuggerPaused (object sender, EventArgs e)
 		{
-			view.Editable = true;
+			view.Editable = DebuggingService.IsPaused;
 		}
 
 		void DebuggerStopped (object sender, EventArgs e)
 		{
-			view.Editable = false;
+			timersList.Remove ((DebuggerSession)sender);
+			view.Editable = DebuggingService.IsPaused;
 		}
 	}
 }

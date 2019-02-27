@@ -25,45 +25,43 @@
 // THE SOFTWARE.
 
 using System;
+using System.Collections.Generic;
 using System.Linq;
-using ICSharpCode.PackageManagement;
+using System.Threading.Tasks;
 using MonoDevelop.Components.Commands;
 using MonoDevelop.Core;
 using MonoDevelop.Ide;
 using MonoDevelop.Projects;
+using NuGet.Common;
 
 namespace MonoDevelop.PackageManagement.Commands
 {
-	public class PackageManagementStartupHandler : CommandHandler
+	internal class PackageManagementStartupHandler : CommandHandler
 	{
-		IPackageManagementProjectService projectService;
-
-		public PackageManagementStartupHandler ()
-		{
-			projectService = PackageManagementServices.ProjectService;
-		}
-
 		protected override void Run ()
 		{
-			projectService.SolutionLoaded += SolutionLoaded;
-			projectService.SolutionUnloaded += SolutionUnloaded;
+			IdeApp.Workspace.SolutionLoaded += SolutionLoaded;
+			IdeApp.Workspace.SolutionUnloaded += SolutionUnloaded;
+			IdeApp.Workspace.ItemUnloading += WorkspaceItemUnloading;
+			IdeApp.Workspace.LastWorkspaceItemClosed += LastWorkspaceItemClosed;
+			FileService.FileChanged += FileChanged;
 		}
 
-		void SolutionLoaded (object sender, EventArgs e)
+		void SolutionLoaded (object sender, SolutionEventArgs e)
 		{
-			ClearUpdatedPackagesInSolution ();
+			Task.Run (() => OnSolutionLoaded (e.Solution)).Ignore ();
+		}
 
-			if (ShouldRestorePackages) {
-				RestoreAndCheckForUpdates ();
-			} else if (ShouldCheckForUpdates && AnyProjectHasPackages ()) {
-				// Use background dispatch even though the check is not done on the
-				// background dispatcher thread so that the solution load completes before
-				// the check for updates starts. Otherwise the check for updates finishes
-				// before the solution loads and the status bar never reports that
-				// package updates were being checked.
-				DispatchService.BackgroundDispatch (() => {
-					CheckForUpdates ();
-				});
+		async Task OnSolutionLoaded (Solution solution)
+		{
+			try {
+				if (ShouldRestorePackages) {
+					await RestoreAndCheckForUpdates (solution);
+				} else if (ShouldCheckForUpdates && AnyProjectHasPackages (solution)) {
+					CheckForUpdates (solution);
+				}
+			} catch (Exception ex) {
+				LoggingService.LogError ("PackageManagementStartupHandler error", ex);
 			}
 		}
 
@@ -75,46 +73,116 @@ namespace MonoDevelop.PackageManagement.Commands
 			get { return PackageManagementServices.Options.IsCheckForPackageUpdatesOnOpeningSolutionEnabled; }
 		}
 
-		void ClearUpdatedPackagesInSolution ()
+		void ClearUpdatedPackagesInSolution (Solution solution)
 		{
-			PackageManagementServices.UpdatedPackagesInSolution.Clear ();
+			PackageManagementServices.UpdatedPackagesInWorkspace.Clear (new SolutionProxy (solution));
 		}
 
-		void SolutionUnloaded (object sender, EventArgs e)
+		void ClearUpdatedPackages ()
 		{
-			ClearUpdatedPackagesInSolution ();
+			PackageManagementServices.UpdatedPackagesInWorkspace.Clear ();
 		}
 
-		void RestoreAndCheckForUpdates ()
+		void SolutionUnloaded (object sender, SolutionEventArgs e)
 		{
-			bool checkUpdatesAfterRestore = ShouldCheckForUpdates && AnyProjectHasPackages ();
-
-			var restorer = new PackageRestorer (projectService.OpenSolution.Solution);
-			DispatchService.BackgroundDispatch (() => {
-				restorer.Restore ();
-				if (checkUpdatesAfterRestore && !restorer.RestoreFailed) {
-					CheckForUpdates ();
-				}
-			});
+			ClearUpdatedPackagesInSolution (e.Solution);
 		}
 
-		bool AnyProjectHasPackages ()
+		void LastWorkspaceItemClosed (object sender, EventArgs e)
 		{
-			return projectService
-				.OpenSolution
-				.Solution
+			ClearUpdatedPackages ();
+			PackageManagementCredentialService.Reset ();
+		}
+
+		async Task RestoreAndCheckForUpdates (Solution solution)
+		{
+			bool checkUpdatesAfterRestore = ShouldCheckForUpdates && AnyProjectHasPackages (solution);
+
+			var action = new RestoreAndCheckForUpdatesAction (solution) {
+				CheckForUpdatesAfterRestore = checkUpdatesAfterRestore
+			};
+			bool packagesToRestore = await action.HasMissingPackages ();
+			if (packagesToRestore) {
+				ProgressMonitorStatusMessage message = ProgressMonitorStatusMessageFactory.CreateRestoringPackagesInSolutionMessage ();
+				PackageManagementServices.BackgroundPackageActionRunner.Run (message, action);
+			} else if (checkUpdatesAfterRestore) {
+				CheckForUpdates (solution);
+			}
+		}
+
+		bool AnyProjectHasPackages (Solution solution)
+		{
+			return solution
 				.GetAllProjectsWithPackages ()
 				.Any ();
 		}
 
-		void CheckForUpdates ()
+		void CheckForUpdates (Solution solution)
+		{
+			CheckForUpdates (new SolutionProxy (solution));
+		}
+
+		void CheckForUpdates (ISolution solution)
 		{
 			try {
-				PackageManagementServices.UpdatedPackagesInSolution.CheckForUpdates ();
+				PackageManagementServices.UpdatedPackagesInWorkspace.CheckForUpdates (solution);
 			} catch (Exception ex) {
-				LoggingService.LogInternalError ("Check for NuGet package updates error.", ex);
+				LoggingService.LogError ("Check for NuGet package updates error.", ex);
 			}
+		}
+
+		void WorkspaceItemUnloading (object sender, ItemUnloadingEventArgs e)
+		{
+			try {
+				e.Cancel = !PendingPackageActionsHandler.OnSolutionClosing ();
+			} catch (Exception ex) {
+				LoggingService.LogError ("Error on unloading workspace item.", ex);
+			}
+		}
+
+		//auto-restore project.json files when they're saved
+		void FileChanged (object sender, FileEventArgs e)
+		{
+			if (PackageManagementServices.BackgroundPackageActionRunner.IsRunning)
+				return;
+
+			List<DotNetProject> projects = null;
+
+			//collect all the projects with modified project.json files
+			foreach (var eventInfo in e) {
+				if (ProjectJsonPathUtilities.IsProjectConfig (eventInfo.FileName)) {
+					var directory = eventInfo.FileName.ParentDirectory;
+					foreach (var project in IdeApp.Workspace.GetAllItems<DotNetProject> ().Where (p => p.BaseDirectory == directory)) {
+						if (projects == null) {
+							projects = new List<DotNetProject> ();
+						}
+						projects.Add (project);
+					}
+				}
+			}
+
+			if (projects == null) {
+				return;
+			}
+
+			//queue up in a timeout in case this was kicked off from a command
+			GLib.Timeout.Add (0, () => {
+				if (projects.Count == 1) {
+					var project = projects [0];
+					//check the project is still open
+					if (IdeApp.Workspace.GetAllItems<DotNetProject> ().Any (p => p == project)) {
+						RestorePackagesInProjectHandler.Run (projects [0]);
+					}
+				} else {
+					var solution = projects [0].ParentSolution;
+					//check the solution is still open
+					if (IdeApp.Workspace.GetAllItems<Solution> ().Any (s => s == solution)) {
+						RestorePackagesHandler.Run (solution);
+					}
+				}
+				//TODO: handle project.json changing in multiple solutions at once
+				return false;
+			});
 		}
 	}
 }
-

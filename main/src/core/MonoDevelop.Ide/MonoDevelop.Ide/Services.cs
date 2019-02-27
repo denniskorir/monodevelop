@@ -32,6 +32,8 @@ using MonoDevelop.Ide.Gui;
 using MonoDevelop.Ide.Tasks;
 using MonoDevelop.Projects;
 using MonoDevelop.Core.Instrumentation;
+using MonoDevelop.Ide.Editor.Extension;
+using System.Collections.Generic;
 
 namespace MonoDevelop.Ide
 {
@@ -49,18 +51,192 @@ namespace MonoDevelop.Ide
 		internal static Counter DocumentsInMemory = InstrumentationService.CreateCounter ("Documents in memory", "IDE");
 		internal static Counter PadsLoaded = InstrumentationService.CreateCounter ("Pads loaded", "IDE");
 		internal static TimerCounter CommandTargetScanTime = InstrumentationService.CreateTimerCounter ("Command target scan", "Timing", 0.3, false);
-		internal static TimerCounter OpenWorkspaceItemTimer = InstrumentationService.CreateTimerCounter ("Solution opened in the IDE", "IDE", id:"Ide.Shell.SolutionOpened");
-		internal static TimerCounter OpenDocumentTimer = InstrumentationService.CreateTimerCounter ("Document opened", "IDE");
+		internal static TimerCounter<OpenWorkspaceItemMetadata> OpenWorkspaceItemTimer = InstrumentationService.CreateTimerCounter<OpenWorkspaceItemMetadata> ("Solution opened in the IDE", "IDE", id:"Ide.Shell.SolutionOpened");
+		internal static TimerCounter<OpenDocumentMetadata> OpenDocumentTimer = InstrumentationService.CreateTimerCounter<OpenDocumentMetadata> ("Open document", "IDE", id:"Ide.Shell.OpenDocument");
 		internal static TimerCounter DocumentOpened = InstrumentationService.CreateTimerCounter ("Document opened", "IDE", id:"Ide.Shell.DocumentOpened");
+		internal static Counter AutoSavedFiles = InstrumentationService.CreateCounter ("Autosaved Files", "Text Editor");
 		internal static TimerCounter BuildItemTimer = InstrumentationService.CreateTimerCounter ("Project/Solution built in the IDE", "IDE", id:"Ide.Shell.ProjectBuilt");
 		internal static Counter PadShown = InstrumentationService.CreateCounter ("Pad focused", "IDE", id:"Ide.Shell.PadShown");
+		internal static TimerCounter SaveAllTimer = InstrumentationService.CreateTimerCounter ("Save all documents", "IDE", id:"Ide.Shell.SaveAll");
+		internal static TimerCounter CloseWorkspaceTimer = InstrumentationService.CreateTimerCounter ("Workspace closed", "IDE", id:"Ide.Shell.CloseWorkspace");
+		internal static Counter<StartupMetadata> Startup = InstrumentationService.CreateCounter<StartupMetadata> ("IDE Startup", "IDE", id:"Ide.Startup");
+		internal static TimerCounter<CompositionLoadMetadata> CompositionLoad = InstrumentationService.CreateTimerCounter<CompositionLoadMetadata> ("MEF Composition Load", "IDE", id: "Ide.Startup.Composition.Load");
+		internal static TimerCounter CompositionSave = InstrumentationService.CreateTimerCounter ("MEF Composition Save", "IDE", id: "Ide.CompositionSave");
+		internal static TimerCounter AnalysisTimer = InstrumentationService.CreateTimerCounter ("Code Analysis", "IDE", id:"Ide.CodeAnalysis");
+		internal static TimerCounter ProcessCodeCompletion = InstrumentationService.CreateTimerCounter ("Process Code Completion", "IDE", id: "Ide.ProcessCodeCompletion", logMessages:false);
+		internal static Counter<CompletionStatisticsMetadata> CodeCompletionStats = InstrumentationService.CreateCounter<CompletionStatisticsMetadata> ("Code Completion Statistics", "IDE", id:"Ide.CodeCompletionStatistics");
+		internal static Counter<TimeToCodeMetadata> TimeToCode = InstrumentationService.CreateCounter<TimeToCodeMetadata> ("Time To Code", "IDE", id: "Ide.TimeToCode");
+		internal static bool TrackingBuildAndDeploy;
+		internal static TimerCounter<BuildAndDeployMetadata> BuildAndDeploy = InstrumentationService.CreateTimerCounter<BuildAndDeployMetadata> ("Build and Deploy", "IDE", id: "Ide.BuildAndDeploy");
+		internal static Counter<PlatformMemoryMetadata> MemoryPressure = InstrumentationService.CreateCounter<PlatformMemoryMetadata> ("Memory Pressure", "IDE", id: "Ide.MemoryPressure");
+		internal static Counter<PlatformThermalMetadata> ThermalNotification = InstrumentationService.CreateCounter<PlatformThermalMetadata> ("Thermal Notification", "IDE", id: "Ide.ThermalNotification");
 
+		internal static Counter<UnhandledExceptionMetadata> UnhandledExceptions = InstrumentationService.CreateCounter<UnhandledExceptionMetadata> ("Unhandled Exceptions", "IDE", id: "Ide.UnhandledExceptions");
 		internal static class ParserService {
 			public static TimerCounter FileParsed = InstrumentationService.CreateTimerCounter ("File parsed", "Parser Service");
 			public static TimerCounter ObjectSerialized = InstrumentationService.CreateTimerCounter ("Object serialized", "Parser Service");
 			public static TimerCounter ObjectDeserialized = InstrumentationService.CreateTimerCounter ("Object deserialized", "Parser Service");
 			public static TimerCounter WorkspaceItemLoaded = InstrumentationService.CreateTimerCounter ("Workspace item loaded", "Parser Service");
 			public static Counter ProjectsLoaded = InstrumentationService.CreateTimerCounter ("Projects loaded", "Parser Service");
+		}
+
+		public static string[] CounterReport ()
+		{
+			string[] reports = new string[15];
+			reports [0] = Initialization.ToString ();
+			reports [1] = OpenDocuments.ToString ();
+			reports [2] = DocumentsInMemory.ToString ();
+			reports [3] = PadsLoaded.ToString ();
+			reports [4] = CommandTargetScanTime.ToString ();
+			reports [5] = OpenWorkspaceItemTimer.ToString ();
+			reports [6] = OpenDocumentTimer.ToString ();
+			reports [7] = DocumentOpened.ToString ();
+			reports [8] = BuildItemTimer.ToString ();
+			reports [9] = PadShown.ToString ();
+			reports [10] = ParserService.FileParsed.ToString ();
+			reports [11] = ParserService.ObjectSerialized.ToString ();
+			reports [12] = ParserService.ObjectDeserialized.ToString ();
+			reports [13] = ParserService.WorkspaceItemLoaded.ToString ();
+			reports [14] = ParserService.ProjectsLoaded.ToString ();
+			reports [15] = Startup.ToString ();
+
+			return reports;
+		}
+	}
+
+	class AssetMetadata : CounterMetadata
+	{
+		public int AssetTypeId {
+			get => GetProperty<int> ();
+			set => SetProperty (value);
+		}
+		public string AssetTypeName {
+			get => GetProperty<string> ();
+			set => SetProperty (value);
+		}
+	}
+
+	class StartupMetadata: AssetMetadata
+	{	
+		public StartupMetadata ()
+		{
+		}
+
+		public long CorrectedStartupTime {
+			get => GetProperty<long> ();
+			set => SetProperty (value);
+		}
+		public long StartupType {
+			get => GetProperty<long> ();
+			set => SetProperty (value);
+		}
+		public bool IsInitialRun {
+			get => GetProperty<bool> ();
+			set => SetProperty (value);
+		}
+		public bool IsInitialRunAfterUpgrade {
+			get => GetProperty<bool> ();
+			set => SetProperty (value);
+		}
+		public long TimeSinceMachineStart {
+			get => GetProperty<long> ();
+			set => SetProperty (value);
+		}
+		public long TimeSinceLogin {
+			get => GetProperty<long> ();
+			set => SetProperty (value);
+		}
+		public Dictionary<string, long> Timings {
+			get => GetProperty<Dictionary<string, long>> ();
+			set => SetProperty (value);
+		}
+
+		public OnStartupBehaviour StartupBehaviour {
+			get => GetProperty<OnStartupBehaviour> ();
+			set => SetProperty (value);
+		}
+	}
+
+	class TimeToCodeMetadata : CounterMetadata
+	{
+		public enum DocumentType {
+			Solution,
+			File
+		};
+
+		public long CorrectedDuration {
+			get => GetProperty<long> ();
+			set => SetProperty (value);
+		}
+
+		public long StartupTime {
+			get => GetProperty<long> ();
+			set => SetProperty (value);
+		}
+
+		public long SolutionLoadTime {
+			get => GetProperty<long> ();
+			set => SetProperty (value);
+		}
+
+		public DocumentType Type {
+			get => GetProperty<DocumentType> ();
+			set => SetProperty (value);
+		}
+	}
+
+	class UnhandledExceptionMetadata : CounterMetadata
+	{
+		public System.Exception Exception {
+			get => GetProperty<System.Exception> ();
+			set => SetProperty (value);
+		}
+	}
+
+	class BuildAndDeployMetadata : CounterMetadata
+	{
+		public BuildAndDeployMetadata ()
+		{
+		}
+
+		public BuildAndDeployMetadata (CounterMetadata clone) : base (clone)
+		{
+		}
+
+		public bool BuildWithoutPrompting {
+			get => GetProperty<bool> ();
+			set => SetProperty (value);
+		}
+		public long BuildTime {
+			get => GetProperty<long> ();
+			set => SetProperty (value);
+		}
+	}
+
+	class CompositionLoadMetadata : CounterMetadata
+	{
+		public CompositionLoadMetadata ()
+		{
+		}
+
+		public CompositionLoadMetadata (Dictionary<string, long> timings)
+		{
+			Timings = timings;
+		}
+
+		public Dictionary<string, long> Timings {
+			get => GetProperty<Dictionary<string, long>> ();
+			set => SetProperty (value);
+		}
+
+		public bool ValidCache {
+			get => GetProperty<bool> ();
+			set => SetProperty (value);
+		}
+
+		public long Duration {
+			get => GetProperty<long> ();
+			set => SetProperty (value);
 		}
 	}
 }

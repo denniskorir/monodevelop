@@ -28,6 +28,8 @@
 
 using System;
 using System.Collections.Generic;
+using MonoDevelop.Components;
+using MonoDevelop.Components.AtkCocoaHelper;
 using MonoDevelop.Ide.Gui.Dialogs;
 using MonoDevelop.Projects;
 using MonoDevelop.Core;
@@ -42,8 +44,23 @@ namespace MonoDevelop.Ide.Projects.OptionPanels
 		public CommonAssemblySigningPreferences ()
 		{
 			this.Build();
+
+			SetupAccessibility ();
 		}
-		
+
+		void SetupAccessibility ()
+		{
+			signAssemblyCheckbutton.SetCommonAccessibilityAttributes ("SigningOptions.Sign", "",
+			                                                          GettextCatalog.GetString ("Check to enable assembly signing"));
+			strongNameFileEntry.EntryAccessible.Name = "SigningOptions.NameFile";
+			strongNameFileEntry.EntryAccessible.Description = GettextCatalog.GetString ("Enter the Strong Name File");
+			strongNameFileEntry.EntryAccessible.SetTitleUIElement (strongNameFileLabel.Accessible);
+			strongNameFileLabel.Accessible.SetTitleFor (strongNameFileEntry.EntryAccessible);
+
+			delaySignCheckbutton.SetCommonAccessibilityAttributes ("SigningOptions.Delay", "",
+			                                                       GettextCatalog.GetString ("Delay signing the assembly"));
+		}
+
 		public void LoadPanelContents (Project project, ItemConfiguration[] configurations)
 		{
 			this.configurations = configurations;
@@ -121,7 +138,7 @@ namespace MonoDevelop.Ide.Projects.OptionPanels
 		}
 
 		
-		public override Gtk.Widget CreatePanelWidget ()
+		public override Control CreatePanelWidget ()
 		{
 			AllowMixedConfigurations = true;
 			return (widget = new CommonAssemblySigningPreferences ());

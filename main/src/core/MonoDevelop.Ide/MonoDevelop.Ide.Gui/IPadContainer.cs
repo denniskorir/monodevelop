@@ -88,21 +88,18 @@ namespace MonoDevelop.Ide.Gui
 		/// will be automatically reset when the pad is made visible.
 		/// </summary>
 		bool HasNewData { get; set; }
+
+		bool HasFocus { get; }
 		
 		/// <summary>
 		/// Interface providing the content widget
 		/// </summary>
-		IPadContent Content { get; }
-		
-		/// <summary>
-		/// Interface providing the widget to be shown in the label of minimized pads
-		/// </summary>
-		IDockItemLabelProvider DockItemLabelProvider { get; set; }
+		PadContent Content { get; }
 		
 		/// <summary>
 		/// Returns a toolbar for the pad.
 		/// </summary>
-		DockItemToolbar GetToolbar (Gtk.PositionType position);
+		DockItemToolbar GetToolbar (DockPositionType position);
 		
 		/// <summary>
 		/// Brings the pad to the front.
@@ -112,12 +109,12 @@ namespace MonoDevelop.Ide.Gui
 		/// <summary>
 		/// Fired when the pad is shown in the current layout (although it may be minimized)
 		/// </summary>
-		event EventHandler PadShown;
+		event EventHandler<VisibilityChangeEventArgs> PadShown;
 		
 		/// <summary>
 		/// Fired when the pad is hidden in the current layout
 		/// </summary>
-		event EventHandler PadHidden;
+		event EventHandler<VisibilityChangeEventArgs> PadHidden;
 		
 		/// <summary>
 		/// Fired when the content of the pad is shown
@@ -142,7 +139,7 @@ namespace MonoDevelop.Ide.Gui
 		bool isWorking;
 		bool hasErrors;
 		bool hasNewData;
-		IPadContent content;
+		PadContent content;
 		PadCodon codon;
 		DefaultWorkbench workbench;
 		
@@ -152,11 +149,11 @@ namespace MonoDevelop.Ide.Gui
 		{
 			this.workbench = workbench;
 			this.codon = codon;
-			this.title = GettextCatalog.GetString (codon.Label);
+			this.title = codon.Label;
 			this.icon = codon.Icon;
 		}
 		
-		public IPadContent Content {
+		public PadContent Content {
 			get {
 				CreateContent ();
 				return content; 
@@ -232,6 +229,10 @@ namespace MonoDevelop.Ide.Gui
 				Item.Visible = value;
 			}
 		}
+
+		public bool HasFocus {
+			get { return Item.HasFocus; }
+		}
 		
 		public bool AutoHide {
 			get {
@@ -243,11 +244,6 @@ namespace MonoDevelop.Ide.Gui
 				else
 					Item.Status = DockItemStatus.Dockable;
 			}
-		}
-
-		public IDockItemLabelProvider DockItemLabelProvider {
-			get { return Item.DockLabelProvider; }
-			set { Item.DockLabelProvider = value; }
 		}
 
 		public bool ContentVisible {
@@ -263,7 +259,7 @@ namespace MonoDevelop.Ide.Gui
 			}
 		}
 		
-		public DockItemToolbar GetToolbar (Gtk.PositionType position)
+		public DockItemToolbar GetToolbar (DockPositionType position)
 		{
 			return Item.GetToolbar (position);
 		}
@@ -281,22 +277,14 @@ namespace MonoDevelop.Ide.Gui
 			}
 		}
 		
-		internal IMementoCapable GetMementoCapable ()
+		internal void NotifyShown (VisibilityChangeEventArgs args)
 		{
-			// Don't create the content if not already created
-			return content as IMementoCapable;
+			PadShown?.Invoke (this, args);
 		}
 		
-		internal void NotifyShown ()
+		internal void NotifyHidden (VisibilityChangeEventArgs args)
 		{
-			if (PadShown != null)
-				PadShown (this, EventArgs.Empty);
-		}
-		
-		internal void NotifyHidden ()
-		{
-			if (PadHidden != null)
-				PadHidden (this, EventArgs.Empty);
+			PadHidden?.Invoke (this, args);
 		}
 		
 		internal void NotifyContentShown ()
@@ -305,24 +293,22 @@ namespace MonoDevelop.Ide.Gui
 				HasNewData = false;
 			if (HasErrors)
 				HasErrors = false;
-			if (PadContentShown != null)
-				PadContentShown (this, EventArgs.Empty);
+			PadContentShown?.Invoke (this, EventArgs.Empty);
 		}
 		
 		internal void NotifyContentHidden ()
 		{
-			if (PadContentHidden != null)
-				PadContentHidden (this, EventArgs.Empty);
+			PadContentHidden?.Invoke (this, EventArgs.Empty);
 		}
 		
 		internal void NotifyDestroyed ()
 		{
-			if (PadDestroyed != null)
-				PadDestroyed (this, EventArgs.Empty);
+			PadDestroyed?.Invoke (this, EventArgs.Empty);
+			content?.Dispose ();
 		}
 		
-		public event EventHandler PadShown;
-		public event EventHandler PadHidden;
+		public event EventHandler<VisibilityChangeEventArgs> PadShown;
+		public event EventHandler<VisibilityChangeEventArgs> PadHidden;
 		public event EventHandler PadContentShown;
 		public event EventHandler PadContentHidden;
 		public event EventHandler PadDestroyed;

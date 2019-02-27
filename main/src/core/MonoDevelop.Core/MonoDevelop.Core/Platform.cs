@@ -27,6 +27,7 @@
 using System;
 using System.Runtime.InteropServices;
 using System.IO;
+using System.Reflection;
 using System.Text;
 
 namespace MonoDevelop.Core
@@ -88,30 +89,12 @@ namespace MonoDevelop.Core
 		static void InitMacFoundation ()
 		{
 			dlopen ("/System/Library/Frameworks/Foundation.framework/Foundation", 0x1);
-			OSVersion = new Version (Gestalt ("sys1"), Gestalt ("sys2"), Gestalt ("sys3"));
+			OSVersion = MacSystemInformation.OsVersion;
 		}
 
 		[DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
 		[return: MarshalAs(UnmanagedType.Bool)]
 		static extern bool SetDllDirectory (string lpPathName);
-
-		[System.Runtime.InteropServices.DllImport ("/System/Library/Frameworks/Carbon.framework/Versions/Current/Carbon")]
-		static extern int Gestalt (int selector, out int result);
-
-		//TODO: there are other gestalt selectors that return info we might want to display
-		//mac API for obtaining info about the system
-		static int Gestalt (string selector)
-		{
-			System.Diagnostics.Debug.Assert (selector != null && selector.Length == 4);
-			int cc = selector[3] | (selector[2] << 8) | (selector[1] << 16) | (selector[0] << 24);
-			int result;
-			int ret = Gestalt (cc, out result);
-			if (ret != 0) {
-				LoggingService.LogError ("Error reading gestalt for selector '{0}': {1}", selector, ret);
-				return 0;
-			}
-			return result;
-		}
 
 		static void InitWindowsNativeLibs ()
 		{
@@ -133,6 +116,12 @@ namespace MonoDevelop.Core
 			} catch (EntryPointNotFoundException) {
 			}
 			LoggingService.LogError ("Unable to set GTK# dll directory");
+		}
+
+		[Obsolete ("Use Runtime.LoadAssemblyFrom")]
+		public static Assembly AssemblyLoad (string asmPath)
+		{
+			return Runtime.LoadAssemblyFrom (asmPath);
 		}
 	}
 }

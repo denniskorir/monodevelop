@@ -1,10 +1,11 @@
 ﻿
 using System;
 using System.Xml;
-using ICSharpCode.PackageManagement;
-using MonoDevelop.Projects.Formats.MSBuild;
-using NuGet;
+using MonoDevelop.PackageManagement;
+using MonoDevelop.Projects.MSBuild;
+using NuGet.ProjectManagement;
 using NUnit.Framework;
+using System.Linq;
 
 namespace MonoDevelop.PackageManagement.Tests
 {
@@ -20,54 +21,48 @@ namespace MonoDevelop.PackageManagement.Tests
 
 		void AddImportIfMissingAtBottom (string importFile, string condition = "")
 		{
-			project.AddImportIfMissing (importFile, ProjectImportLocation.Bottom, condition);
+			project.AddImportIfMissing (importFile, ImportLocation.Bottom, condition);
 		}
 
 		void AddImportIfMissingAtTop (string importFile, string condition = "")
 		{
-			project.AddImportIfMissing (importFile, ProjectImportLocation.Top, condition);
+			project.AddImportIfMissing (importFile, ImportLocation.Top, condition);
 		}
 
 		void AssertLastMSBuildImportElementHasProjectAttributeValue (string expectedAttributeValue)
 		{
-			XmlElement import = GetLastMSBuildImportElement ();
-			string actualAttributeValue = import.GetAttribute ("Project");
+			MSBuildImport import = GetLastMSBuildImportElement ();
+			string actualAttributeValue = import.Project;
 			Assert.AreEqual (expectedAttributeValue, actualAttributeValue);
 		}
 
 		void AssertLastMSBuildImportElementHasCondition (string expectedCondition)
 		{
-			XmlElement import = GetLastMSBuildImportElement ();
-			string actualCondition = import.GetAttribute ("Condition");
-			Assert.AreEqual (expectedCondition, actualCondition);
+			MSBuildImport import = GetLastMSBuildImportElement ();
+			Assert.AreEqual (expectedCondition, import.Condition);
 		}
 
-		XmlElement GetLastMSBuildImportElement ()
+		MSBuildImport GetLastMSBuildImportElement ()
 		{
-			var import = project.Document.DocumentElement.LastChild as XmlElement;
-			Assert.AreEqual (import.LocalName, "Import");
-			return import;
+			return project.Imports.LastOrDefault ();
 		}
 
 		void AssertFirstMSBuildImportElementHasProjectAttributeValue (string expectedAttributeValue)
 		{
-			XmlElement import = GetFirstMSBuildImportElement ();
-			string actualAttributeValue = import.GetAttribute ("Project");
+			MSBuildImport import = GetFirstMSBuildImportElement ();
+			string actualAttributeValue = import.Project;
 			Assert.AreEqual (expectedAttributeValue, actualAttributeValue);
 		}
 
-		XmlElement GetFirstMSBuildImportElement ()
+		MSBuildImport GetFirstMSBuildImportElement ()
 		{
-			var import = project.Document.DocumentElement.FirstChild as XmlElement;
-			Assert.AreEqual (import.LocalName, "Import");
-			return import;
+			return project.Imports.FirstOrDefault ();
 		}
 
 		void AssertFirstMSBuildImportElementHasCondition (string expectedCondition)
 		{
-			XmlElement import = GetFirstMSBuildImportElement ();
-			string actualCondition = import.GetAttribute ("Condition");
-			Assert.AreEqual (expectedCondition, actualCondition);
+			var import = GetFirstMSBuildImportElement ();
+			Assert.AreEqual (expectedCondition, import.Condition);
 		}
 
 		[Test]
@@ -135,7 +130,7 @@ namespace MonoDevelop.PackageManagement.Tests
 			
 			AddImportIfMissingAtBottom (import);
 			
-			Assert.AreEqual (1, project.Document.DocumentElement.ChildNodes.Count);
+			Assert.AreEqual (1, project.Imports.Count ());
 		}
 
 		[Test]
@@ -160,7 +155,7 @@ namespace MonoDevelop.PackageManagement.Tests
 			
 			project.RemoveImportIfExists (import);
 			
-			Assert.AreEqual (0, project.Document.DocumentElement.ChildNodes.Count);
+			Assert.AreEqual (0, project.Imports.Count ());
 		}
 
 		[Test]
@@ -173,7 +168,7 @@ namespace MonoDevelop.PackageManagement.Tests
 			
 			project.RemoveImportIfExists (import2);
 			
-			Assert.AreEqual (0, project.Document.DocumentElement.ChildNodes.Count);
+			Assert.AreEqual (0, project.Imports.Count ());
 		}
 
 		[Test]
@@ -184,8 +179,10 @@ namespace MonoDevelop.PackageManagement.Tests
 			string import = @"..\packages\Foo.0.1\build\Foo.targets";
 			
 			AddImportIfMissingAtTop (import);
-			
+
+			var firstItem = project.GetAllObjects ().First () as MSBuildImport;
 			AssertFirstMSBuildImportElementHasProjectAttributeValue (@"..\packages\Foo.0.1\build\Foo.targets");
+			Assert.AreEqual (import, firstItem.Project);
 		}
 
 		[Test]
@@ -198,7 +195,9 @@ namespace MonoDevelop.PackageManagement.Tests
 			
 			AddImportIfMissingAtTop (import, condition);
 			
+			var firstItem = project.GetAllObjects ().First () as MSBuildImport;
 			AssertFirstMSBuildImportElementHasCondition (condition);
+			Assert.AreEqual (condition, firstItem.Condition);
 		}
 
 		[Test]
@@ -210,7 +209,45 @@ namespace MonoDevelop.PackageManagement.Tests
 			
 			AddImportIfMissingAtTop (import);
 			
-			Assert.AreEqual (1, project.Document.DocumentElement.ChildNodes.Count);
+			Assert.AreEqual (1, project.Imports.Count ());
+		}
+
+		[Test]
+		public void AddImportIfMissing_AddImportToBottomWhenOtherImportIsNotLastElementInProject_ImportAddedAsLastElementInProject ()
+		{
+			CreateProject ();
+			var itemGroup = project.AddNewItemGroup ();
+			itemGroup.AddNewItem ("File.cs", "File.cs");
+			project.AddNewImport ("test", null, itemGroup);
+			string importFile = @"..\packages\Foo.0.1\build\Foo.targets";
+			string condition = "Exists('..\\packages\\Foo.0.1\\build\\Foo.targets')";
+			var lastItemBeforeAddingNewImport = project.GetAllObjects ().Last () as MSBuildItemGroup;
+
+			AddImportIfMissingAtBottom (importFile, condition);
+
+			var lastItem = project.GetAllObjects ().Last () as MSBuildImport;
+			Assert.IsNotNull (lastItem);
+			Assert.AreEqual (importFile, lastItem.Project);
+			Assert.AreEqual (condition, lastItem.Condition);
+			Assert.IsNotNull (lastItemBeforeAddingNewImport);
+			Assert.AreEqual ("File.cs", lastItemBeforeAddingNewImport.Items.First ().Include);
+		}
+
+		[Test]
+		public void AddImportIfMissing_AddImportToTopOfProjectWhenItemGroupIsFirstChildElementOfProject_ImportAddedAsFirstChildElement ()
+		{
+			CreateProject ();
+			var itemGroup = project.AddNewItemGroup ();
+			itemGroup.AddNewItem ("File.cs", "File.cs");
+			string import = @"..\packages\Foo.0.1\build\Foo.targets";
+			string condition = "Exists('..\\packages\\Foo.0.1\\build\\Foo.targets')";
+
+			AddImportIfMissingAtTop (import, condition);
+
+			var firstItem = project.GetAllObjects ().First () as MSBuildImport;
+			AssertFirstMSBuildImportElementHasCondition (condition);
+			Assert.AreEqual (import, firstItem.Project);
+			Assert.AreEqual (condition, firstItem.Condition);
 		}
 	}
 }

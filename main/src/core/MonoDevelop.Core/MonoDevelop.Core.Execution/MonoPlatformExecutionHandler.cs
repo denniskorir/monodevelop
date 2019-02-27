@@ -28,34 +28,41 @@
 
 using System;
 using System.Collections.Generic;
+using System.Threading;
+using MonoDevelop.Core.Assemblies;
+using System.IO;
 
 namespace MonoDevelop.Core.Execution
 {
 	public class MonoPlatformExecutionHandler: NativePlatformExecutionHandler
 	{
-		string monoPath = "mono";
-		
-		public MonoPlatformExecutionHandler ()
+		MonoTargetRuntime runtime;
+
+		internal MonoPlatformExecutionHandler (MonoTargetRuntime runtime) : base (runtime.EnvironmentVariables)
 		{
+			this.runtime = runtime;
 		}
 		
-		public MonoPlatformExecutionHandler (string monoPath, IDictionary<string, string> defaultEnvironmentVariables): base (defaultEnvironmentVariables)
+		public override ProcessAsyncOperation Execute (ExecutionCommand command, OperationConsole console)
 		{
-			this.monoPath = monoPath;
-		}
-		
-		public override IProcessAsyncOperation Execute (ExecutionCommand command, IConsole console)
-		{
-			DotNetExecutionCommand dotcmd = (DotNetExecutionCommand) command;
-			
+			var dotcmd = (DotNetExecutionCommand)command;
+
 			string runtimeArgs = string.IsNullOrEmpty (dotcmd.RuntimeArguments) ? "--debug" : dotcmd.RuntimeArguments;
-			
+			var monoRunner = GetExecutionRunner (command, dotcmd);
 			string args = string.Format ("{2} \"{0}\" {1}", dotcmd.Command, dotcmd.Arguments, runtimeArgs);
-			NativeExecutionCommand cmd = new NativeExecutionCommand (monoPath, args, dotcmd.WorkingDirectory, dotcmd.EnvironmentVariables);
-			
+			NativeExecutionCommand cmd = new NativeExecutionCommand (monoRunner, args, dotcmd.WorkingDirectory, dotcmd.EnvironmentVariables);
+
 			return base.Execute (cmd, console);
 		}
-		
+
+		private string GetExecutionRunner (ExecutionCommand command, DotNetExecutionCommand dotcmd)
+		{
+			if (command is ProcessExecutionCommand processExecutionCommand && processExecutionCommand.ProcessExecutionArchitecture != ProcessExecutionArchitecture.Unspecified) {
+				return runtime.GetMonoExecutable (processExecutionCommand.ProcessExecutionArchitecture);
+			}
+			return runtime.GetMonoExecutableForAssembly (dotcmd.Command);
+		}
+
 		public override bool CanExecute (ExecutionCommand command)
 		{
 			return command is DotNetExecutionCommand;

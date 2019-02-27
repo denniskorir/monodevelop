@@ -24,8 +24,11 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 // THE SOFTWARE.
 using System;
+using MonoDevelop.Components;
 using MonoDevelop.Ide.Gui.Dialogs;
 using MonoDevelop.Ide.Gui.Content;
+using MonoDevelop.Ide.Editor.Extension;
+using MonoDevelop.Ide;
 
 namespace MonoDevelop.SourceEditor.OptionPanels
 {
@@ -35,13 +38,6 @@ namespace MonoDevelop.SourceEditor.OptionPanels
 		public CompletionAppearancePanel ()
 		{
 			this.Build ();
-			filterByBrowsableCheckbutton.Toggled += FilterToggled;
-		}
-
-		void FilterToggled (object sender, EventArgs e)
-		{
-			label4.Sensitive = label5.Sensitive =
-			normalOnlyRadiobutton.Sensitive = includeAdvancedRadiobutton.Sensitive = filterByBrowsableCheckbutton.Active;
 		}
 
 		#region IOptionsPanel implementation
@@ -50,13 +46,9 @@ namespace MonoDevelop.SourceEditor.OptionPanels
 		{
 		}
 
-		Gtk.Widget IOptionsPanel.CreatePanelWidget ()
+		Control IOptionsPanel.CreatePanelWidget ()
 		{
-			spinbutton1.Value = CompletionTextEditorExtension.CompletionListRows;
-			filterByBrowsableCheckbutton.Active = CompletionTextEditorExtension.FilterCompletionListByEditorBrowsable;
-			normalOnlyRadiobutton.Active = !CompletionTextEditorExtension.IncludeEditorBrowsableAdvancedMembers;
-			includeAdvancedRadiobutton.Active = CompletionTextEditorExtension.IncludeEditorBrowsableAdvancedMembers;
-			FilterToggled (this, EventArgs.Empty);
+			filterByBrowsableCheckbutton.Active = !IdeApp.Preferences.CompletionOptionsHideAdvancedMembers;
 			return this;
 		}
 
@@ -72,9 +64,7 @@ namespace MonoDevelop.SourceEditor.OptionPanels
 
 		void IOptionsPanel.ApplyChanges ()
 		{
-			CompletionTextEditorExtension.CompletionListRows.Value = spinbutton1.ValueAsInt;
-			CompletionTextEditorExtension.FilterCompletionListByEditorBrowsable.Value = filterByBrowsableCheckbutton.Active;
-			CompletionTextEditorExtension.IncludeEditorBrowsableAdvancedMembers.Value = includeAdvancedRadiobutton.Active;
+			IdeApp.Preferences.CompletionOptionsHideAdvancedMembers.Value = !filterByBrowsableCheckbutton.Active;
 		}
 
 		#endregion

@@ -1,4 +1,4 @@
-// 
+﻿// 
 // UserProfile.cs
 //  
 // Author:
@@ -24,6 +24,7 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 // THE SOFTWARE.
 using System;
+using System.IO;
 
 namespace MonoDevelop.Core
 {
@@ -43,7 +44,9 @@ namespace MonoDevelop.Core
 			"3.0",
 			"4.0",
 			"5.0",
-			"6.0"
+			"6.0",
+			"7.0",
+			"8.0"
 		};
 		
 		static UserProfile ()
@@ -52,28 +55,77 @@ namespace MonoDevelop.Core
 		}
 		
 		public static UserProfile Current { get; private set; }
-		
+
+		FilePath cacheDir;
 		/// <summary>Location for cached data that can be regenerated.</summary>
-		public FilePath CacheDir { get; private set; }
-		
+		public FilePath CacheDir {
+			get => cacheDir;
+			private set {
+				cacheDir = value;
+				EnsureDirectoryExists (value);
+			}
+		}
+
+		FilePath configDir;
 		/// <summary>Location for current preferences/settings.</summary>
-		public FilePath ConfigDir { get; private set; }
-		
+		public FilePath ConfigDir {
+			get => configDir;
+			private set {
+				configDir = value;
+				EnsureDirectoryExists (value);
+			}
+		}
+
+		FilePath localConfigDir;
 		/// <summary>Preferences/settings specific to the local machine.</summary>
-		public FilePath LocalConfigDir { get; private set; }
-		
+		public FilePath LocalConfigDir {
+			get => localConfigDir;
+			private set {
+				localConfigDir = value;
+				EnsureDirectoryExists (value);
+			}
+		}
+
+		FilePath userDataRoot;
 		/// <summary>User-visible root location for user-created data files such as templates, snippets and color schemes.</summary>
-		public FilePath UserDataRoot { get; private set; }
-		
+		public FilePath UserDataRoot {
+			get => userDataRoot;
+			private set {
+				userDataRoot = value;
+				EnsureDirectoryExists (value);
+			}
+		}
+
+		FilePath logDir;
 		/// <summary>Location for log files.</summary>
-		public FilePath LogDir { get; private set; }
-		
+		public FilePath LogDir {
+			get => logDir;
+			private set {
+				logDir = value;
+				EnsureDirectoryExists (value);
+			}
+		}
+
+		FilePath localInstallPath;
 		/// <summary>Location for files installed from external sources.</summary>
-		public FilePath LocalInstallDir { get; private set; }
-		
+		public FilePath LocalInstallDir {
+			get => localInstallPath;
+			private set {
+				localInstallPath = value;
+				EnsureDirectoryExists (value);
+			}
+		}
+
+		FilePath tempDir;
 		//TODO: clear out temp files at startup
 		/// <summary>Location for temporary files.</summary>
-		public FilePath TempDir { get; private set; }
+		public FilePath TempDir {
+			get => tempDir;
+			private set {
+				tempDir = value;
+				EnsureDirectoryExists (value);
+			}
+		}
 		
 		/// <summary>Gets a location by its ID.</summary>
 		internal FilePath GetLocation (UserDataKind kind)
@@ -100,7 +152,9 @@ namespace MonoDevelop.Core
 		
 		internal static UserProfile GetProfile (string profileVersion)
 		{
-			FilePath testProfileRoot = Environment.GetEnvironmentVariable (PROFILE_ENV_VAR);
+			var brandedEnvVar = BrandingService.BrandEnvironmentVariable (PROFILE_ENV_VAR);
+
+			FilePath testProfileRoot = Environment.GetEnvironmentVariable (brandedEnvVar);
 			if (!testProfileRoot.IsNullOrEmpty)
 				return UserProfile.ForTest (profileVersion, testProfileRoot);
 			
@@ -114,7 +168,10 @@ namespace MonoDevelop.Core
 
 		static string GetAppId (string version)
 		{
-			return BrandingService.ProfileDirectoryName + "-" + version;;
+			if (Version.Parse (version).Major < 7) {
+				return BrandingService.ProfileDirectoryName + "-" + version; ;
+			}
+			return System.IO.Path.Combine (BrandingService.ProfileDirectoryName, version);
 		}
 		
 		/// <summary>
@@ -240,6 +297,11 @@ namespace MonoDevelop.Core
 		static extern int SHGetKnownFolderPath ([MarshalAs (UnmanagedType.LPStruct)] Guid rfid,
 			uint dwFlags, IntPtr hToken, out IntPtr pszPath);
 		*/
+
+		static void EnsureDirectoryExists (string dir)
+		{
+			Directory.CreateDirectory (dir);
+		}
     }
 	
 	enum UserDataKind

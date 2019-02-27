@@ -25,9 +25,10 @@
 // THE SOFTWARE.
 
 using System;
+using MonoDevelop.Components;
+using MonoDevelop.Components.AtkCocoaHelper;
 using MonoDevelop.Core;
 using MonoDevelop.Ide.Gui.Dialogs;
-using Gtk;
 
 namespace MonoDevelop.Ide.Gui.OptionPanels
 {
@@ -36,7 +37,7 @@ namespace MonoDevelop.Ide.Gui.OptionPanels
 	{
 		BuildMessagePanelWidget widget;
 
-		public override Widget CreatePanelWidget ()
+		public override Control CreatePanelWidget ()
 		{
 			return widget = new BuildMessagePanelWidget ();
 		}
@@ -57,7 +58,7 @@ namespace MonoDevelop.Ide.Gui.OptionPanels
 			//comboboxJumpToFirst.AppendText (GettextCatalog.GetString ("Never"));
 			comboboxJumpToFirst.AppendText (GettextCatalog.GetString ("Error"));
 			comboboxJumpToFirst.AppendText (GettextCatalog.GetString ("Error or Warning"));
-			comboboxJumpToFirst.Active = (int)IdeApp.Preferences.JumpToFirstErrorOrWarning;
+			comboboxJumpToFirst.Active = (int)IdeApp.Preferences.JumpToFirstErrorOrWarning.Value;
 			
 	/*		//comboboxBuildResultsDuring.AppendText (GettextCatalog.GetString ("Never"));
 			comboboxBuildResultsDuring.AppendText (GettextCatalog.GetString ("Always"));
@@ -76,23 +77,36 @@ namespace MonoDevelop.Ide.Gui.OptionPanels
 			comboboxErrorPadAfter.AppendText (GettextCatalog.GetString ("Always"));
 			comboboxErrorPadAfter.AppendText (GettextCatalog.GetString ("On Errors"));
 			comboboxErrorPadAfter.AppendText (GettextCatalog.GetString ("On Errors or Warnings"));
-			comboboxErrorPadAfter.Active = (int)IdeApp.Preferences.ShowErrorPadAfterBuild;
+			comboboxErrorPadAfter.Active = (int)IdeApp.Preferences.ShowErrorPadAfterBuild.Value;
 			
 			//comboboxMessageBubbles.AppendText (GettextCatalog.GetString ("Never"));
 			comboboxMessageBubbles.AppendText (GettextCatalog.GetString ("For Errors"));
 			comboboxMessageBubbles.AppendText (GettextCatalog.GetString ("For Errors and Warnings"));
-			comboboxMessageBubbles.Active = (int)IdeApp.Preferences.ShowMessageBubbles;
+			comboboxMessageBubbles.Active = (int)IdeApp.Preferences.ShowMessageBubbles.Value;
 			this.QueueResize ();
+
+			SetupAccessibility ();
 		}
-		
+
+		void SetupAccessibility ()
+		{
+			comboboxJumpToFirst.SetCommonAccessibilityAttributes ("BuildMessagePanel.jumpToFirst", label6,
+			                                                      GettextCatalog.GetString ("Select which type of result to jump to after build completes"));
+
+			comboboxErrorPadAfter.SetCommonAccessibilityAttributes ("BuildMessagePanel.errorPadAfter", label3,
+			                                                        GettextCatalog.GetString ("Select when to show the Error Pad"));
+
+			comboboxMessageBubbles.SetCommonAccessibilityAttributes ("BuildMessagePanel.messageBubbles", label5,
+			                                                         GettextCatalog.GetString ("Select when to show message bubbles"));
+		}
 		public void Store ()
 		{
-			IdeApp.Preferences.JumpToFirstErrorOrWarning = (JumpToFirst)comboboxJumpToFirst.Active;
+			IdeApp.Preferences.JumpToFirstErrorOrWarning.Value = (JumpToFirst)comboboxJumpToFirst.Active;
 //			IdeApp.Preferences.ShowErrorPadDuringBuild = (BuildResultStates)comboboxErrorPadDuring.Active;
 //			IdeApp.Preferences.ShowOutputPadDuringBuild = (BuildResultStates)comboboxBuildResultsDuring.Active;
 			
-			IdeApp.Preferences.ShowErrorPadAfterBuild = (BuildResultStates)comboboxErrorPadAfter.Active;
-			IdeApp.Preferences.ShowMessageBubbles = (ShowMessageBubbles)comboboxMessageBubbles.Active;
+			IdeApp.Preferences.ShowErrorPadAfterBuild.Value = (BuildResultStates)comboboxErrorPadAfter.Active;
+			IdeApp.Preferences.ShowMessageBubbles.Value = (ShowMessageBubbles)comboboxMessageBubbles.Active;
 		}
 	}
 }

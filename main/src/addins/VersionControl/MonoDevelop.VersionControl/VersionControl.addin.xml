@@ -20,23 +20,23 @@
 		<ExtensionNode name="SeparatorItem" type="MonoDevelop.Components.Commands.ExtensionNodes.SeparatorItemCodon" />
 	</ExtensionPoint>
 
-	<ExtensionPoint path = "/MonoDevelop/VersionControl/BlameView/ContextMenu" name = "Blame view context menu">
-		<Description>Context menu for the blame view.</Description>
+	<ExtensionPoint path = "/MonoDevelop/VersionControl/BlameView/ContextMenu" name = "Author view context menu">
+		<Description>Context menu for the Authors view.</Description>
 		<ExtensionNodeSet id="MonoDevelop.Components.Commands.ItemSet" />
 	</ExtensionPoint>
 
 	<ExtensionPoint path = "/MonoDevelop/VersionControl/DiffViewHandler" name = "Diff view handler">
 		<Description>Handler used to create the a diff view which can display the current file.</Description>
-		<ExtensionNode name="Handler" objectType="MonoDevelop.VersionControl.IDiffViewHandler" />
+		<ExtensionNode name="Handler" objectType="MonoDevelop.VersionControl.IVersionControlViewHandler" />
 	</ExtensionPoint>
 
 	<Extension path = "/MonoDevelop/VersionControl/DiffViewHandler">
 		<Handler class = "MonoDevelop.VersionControl.DefaultDiffViewHandler" />
 	</Extension>
 
-	<ExtensionPoint path = "/MonoDevelop/VersionControl/BlameViewHandler" name = "Blame view handler">
-		<Description>Handler used to create the a blame view which can display the current file.</Description>
-		<ExtensionNode name="Handler" objectType="MonoDevelop.VersionControl.IBlameViewHandler" />
+	<ExtensionPoint path = "/MonoDevelop/VersionControl/BlameViewHandler" name = "Author view handler">
+		<Description>Handler used to create an authors view which can display the current file.</Description>
+		<ExtensionNode name="Handler" objectType="MonoDevelop.VersionControl.IVersionControlViewHandler" />
 	</ExtensionPoint>
 
 	<Extension path = "/MonoDevelop/VersionControl/BlameViewHandler">
@@ -45,7 +45,7 @@
 
 	<ExtensionPoint path = "/MonoDevelop/VersionControl/LogViewHandler" name = "Log view handler">
 		<Description>Handler used to create the a log view which can display the current file.</Description>
-		<ExtensionNode name="Handler" objectType="MonoDevelop.VersionControl.ILogViewHandler" />
+		<ExtensionNode name="Handler" objectType="MonoDevelop.VersionControl.IVersionControlViewHandler" />
 	</ExtensionPoint>
 
 	<Extension path = "/MonoDevelop/VersionControl/LogViewHandler">
@@ -54,7 +54,7 @@
 
 	<ExtensionPoint path = "/MonoDevelop/VersionControl/MergeViewHandler" name = "Merge view handler">
 		<Description>Handler used to create the a merge view which can display the current file.</Description>
-		<ExtensionNode name="Handler" objectType="MonoDevelop.VersionControl.IMergeViewHandler" />
+		<ExtensionNode name="Handler" objectType="MonoDevelop.VersionControl.IVersionControlViewHandler" />
 	</ExtensionPoint>
 
 	<Extension path = "/MonoDevelop/VersionControl/MergeViewHandler">
@@ -101,7 +101,7 @@
 		<StockIcon stockid = "vc-branch" resource = "branch-16.png" size="Menu" />
 		<StockIcon stockid = "md-prefs-git" resource="prefs-git-16.png" size="Menu" />
 		<StockIcon stockid = "md-prefs-commit-message-style" resource="prefs-commit-message-style-16.png" size="Menu" />
-		<StockIcon stockid = "md-prefs-version-control-general" resource="prefs-version-control-general-16.png" size="Menu" />
+		<StockIcon stockid = "md-prefs-version-control" resource="prefs-version-control-16.png" size="Menu" />
 	</Extension>
 
 	<Extension path = "/MonoDevelop/Ide/Commands">
@@ -142,15 +142,16 @@
 			description = "Shows the status of files in the solution."/>
 		<Command id = "MonoDevelop.VersionControl.Commands.Update"
 			_label = "_Update"
-			icon = "vc-update"
+			icon = "gtk-refresh"
 			description = "Updates the local copy with remote changes."/>
 		<Command id = "MonoDevelop.VersionControl.Commands.UpdateSolution"
 			_label = "_Update Solution"
-			icon = "vc-update"
+			icon = "gtk-refresh"
 			defaultHandler="MonoDevelop.VersionControl.UpdateCommandHandler"
 			description = "Updates the local copy with remote changes."/>
 		<Command id = "MonoDevelop.VersionControl.Commands.Publish"
-			_label = "_Publish..."
+			_label = "_Publish in Version Control..."
+			icon = "vc-push"
 			description = "Publish actual project into repository."/>
 		<Command id = "MonoDevelop.VersionControl.Commands.Checkout"
 			defaultHandler = "MonoDevelop.VersionControl.CheckoutCommand"
@@ -166,7 +167,7 @@
 			defaultHandler = "MonoDevelop.VersionControl.UnlockCommandHandler"
 			description = "Unlock files in the repository, so that other user can change them."/>
 		<Command id = "MonoDevelop.VersionControl.Commands.Annotate"
-			_label = "Blame"
+			_label = "Authors"
 			defaultHandler = "MonoDevelop.VersionControl.CurrentFileBlameHandler"
 			description = "Show the origin of each line in a file."/>
 		<Command id = "MonoDevelop.VersionControl.Commands.CreatePatch"
@@ -174,21 +175,27 @@
 			icon = "vc-diff"
 			description = "Create a patch representing local changes."/>
 		<Command id = "MonoDevelop.VersionControl.Commands.Ignore"
-			_label = "Add to ignore list"
+			_label = "Add to Ignore List"
 			description = "Add items to version control ignore list"/>
 		<Command id = "MonoDevelop.VersionControl.Commands.Unignore"
-			_label = "Remove from ignore list"
+			_label = "Remove from Ignore List"
 			description = "Removes items to version control ignore list"/>
 		<Command id = "MonoDevelop.VersionControl.Commands.ResolveConflicts"
 			_label = "Resolve Conflicts"
 			description = "Resolve conflicts on the project file."/>
+		</Category>
 
+		<Category id="Hidden" _name="Hidden">
 		<Command id = "MonoDevelop.VersionControl.Views.BlameCommands.CopyRevision"
-			_label = "_Copy revision"/>
+			_label = "_Copy Revision"/>
 		<Command id = "MonoDevelop.VersionControl.Views.BlameCommands.ShowDiff"
-			_label = "_Show diff"/>
+			_label = "_Show Diff"/>
 		<Command id = "MonoDevelop.VersionControl.Views.BlameCommands.ShowLog"
-			_label = "S_how log"/>
+			_label = "S_how Log"/>
+		<Command id = "MonoDevelop.VersionControl.Views.BlameCommands.ShowBlameBefore"
+			_label = "Show _Authors prior to this change"/>			
+		<Command id = "MonoDevelop.VersionControl.Views.BlameCommands.ShowPreviousBlame"
+			_label = "Back to _Previous view"/>
 		</Category>
 	</Extension>
 
@@ -283,13 +290,13 @@
 	</Extension>	-->
 
 	<Extension path = "/MonoDevelop/ProjectModel/Gui/ItemOptionPanels">
-		<Section id="VersionControl" _label="Version Control" icon="md-prefs-version-control-general">
+		<Section id="VersionControl" _label="Version Control" icon="md-prefs-version-control">
 			<Condition id="ItemType" value="Solution">
-				<Section id="VersionControlGeneral" _label="General" fill="true" class="MonoDevelop.VersionControl.VersionControlSolutionOptionsPanel" icon="md-prefs-version-control-general" />
+				<Section id="VersionControlGeneral" _label="General" fill="true" class="MonoDevelop.VersionControl.VersionControlSolutionOptionsPanel" icon="md-prefs-version-control" />
 			</Condition>
 			<ComplexCondition>
 				<Or>
-					<Condition id="ItemType" value="SolutionItem" />
+					<Condition id="ItemType" value="SolutionFolderItem" />
 					<Condition id="ItemType" value="Solution" />
 				</Or>
 				<Section id="VersionControlGeneral" _label="Commit Message Style" fill="true" class="MonoDevelop.VersionControl.VersionControlPolicyPanel" icon="md-prefs-commit-message-style" />
@@ -302,7 +309,7 @@
 	</Extension>
 
 	<Extension path = "/MonoDevelop/Ide/GlobalOptionsDialog/VersionControl">
-		<Section id = "VersionControlGeneral" _label = "General" fill="true" class="MonoDevelop.VersionControl.VersionControlGeneralOptionsPanel"  icon="md-prefs-version-control-general" />
+		<Section id = "VersionControlGeneral" _label = "General" fill="true" class="MonoDevelop.VersionControl.VersionControlGeneralOptionsPanel"  icon="md-prefs-version-control" />
 		<Section id = "VersionControlGeneral" _label = "Commit Message Style" fill="true" class="MonoDevelop.VersionControl.VersionControlPolicyPanel" icon="md-prefs-commit-message-style" />
 	</Extension>
 
@@ -316,6 +323,7 @@
 
 	<Extension path = "/MonoDevelop/Ide/StartupHandlers">
 		<Class class = "MonoDevelop.VersionControl.Views.SubviewAttachmentHandler"/>
+		<Class class = "MonoDevelop.VersionControl.VersionControlInitializer"/>
 	</Extension>
 
 	<Extension path = "/MonoDevelop/VersionControl/BlameView/ContextMenu">

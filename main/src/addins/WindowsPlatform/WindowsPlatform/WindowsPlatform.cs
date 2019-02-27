@@ -43,8 +43,16 @@ using System.Diagnostics;
 using MonoDevelop.Core.Execution;
 using System.Text;
 using MonoDevelop.Core;
+using Microsoft.WindowsAPICodePack.InternetExplorer;
 using Microsoft.WindowsAPICodePack.Taskbar;
 using MonoDevelop.Ide;
+using MonoDevelop.Components.Windows;
+using WindowsPlatform.MainToolbar;
+using MonoDevelop.Components.Commands;
+using System.Windows.Controls;
+using System.Collections.ObjectModel;
+using System.Windows;
+using System.Windows.Input;
 
 namespace MonoDevelop.Platform
 {
@@ -64,11 +72,113 @@ namespace MonoDevelop.Platform
 			get { return "Windows"; }
 		}
 
+		#region Toolbar implementation
+		Components.Commands.CommandManager commandManager;
+		string commandMenuAddinPath;
+		string appMenuAddinPath;
+		public override bool SetGlobalMenu (Components.Commands.CommandManager commandManager, string commandMenuAddinPath, string appMenuAddinPath)
+		{
+			// Only store this information. Release it when creating the main toolbar.
+			this.commandManager = commandManager;
+			this.commandMenuAddinPath = commandMenuAddinPath;
+			this.appMenuAddinPath = appMenuAddinPath;
+
+			return true;
+		}
+
+		const int WM_SYSCHAR = 0x0106;
+        internal override void AttachMainToolbar (Gtk.VBox parent, Components.MainToolbar.IMainToolbarView toolbar)
+		{
+			titleBar = new TitleBar ();
+			var topMenu = new WPFTitlebar (titleBar);
+
+			//commandManager.IncompleteKeyPressed += (sender, e) => {
+			//	if (e.Key == Gdk.Key.Alt_L) {
+			//		Keyboard.Focus(titleBar.DockTitle.Children[0]);
+			//	}
+			//};
+			parent.PackStart (topMenu, false, true, 0);
+			SetupMenu ();
+
+			parent.PackStart ((WPFToolbar)toolbar, false, true, 0);
+		}
+
+		void SetupMenu ()
+		{
+			// TODO: Use this?
+			CommandEntrySet appCes = commandManager.CreateCommandEntrySet (appMenuAddinPath);
+
+			CommandEntrySet ces = commandManager.CreateCommandEntrySet (commandMenuAddinPath);
+			var mainMenu = new Menu {
+				IsMainMenu = true,
+				FocusVisualStyle = null,
+			};
+			foreach (CommandEntrySet ce in ces)
+			{
+				var item = new TitleMenuItem (commandManager, ce, menu: mainMenu);
+				mainMenu.Items.Add(item);
+			}
+
+			titleBar.DockTitle.Children.Add (mainMenu);
+			DockPanel.SetDock (mainMenu, Dock.Left);
+
+			commandManager = null;
+			commandMenuAddinPath = appMenuAddinPath = null;
+		}
+
+		TitleBar titleBar;
+		internal override Components.MainToolbar.IMainToolbarView CreateMainToolbar (Gtk.Window window)
+		{
+			return new WPFToolbar {
+				HeightRequest = 40,
+			};
+		}
+		#endregion
+
+		public override bool GetIsFullscreen (Components.Window window)
+		{
+			//the Fullscreen functionality is broken in GTK on Win7+
+			//TODO: implement a workaround.
+			return false;
+		}
+
+		public override void SetIsFullscreen (Components.Window window, bool isFullscreen)
+		{
+			//no-op as we have not yet implemented this
+		}
+
+		internal static Xwt.Toolkit WPFToolkit;
+
 		public override void Initialize ()
 		{
 			// Only initialize elements for Win7+.
 			if (TaskbarManager.IsPlatformSupported) {
-				TaskbarManager.Instance.ApplicationId = BrandingService.ProfileDirectoryName;
+				TaskbarManager.Instance.ApplicationId = BrandingService.ApplicationName;
+			}
+			// Set InternetExplorer emulation mode
+			InternetExplorer.EmulationMode = IEEmulationMode.IE11;
+		}
+
+		public override Xwt.Toolkit LoadNativeToolkit ()
+		{
+			var path = Path.GetDirectoryName (GetType ().Assembly.Location);
+			System.Reflection.Assembly.LoadFrom (Path.Combine (path, "Xwt.WPF.dll"));
+			WPFToolkit = Xwt.Toolkit.Load (Xwt.ToolkitType.Wpf);
+
+			WPFToolkit.RegisterBackend<Xwt.Backends.IDialogBackend, ThemedWpfDialogBackend> ();
+			WPFToolkit.RegisterBackend<Xwt.Backends.IWindowBackend, ThemedWpfWindowBackend> ();
+
+			return WPFToolkit;
+		}
+
+		internal override void SetMainWindowDecorations (Gtk.Window window)
+		{
+			Uri uri = new Uri ("pack://application:,,,/WindowsPlatform;component/Styles.xaml");
+			Application.Current.Resources.MergedDictionaries.Add(new ResourceDictionary() { Source = uri });
+
+			// Only initialize elements for Win7+.
+			if (TaskbarManager.IsPlatformSupported) {
+				TaskbarManager.Instance.SetApplicationIdForSpecificWindow (GdkWin32.HgdiobjGet (window.GdkWindow), BrandingService.ApplicationName);
 			}
 		}
 
@@ -200,8 +310,9 @@ namespace MonoDevelop.Platform
 		[DllImport (Win32.USER32)]
 		extern static int GetMonitorInfoA (IntPtr hmonitor, ref MonitorInfo info);
 
-		public override Gdk.Rectangle GetUsableMonitorGeometry (Gdk.Screen screen, int monitor_id)
+		public override Xwt.Rectangle GetUsableMonitorGeometry (int screenNumber, int monitor_id)
 		{
+			var screen = Gdk.Display.Default.GetScreen (screenNumber);
 			Gdk.Rectangle geometry = screen.GetMonitorGeometry (monitor_id);
 			List<MonitorInfo> screens = new List<MonitorInfo> ();
 
@@ -232,7 +343,7 @@ namespace MonoDevelop.Platform
 			int y = geometry.Y + (visible.Top - frame.Top);
 			int height = visible.Height;
 
-			return new Gdk.Rectangle (x, y, width, height);
+			return new Xwt.Rectangle (x, y, width, height);
 		}
 
 		static ProcessStartInfo CreateConsoleStartInfo (
@@ -244,13 +355,13 @@ namespace MonoDevelop.Platform
 			if (command != null) {
 				sb.Append ("/C \"");
 				if (title != null)
-					sb.Append ("title " + title + " && ");
-				sb.Append ("\"" + command + "\" " + arguments);
+					sb.Append ("title ").Append (title).Append (" && ");
+				sb.Append ("\"").Append (command).Append ("\" ").Append (arguments);
 				if (pauseWhenFinished)
 					sb.Append (" & pause");
 				sb.Append ("\"");
 			} else if (title != null) {
-				sb.Append ("/K \"title " + title + "\"");
+				sb.Append ("/K \"title ").Append (title).Append ("\"");
 			}
 			var psi = new ProcessStartInfo ("cmd.exe", sb.ToString ()) {
 				CreateNoWindow = false,
@@ -263,7 +374,7 @@ namespace MonoDevelop.Platform
 			return psi;
 		}
 
-		public override IProcessAsyncOperation StartConsoleProcess (
+		public override ProcessAsyncOperation StartConsoleProcess (
 			string command, string arguments, string workingDirectory,
 			IDictionary<string, string> environmentVariables,
 			string title, bool pauseWhenFinished)
@@ -274,7 +385,7 @@ namespace MonoDevelop.Platform
 				)
 			};
 			proc.Start ();
-			return proc;
+			return proc.ProcessAsyncOperation;
 		}
 
 		public override bool CanOpenTerminal {
@@ -344,7 +455,7 @@ namespace MonoDevelop.Platform
 
 			//first check for the user's preferred app for this file type and use it as the default
 			using (var key = Registry.CurrentUser.OpenSubKey (@"Software\Microsoft\Windows\CurrentVersion\Explorer\FileExts\" + extension + @"\UserChoice")) {
-				var progid = key == null ? null : key.GetValue ("ProgId") as string;
+				var progid = key?.GetValue ("ProgId") as string;
 				if (progid != null)
 					apps[progid] = defaultApp = WindowsAppFromName (progid, true, AssociationFlags.None);
 			}
@@ -429,7 +540,8 @@ namespace MonoDevelop.Platform
 					SHOpenFolderAndSelectItems (dir, (uint)files.Length, files, 0);
 				} finally {
 					ILFree (dir);
-					files.ToList ().ForEach (ILFree);
+					foreach (var file in files)
+						ILFree (file);
 				}
 			}
 		}
@@ -449,6 +561,34 @@ namespace MonoDevelop.Platform
 			{
 				foreach (string file in files)
 					Process.Start (ExePath, ProcessArgumentBuilder.Quote (file));
+			}
+		}
+
+		static void ApplyTheme (System.Windows.Window window)
+		{
+			var color = System.Windows.Media.Color.FromArgb (
+				(byte)(MonoDevelop.Ide.Gui.Styles.BackgroundColor.Alpha * 255.0),
+				(byte)(MonoDevelop.Ide.Gui.Styles.BackgroundColor.Red * 255.0),
+				(byte)(MonoDevelop.Ide.Gui.Styles.BackgroundColor.Green * 255.0),
+				(byte)(MonoDevelop.Ide.Gui.Styles.BackgroundColor.Blue * 255.0));
+			window.Background = new System.Windows.Media.SolidColorBrush (color);
+		}
+
+		public class ThemedWpfWindowBackend : Xwt.WPFBackend.WindowBackend
+		{
+			public override void Initialize ()
+			{
+				base.Initialize ();
+				ApplyTheme (Window);
+			}
+		}
+
+		public class ThemedWpfDialogBackend : Xwt.WPFBackend.DialogBackend
+		{
+			public override void Initialize ()
+			{
+				base.Initialize ();
+				ApplyTheme (Window);
 			}
 		}
 	}

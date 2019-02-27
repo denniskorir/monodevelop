@@ -37,7 +37,8 @@ namespace MonoDevelop.Ide.CodeCompletion
 		event EventHandler Changing;
 		event EventHandler Changed;
 	}
-	
+
+	[Obsolete ("This is no longer functional")]
 	public class ProjectDomCompletionDataList : CompletionDataList, IMutableCompletionDataList
 	{
 		public ProjectDomCompletionDataList ()
@@ -61,32 +62,24 @@ namespace MonoDevelop.Ide.CodeCompletion
 		
 		public event EventHandler Changing {
 			add {
-				if (changing == null)
-					TypeSystemService.ParseOperationStarted += HandleParseOperationStarted;
 				changing += value;
 			}
 			remove {
 				changing -= value;
-				if (changing == null)
-					TypeSystemService.ParseOperationStarted -= HandleParseOperationStarted;
 			}
 		}
 		
 		public event EventHandler Changed {
 			add {
-				if (changed == null)
-					TypeSystemService.ParseOperationFinished += HandleParseOperationFinished;
 				changed += value;
 			}
 			remove {
 				changed -= value;
-				if (changed == null)
-					TypeSystemService.ParseOperationFinished -= HandleParseOperationFinished;
 			}
 		}
 		
 		public bool IsChanging {
-			get { return TypeSystemService.IsParsing; }
+			get { return false; }
 		}
 		
 		protected virtual void OnChanging ()
@@ -117,10 +110,6 @@ namespace MonoDevelop.Ide.CodeCompletion
 		{
 			if (!disposed) {
 				disposed = true;
-				if (changing != null)
-					TypeSystemService.ParseOperationStarted -= HandleParseOperationStarted;
-				if (changed != null)
-					TypeSystemService.ParseOperationFinished -= HandleParseOperationFinished;
 			}
 		}
 		

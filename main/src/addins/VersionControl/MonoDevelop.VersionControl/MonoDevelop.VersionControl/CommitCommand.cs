@@ -24,6 +24,7 @@ namespace MonoDevelop.VersionControl
 					dlg.EndCommit (false);
 				} finally {
 					dlg.Destroy ();
+					dlg.Dispose ();
 				}
 				VersionControlService.NotifyAfterCommit (vc, changeSet, false);
 			}
@@ -32,7 +33,7 @@ namespace MonoDevelop.VersionControl
 			}
 		}
 
-		private class CommitWorker : Task
+		private class CommitWorker : VersionControlTask
 		{
 			Repository vc;
 			ChangeSet changeSet;

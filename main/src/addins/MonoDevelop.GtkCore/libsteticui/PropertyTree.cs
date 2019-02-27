@@ -224,6 +224,7 @@ namespace Stetic
 			layout = new Pango.Layout (this.PangoContext);
 			layout.Wrap = Pango.WrapMode.Char;
 			Pango.FontDescription des = this.Style.FontDescription.Copy();
+			des.Size = 10 * (int) Pango.Scale.PangoScale;
 			layout.FontDescription = des;
 		}
 		
@@ -295,6 +296,10 @@ namespace Stetic
 		protected override void OnDestroyed ()
 		{
 			base.OnDestroyed ();
+			if (layout != null) {
+				layout.Dispose ();
+				layout = null;
+			}
 			if (resizeCursor != null) {
 				resizeCursor.Dispose ();
 				resizeCursor = null;
@@ -444,6 +449,7 @@ namespace Stetic
 			layout.Wrap = Pango.WrapMode.Char;
 			
 			Pango.FontDescription des = tree.Style.FontDescription.Copy();
+			des.Size = 10 * (int) Pango.Scale.PangoScale;
 			layout.FontDescription = des;
 		}
 		
@@ -493,10 +499,20 @@ namespace Stetic
 			} else {
 				window.DrawLayout (widget.Style.TextGC (state), x, y, layout);
 				int bx = background_area.X + background_area.Width - 1;
-				Gdk.GC gc = new Gdk.GC (window);
-		   		gc.RgbFgColor = tree.Style.MidColors [(int)Gtk.StateType.Normal];
-				window.DrawLine (gc, bx, background_area.Y, bx, background_area.Y + background_area.Height);
+				using (Gdk.GC gc = new Gdk.GC (window)) {
+					gc.RgbFgColor = tree.Style.MidColors [(int)Gtk.StateType.Normal];
+					window.DrawLine (gc, bx, background_area.Y, bx, background_area.Y + background_area.Height);
+				}
 			}
+		}
+
+		protected override void OnDestroyed ()
+		{
+			if (layout != null) {
+				layout.Dispose ();
+				layout = null;
+			}
+			base.OnDestroyed ();
 		}
 	}
 

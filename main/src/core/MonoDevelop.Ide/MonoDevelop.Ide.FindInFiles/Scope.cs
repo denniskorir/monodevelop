@@ -33,12 +33,13 @@ using MonoDevelop.Ide.Gui;
 using MonoDevelop.Core;
 using System.Security.Permissions;
 using System.Security;
-
+using System.Threading.Tasks;
 
 namespace MonoDevelop.Ide.FindInFiles
 {
 	public abstract class Scope
 	{
+		[Obsolete ("Unused - will be removed")]
 		public bool IncludeBinaryFiles {
 			get;
 			set;
@@ -49,7 +50,7 @@ namespace MonoDevelop.Ide.FindInFiles
 				var workspace = IdeApp.Workspace;
 				var solutions = workspace != null ? workspace.GetAllSolutions () : null;
 
-				if (solutions != null && solutions.Count == 1)
+				if (solutions != null && solutions.Count () == 1)
 					return PathMode.Relative;
 
 				return PathMode.Absolute;
@@ -57,7 +58,7 @@ namespace MonoDevelop.Ide.FindInFiles
 		}
 
 		public abstract int GetTotalWork (FilterOptions filterOptions);
-		public abstract IEnumerable<FileProvider> GetFiles (IProgressMonitor monitor, FilterOptions filterOptions);
+		public abstract IEnumerable<FileProvider> GetFiles (ProgressMonitor monitor, FilterOptions filterOptions);
 		public abstract string GetDescription (FilterOptions filterOptions, string pattern, string replacePattern);
 	}
 
@@ -72,10 +73,12 @@ namespace MonoDevelop.Ide.FindInFiles
 			return 1;
 		}
 
-		public override IEnumerable<FileProvider> GetFiles (IProgressMonitor monitor, FilterOptions filterOptions)
+		public override IEnumerable<FileProvider> GetFiles (ProgressMonitor monitor, FilterOptions filterOptions)
 		{
 			monitor.Log.WriteLine (GettextCatalog.GetString ("Looking in '{0}'", IdeApp.Workbench.ActiveDocument.FileName));
-			yield return new FileProvider(IdeApp.Workbench.ActiveDocument.FileName);
+			var doc = IdeApp.Workbench.ActiveDocument;
+			if (doc.Editor != null)
+				yield return new OpenFileProvider (doc.Editor, doc.Project);
 		}
 
 		public override string GetDescription(FilterOptions filterOptions, string pattern, string replacePattern)
@@ -98,10 +101,13 @@ namespace MonoDevelop.Ide.FindInFiles
 			return 1;
 		}
 
-		public override IEnumerable<FileProvider> GetFiles (IProgressMonitor monitor, FilterOptions filterOptions)
+		public override IEnumerable<FileProvider> GetFiles (ProgressMonitor monitor, FilterOptions filterOptions)
 		{
-			var selection = IdeApp.Workbench.ActiveDocument.Editor.SelectionRange;
-			yield return new FileProvider(IdeApp.Workbench.ActiveDocument.FileName, null, selection.Offset, selection.EndOffset);
+			var doc = IdeApp.Workbench.ActiveDocument;
+			if (doc.Editor != null) {
+				var selection = doc.Editor.SelectionRange;
+				yield return new OpenFileProvider (doc.Editor, doc.Project, selection.Offset, selection.EndOffset);
+			}
 		}
 
 		public override string GetDescription(FilterOptions filterOptions, string pattern, string replacePattern)
@@ -122,38 +128,72 @@ namespace MonoDevelop.Ide.FindInFiles
 				result = IdeApp.Workspace.GetAllProjects ().Sum (p => p.Files.Count);
 			return result;
 		}
-		
-		public override IEnumerable<FileProvider> GetFiles (IProgressMonitor monitor, FilterOptions filterOptions)
+
+		public override IEnumerable<FileProvider> GetFiles (ProgressMonitor monitor, FilterOptions filterOptions)
 		{
-			if (IdeApp.Workspace.IsOpen) {
-				var alreadyVisited = new HashSet<string> ();
-				foreach (var solutionFolder in IdeApp.Workspace.GetAllSolutionItems().OfType<SolutionFolder>()) {
-					monitor.Log.WriteLine (GettextCatalog.GetString ("Looking in solution folder '{0}'", solutionFolder.Name));
-					foreach (var file in solutionFolder.Files.Where (f => filterOptions.NameMatches (f.FileName) && File.Exists (f.FullPath))) {
-						if (!IncludeBinaryFiles && !DesktopService.GetFileIsText (file.FullPath))
-							continue;
-						if (alreadyVisited.Contains (file.FullPath))
-							continue;
-						alreadyVisited.Add (file.FullPath);
-						yield return new FileProvider (file.FullPath);
-					}
-				}
-				foreach (Project project in IdeApp.Workspace.GetAllProjects ()) {
-					monitor.Log.WriteLine (GettextCatalog.GetString ("Looking in project '{0}'", project.Name));
-					foreach (ProjectFile file in project.Files.Where (f => filterOptions.NameMatches (f.Name) && File.Exists (f.Name))) {
-						if ((file.Flags & ProjectItemFlags.Hidden) == ProjectItemFlags.Hidden)
-							continue;
-						if (!IncludeBinaryFiles && !DesktopService.GetFileIsText (file.FilePath))
-							continue;
-						if (alreadyVisited.Contains (file.FilePath.FullPath))
-							continue;
-						alreadyVisited.Add (file.FilePath.FullPath);
-						yield return new FileProvider (file.Name, project);
-					}
-				}
+			if (!IdeApp.Workspace.IsOpen) {
+				return null;
 			}
+
+			var alreadyVisited = new HashSet<string> ();
+			var results = new List<FileProvider> ();
+
+			var options = new ParallelOptions ();
+			options.MaxDegreeOfParallelism = 4;
+
+			Parallel.ForEach (IdeApp.Workspace.GetAllSolutionItems ().OfType<SolutionFolder> (),
+							  options,
+							  () => new List<FileProvider> (),
+							  (folder, loop, providers) => {
+								  foreach (var file in folder.Files.Where (f => filterOptions.NameMatches (f.FileName) && File.Exists (f.FullPath))) {
+									  if (!DesktopService.GetFileIsText (file.FullPath))
+										  continue;
+									  lock (alreadyVisited) {
+										  if (alreadyVisited.Contains (file.FullPath))
+											  continue;
+										  alreadyVisited.Add (file.FullPath);
+									  }
+									  providers.Add (new FileProvider (file.FullPath));
+								  }
+								  return providers;
+							  },
+							  (providers) => {
+								  lock (results) {
+									  results.AddRange (providers);
+								  }
+							  });
+
+			Parallel.ForEach (IdeApp.Workspace.GetAllProjects (),
+							  options,
+							  () => new List<FileProvider> (),
+							  (project, loop, providers) => {
+								  var conf = project.DefaultConfiguration?.Selector;
+
+								  foreach (ProjectFile file in project.GetSourceFilesAsync (conf).Result.Where (f => filterOptions.NameMatches (f.Name) && File.Exists (f.Name))) {
+									  if ((file.Flags & ProjectItemFlags.Hidden) == ProjectItemFlags.Hidden)
+										  continue;
+									  if (!DesktopService.GetFileIsText (file.FilePath))
+										  continue;
+
+									  lock (alreadyVisited) {
+										  if (alreadyVisited.Contains (file.FilePath.FullPath))
+											  continue;
+										  alreadyVisited.Add (file.FilePath.FullPath);
+									  }
+
+									  providers.Add (new FileProvider (file.Name, project));
+								  }
+								  return providers;
+							  },
+							  (providers) => {
+								  lock (results) {
+									  results.AddRange (providers);
+								  }
+							  });
+
+			return results;
 		}
-		
+
 		public override string GetDescription (FilterOptions filterOptions, string pattern, string replacePattern)
 		{
 			if (replacePattern == null)
@@ -161,33 +201,34 @@ namespace MonoDevelop.Ide.FindInFiles
 			return GettextCatalog.GetString ("Replacing '{0}' in all projects", pattern);
 		}
 	}
-	
+
 	public class WholeProjectScope : Scope
 	{
 		readonly Project project;
-		
+
 		public override int GetTotalWork (FilterOptions filterOptions)
 		{
 			return project.Files.Count;
 		}
-		
+
 		public WholeProjectScope (Project project)
 		{
 			if (project == null)
 				throw new ArgumentNullException ("project");
-			
+
 			this.project = project;
 		}
-		
-		public override IEnumerable<FileProvider> GetFiles (IProgressMonitor monitor, FilterOptions filterOptions)
+
+		public override IEnumerable<FileProvider> GetFiles (ProgressMonitor monitor, FilterOptions filterOptions)
 		{
 			if (IdeApp.Workspace.IsOpen) {
 				monitor.Log.WriteLine (GettextCatalog.GetString ("Looking in project '{0}'", project.Name));
 				var alreadyVisited = new HashSet<string> ();
-				foreach (ProjectFile file in project.Files.Where (f => filterOptions.NameMatches (f.Name) && File.Exists (f.Name))) {
+				var conf = project.DefaultConfiguration?.Selector;
+				foreach (ProjectFile file in project.GetSourceFilesAsync (conf).Result.Where (f => filterOptions.NameMatches (f.Name) && File.Exists (f.Name))) {
 					if ((file.Flags & ProjectItemFlags.Hidden) == ProjectItemFlags.Hidden)
 						continue;
-					if (!IncludeBinaryFiles && !DesktopService.GetFileIsText (file.Name))
+					if (!DesktopService.GetFileIsText (file.Name))
 						continue;
 					if (alreadyVisited.Contains (file.FilePath.FullPath))
 						continue;
@@ -196,7 +237,7 @@ namespace MonoDevelop.Ide.FindInFiles
 				}
 			}
 		}
-		
+
 		public override string GetDescription (FilterOptions filterOptions, string pattern, string replacePattern)
 		{
 			if (replacePattern == null)
@@ -204,8 +245,8 @@ namespace MonoDevelop.Ide.FindInFiles
 			return GettextCatalog.GetString ("Replacing '{0}' in project '{1}'", pattern, project.Name);
 		}
 	}
-	
-	
+
+
 	public class AllOpenFilesScope : Scope
 	{
 		public override int GetTotalWork (FilterOptions filterOptions)
@@ -213,15 +254,15 @@ namespace MonoDevelop.Ide.FindInFiles
 			return IdeApp.Workbench.Documents.Count;
 		}
 
-		public override IEnumerable<FileProvider> GetFiles (IProgressMonitor monitor, FilterOptions filterOptions)
+		public override IEnumerable<FileProvider> GetFiles (ProgressMonitor monitor, FilterOptions filterOptions)
 		{
 			foreach (Document document in IdeApp.Workbench.Documents) {
 				monitor.Log.WriteLine (GettextCatalog.GetString ("Looking in '{0}'", document.FileName));
-				if (!string.IsNullOrEmpty (document.FileName) && filterOptions.NameMatches (document.FileName))
-					yield return new FileProvider (document.FileName);
+				if (document.Editor != null && filterOptions.NameMatches (document.FileName))
+					yield return new OpenFileProvider (document.Editor, document.Project);
 			}
 		}
-		
+
 		public override string GetDescription (FilterOptions filterOptions, string pattern, string replacePattern)
 		{
 			if (replacePattern == null)
@@ -229,8 +270,8 @@ namespace MonoDevelop.Ide.FindInFiles
 			return GettextCatalog.GetString ("Replacing '{0}' in all open documents", pattern);
 		}
 	}
-	
-	
+
+
 	public class DirectoryScope : Scope
 	{
 		readonly string path;
@@ -240,26 +281,27 @@ namespace MonoDevelop.Ide.FindInFiles
 			get { return PathMode.Absolute; }
 		}
 
+		[Obsolete ("Unused - will be removed")]
 		public bool IncludeHiddenFiles {
 			get;
 			set;
 		}
-		
+
+		FileProvider[] fileNames;
 		public override int GetTotalWork (FilterOptions filterOptions)
 		{
-			return GetFileNames (null, filterOptions).Count ();
+			fileNames = GetFileNames (filterOptions).Select (file => new FileProvider (file)).ToArray ();
+			return fileNames.Length;
 		}
-		
+
 		public DirectoryScope (string path, bool recurse)
 		{
 			this.path = path;
 			this.recurse = recurse;
 		}
-		
-		IEnumerable<string> GetFileNames (IProgressMonitor monitor, FilterOptions filterOptions)
+
+		IEnumerable<string> GetFileNames (FilterOptions filterOptions)
 		{
-			if (monitor != null)
-				monitor.Log.WriteLine (GettextCatalog.GetString ("Looking in '{0}'", path));
 			var directoryStack = new Stack<string> ();
 			directoryStack.Push (path);
 
@@ -275,43 +317,40 @@ namespace MonoDevelop.Ide.FindInFiles
 				}
 
 				foreach (string fileName in Directory.EnumerateFiles (curPath, "*")) {
-					if (!IncludeHiddenFiles) {
-						if (Platform.IsWindows) {
-							var attr = File.GetAttributes (fileName);
-							if (attr.HasFlag (FileAttributes.Hidden))
-								continue;
-						}
-						if (Path.GetFileName (fileName).StartsWith (".", StringComparison.Ordinal))
+					if (Platform.IsWindows) {
+						var attr = File.GetAttributes (fileName);
+						if (attr.HasFlag (FileAttributes.Hidden))
 							continue;
 					}
+					if (Path.GetFileName (fileName).StartsWith (".", StringComparison.Ordinal))
+						continue;
 					if (!filterOptions.NameMatches (fileName))
 						continue;
-					if (!IncludeBinaryFiles && !DesktopService.GetFileIsText (fileName))
+					if (!DesktopService.GetFileIsText (fileName))
 						continue;
 					yield return fileName;
 				}
 
 				if (recurse) {
 					foreach (string directoryName in Directory.EnumerateDirectories (curPath)) {
-						if (!IncludeHiddenFiles) {
-							if (Platform.IsWindows) {
-								var attr = File.GetAttributes (directoryName);
-								if (attr.HasFlag (FileAttributes.Hidden))
-									continue;
-							}
-							if (Path.GetFileName (directoryName).StartsWith (".", StringComparison.Ordinal))
+						if (Platform.IsWindows) {
+							var attr = File.GetAttributes (directoryName);
+							if (attr.HasFlag (FileAttributes.Hidden))
 								continue;
 						}
+						if (Path.GetFileName (directoryName).StartsWith (".", StringComparison.Ordinal))
+							continue;
 						directoryStack.Push (directoryName);
 					}
 				}
 
 			}
 		}
-		
-		public override IEnumerable<FileProvider> GetFiles (IProgressMonitor monitor, FilterOptions filterOptions)
+
+		public override IEnumerable<FileProvider> GetFiles (ProgressMonitor monitor, FilterOptions filterOptions)
 		{
-			return GetFileNames (monitor, filterOptions).Select (file => new FileProvider (file));
+			monitor.Log.WriteLine (GettextCatalog.GetString ("Looking in '{0}'", path));
+			return fileNames;
 		}
 
 		public override string GetDescription (FilterOptions filterOptions, string pattern, string replacePattern)

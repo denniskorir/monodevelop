@@ -26,12 +26,12 @@
 
 using System;
 using System.Collections.Generic;
-using ICSharpCode.PackageManagement;
+using MonoDevelop.PackageManagement;
 using MonoDevelop.Projects;
 
 namespace MonoDevelop.PackageManagement.Tests.Helpers
 {
-	public class FakePackageManagementProjectService : IPackageManagementProjectService
+	class FakePackageManagementProjectService : IPackageManagementProjectService
 	{
 		public IProject CurrentProject { get; set; }
 		public ISolution OpenSolution { get; set; }
@@ -50,14 +50,9 @@ namespace MonoDevelop.PackageManagement.Tests.Helpers
 			return OpenProjects;
 		}
 
-		public IProjectBrowserUpdater CreateProjectBrowserUpdater ()
-		{
-			throw new NotImplementedException ();
-		}
-
 		Dictionary<string, string> defaultCustomTools = new Dictionary<string, string> ();
 
-		public void AddDefaultCustomToolForFileName (string fileName, string customTool)
+		public void AddCustomToolForFileName (string fileName, string customTool)
 		{
 			defaultCustomTools.Add (fileName, customTool);
 		}
@@ -75,15 +70,25 @@ namespace MonoDevelop.PackageManagement.Tests.Helpers
 
 		public void RaiseSolutionLoadedEvent ()
 		{
+			RaiseSolutionLoadedEvent (new FakeSolution ());
+		}
+
+		public void RaiseSolutionLoadedEvent (ISolution solution)
+		{
 			if (SolutionLoaded != null) {
-				SolutionLoaded (this, new EventArgs ());
+				SolutionLoaded (this, new DotNetSolutionEventArgs (solution));
 			}
 		}
 
 		public void RaiseSolutionUnloadedEvent ()
 		{
+			RaiseSolutionUnloadedEvent (new FakeSolution ());
+		}
+
+		public void RaiseSolutionUnloadedEvent (ISolution solution)
+		{
 			if (SolutionUnloaded != null) {
-				SolutionUnloaded (this, new EventArgs ());
+				SolutionUnloaded (this, new DotNetSolutionEventArgs (solution));
 			}
 		}
 

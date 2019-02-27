@@ -39,14 +39,16 @@ using Mono.Addins;
 using MonoDevelop.Ide;
 using MonoDevelop.Projects;
 using MonoDevelop.Components;
+using System.Collections.Generic;
+using System.Linq;
 
 namespace MonoDevelop.VersionControl.Dialogs
 {
 	partial class CommitDialog : Gtk.Dialog
 	{
 		ListStore store;
-		ArrayList selected = new ArrayList ();
-		ArrayList extensions = new ArrayList ();
+		List<FilePath> selected = new List<FilePath> ();
+		List<CommitDialogExtension> extensions = new List<CommitDialogExtension> ();
 		ChangeSet changeSet;
 		string oldMessage;
 		bool responseSensitive;
@@ -57,6 +59,7 @@ namespace MonoDevelop.VersionControl.Dialogs
 
 			store = new ListStore(typeof (Xwt.Drawing.Image), typeof (string), typeof (string), typeof(bool), typeof(object));
 			fileList.Model = store;
+			fileList.SearchColumn = -1; // disable the interactive search
 			this.changeSet = changeSet;
 			oldMessage = changeSet.GlobalComment;
 
@@ -86,10 +89,14 @@ namespace MonoDevelop.VersionControl.Dialogs
 			foreach (object ob in exts) {
 				CommitDialogExtension ext = ob as CommitDialogExtension;
 				if (ext == null) {
-					MessageService.ShowError ("Commit extension type " + ob.GetType() + " must be a subclass of CommitDialogExtension");
+					LoggingService.LogError ("Commit extension type " + ob.GetType() + " must be a subclass of CommitDialogExtension");
 					continue;
 				}
 				if (ext.Initialize (changeSet)) {
+					var newTitle = ext.FormatDialogTitle (changeSet, Title);
+					if (newTitle != null)
+						Title = newTitle;
+
 					ext.CommitMessageTextViewHook (textview);
 					if (separatorRequired) {
 						HSeparator sep = new HSeparator ();
@@ -190,7 +197,7 @@ namespace MonoDevelop.VersionControl.Dialogs
 					GettextCatalog.GetString ("Do you want to save the changes before committing?"),
 					new AlertButton[] {
 						AlertButton.Cancel,
-						new AlertButton ("Don't Save"),
+						new AlertButton (GettextCatalog.GetString ("Don't Save")),
 						AlertButton.Save
 					}
 				);
@@ -216,7 +223,7 @@ namespace MonoDevelop.VersionControl.Dialogs
 			}
 
 			// Update the change set
-			ArrayList todel = new ArrayList ();
+			List<FilePath> todel = new List<FilePath> ();
 			foreach (ChangeSetItem it in changeSet.Items) {
 				if (!selected.Contains (it.LocalPath))
 					todel.Add (it.LocalPath);
@@ -229,7 +236,7 @@ namespace MonoDevelop.VersionControl.Dialogs
 			
 			int n;
 			for (n=0; n<extensions.Count; n++) {
-				CommitDialogExtension ext = (CommitDialogExtension) extensions [n];
+				CommitDialogExtension ext = extensions [n];
 				bool res;
 				try {
 					res = ext.OnBeginCommit (changeSet);
@@ -240,7 +247,7 @@ namespace MonoDevelop.VersionControl.Dialogs
 				if (!res) {
 					// Commit failed. Rollback the previous extensions
 					for (int m=0; m<n; m++) {
-						ext = (CommitDialogExtension) extensions [m];
+						ext = extensions [m];
 						try {
 							ext.OnEndCommit (changeSet, false);
 						} catch {}
@@ -285,7 +292,7 @@ namespace MonoDevelop.VersionControl.Dialogs
 		
 		public string[] GetFilesToCommit ()
 		{
-			return (string[]) selected.ToArray (typeof(string));
+			return selected.ToPathStrings ().ToArray ();
 		}
 		
 		public string Message {

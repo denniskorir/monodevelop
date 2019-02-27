@@ -40,7 +40,9 @@ namespace MonoDevelop.Components.Extensions
 	public interface ISelectFileDialogHandler : IDialogHandler<SelectFileDialogData>
 	{
 	}
-	
+
+	public delegate FilePath DirectoryChangedDelegate (object sender, string path);
+
 	/// <summary>
 	/// Data for the ISelectFileDialogHandler implementation
 	/// </summary>
@@ -50,7 +52,7 @@ namespace MonoDevelop.Components.Extensions
 			FilterSet = new FileFilterSet ();
 		}
 		internal FileFilterSet FilterSet { get; set; } 
-		public Gtk.FileChooserAction Action { get; set; }
+		public FileChooserAction Action { get; set; }
 		public IList<SelectFileDialogFilter> Filters { get { return FilterSet.Filters; } }
 		public FilePath CurrentFolder { get; set; }
 		public bool SelectMultiple { get; set; }
@@ -61,8 +63,13 @@ namespace MonoDevelop.Components.Extensions
 			set { FilterSet.DefaultFilter = value; }
 		}
 		public bool ShowHidden { get; set; }
-	}	
-			
+		public DirectoryChangedDelegate DirectoryChangedHandler;
+		public FilePath OnDirectoryChanged (object sender, string path)
+		{
+			return DirectoryChangedHandler?.Invoke (sender, path) ?? FilePath.Null;
+		}
+	}
+
 	/// <summary>
 	/// Filter option to be displayed in file selector dialogs.
 	/// </summary>
@@ -107,7 +114,7 @@ namespace MonoDevelop.Components.Extensions
 		/// <summary>
 		/// Action to perform with the file dialog.
 		/// </summary>
-		public Gtk.FileChooserAction Action {
+		public FileChooserAction Action {
 			get { return data.Action; }
 			set { data.Action = value; }
 		}
@@ -269,7 +276,7 @@ namespace MonoDevelop.Components.Extensions
 		internal void SetDefaultProperties (FileSelector fdiag)
 		{
 			fdiag.Title = Title;
-			fdiag.Action = Action;
+			fdiag.Action = Action.ToGtkAction ();
 			fdiag.LocalOnly = true;
 			fdiag.SelectMultiple = SelectMultiple;
 			fdiag.TransientFor = TransientFor;
@@ -324,7 +331,13 @@ namespace MonoDevelop.Components.Extensions
 				return result == (int) Gtk.ResponseType.Ok;
 			} finally {
 				fdiag.Destroy ();
+				fdiag.Dispose ();
 			}
+		}
+
+		public DirectoryChangedDelegate DirectoryChangedHandler {
+			get { return data.DirectoryChangedHandler; }
+			set { data.DirectoryChangedHandler = value; }
 		}
 	}
 }

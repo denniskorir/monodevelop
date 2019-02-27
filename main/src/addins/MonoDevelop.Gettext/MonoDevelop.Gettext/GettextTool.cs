@@ -31,6 +31,8 @@ using System.Collections.Generic;
 using MonoDevelop.Projects;
 using MonoDevelop.Core;
 using MonoDevelop.Core.ProgressMonitoring;
+using MonoDevelop.Ide;
+using System.Threading.Tasks;
 
 namespace MonoDevelop.Gettext
 {
@@ -39,9 +41,12 @@ namespace MonoDevelop.Gettext
 		bool help;
 		string file;
 		string project;
+		bool sort;
 		
-		public int Run (string[] arguments)
+		public async Task<int> Run (string[] arguments)
 		{
+			DesktopService.Initialize ();
+
 			Console.WriteLine (BrandingService.BrandApplicationName ("MonoDevelop Gettext Update Tool"));
 			foreach (string s in arguments)
 				ReadArgument (s);
@@ -50,12 +55,13 @@ namespace MonoDevelop.Gettext
 				Console.WriteLine ("gettext-update [options] [project-file]");
 				Console.WriteLine ("--f --file:FILE   Project or solution file to build.");
 				Console.WriteLine ("--p --project:PROJECT  Name of the project to build.");
+				Console.WriteLine ("--sort  Sorts the output po file");
 				Console.WriteLine ();
 				return 0;
 			}
 			
 			if (file == null) {
-				string[] files = Directory.GetFiles (".");
+				var files = Directory.EnumerateFiles (".");
 				foreach (string f in files) {
 					if (Services.ProjectService.IsWorkspaceItemFile (f)) {
 						file = f;
@@ -73,33 +79,33 @@ namespace MonoDevelop.Gettext
 			
 			ConsoleProgressMonitor monitor = new ConsoleProgressMonitor ();
 			monitor.IgnoreLogMessages = true;
-			
-			WorkspaceItem centry = Services.ProjectService.ReadWorkspaceItem (monitor, file);
-			monitor.IgnoreLogMessages = false;
-			
-			Solution solution = centry as Solution;
-			if (solution == null) {
-				Console.WriteLine ("File is not a solution: " + file);
-				return 1;
-			}
-			
-			if (project != null) {
-				SolutionEntityItem item = solution.FindProjectByName (project);
-				
-				if (item == null) {
-					Console.WriteLine ("The project '" + project + "' could not be found in " + file);
+
+			using (WorkspaceItem centry = await Services.ProjectService.ReadWorkspaceItem (monitor, file)) {
+				monitor.IgnoreLogMessages = false;
+
+				Solution solution = centry as Solution;
+				if (solution == null) {
+					Console.WriteLine ("File is not a solution: " + file);
 					return 1;
 				}
-				TranslationProject tp = item as TranslationProject;
-				if (tp == null) {
-					Console.WriteLine ("The project '" + item.FileName + "' is not a translation project");
-					return 1;
+
+				if (project != null) {
+					SolutionItem item = solution.FindProjectByName (project);
+
+					if (item == null) {
+						Console.WriteLine ("The project '" + project + "' could not be found in " + file);
+						return 1;
+					}
+					TranslationProject tp = item as TranslationProject;
+					if (tp == null) {
+						Console.WriteLine ("The project '" + item.FileName + "' is not a translation project");
+						return 1;
+					}
+					tp.UpdateTranslations (monitor, sort);
+				} else {
+					foreach (TranslationProject p in solution.GetAllItems<TranslationProject> ())
+						p.UpdateTranslations (monitor, sort);
 				}
-				tp.UpdateTranslations (monitor);
-			}
-			else {
-				foreach (TranslationProject p in solution.GetAllSolutionItems <TranslationProject>())
-					p.UpdateTranslations (monitor);
 			}
 			
 			return 0;
@@ -146,6 +152,10 @@ namespace MonoDevelop.Gettext
 				case "project":
 				    project = value;
 				    break;
+
+				case "sort":
+					sort = true;
+					break;
 
 				default:
 				    throw new Exception("Unknown option '" + option + "'");

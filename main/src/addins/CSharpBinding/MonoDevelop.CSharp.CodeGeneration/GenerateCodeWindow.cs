@@ -31,7 +31,8 @@ using MonoDevelop.Ide.Gui;
 using MonoDevelop.Refactoring;
 using System.Collections.Generic;
 using MonoDevelop.Ide;
-using Mono.TextEditor.PopupWindow;
+using MonoDevelop.Ide.Editor;
+using System.Threading;
 
 namespace MonoDevelop.CodeGeneration
 {
@@ -97,7 +98,7 @@ namespace MonoDevelop.CodeGeneration
 			
 			treeviewSelection.Submit += delegate {
 				if (curInitializeObject != null) {
-					curInitializeObject.GenerateCode ();
+					curInitializeObject.GenerateCode (treeviewSelection);
 					curInitializeObject = null;
 				}
 				Destroy ();
@@ -109,6 +110,8 @@ namespace MonoDevelop.CodeGeneration
 			
 			treeviewGenerateActions.HeadersVisible = false;
 			treeviewGenerateActions.Model = generateActionsStore;
+			treeviewGenerateActions.SearchColumn = -1; // disable the interactive search
+
 			TreeViewColumn column = new TreeViewColumn ();
 			var pixbufRenderer = new CellRendererImage ();
 			column.PackStart (pixbufRenderer, false);
@@ -126,21 +129,22 @@ namespace MonoDevelop.CodeGeneration
 			messageArea.Add (vbox1);
 			this.Add (messageArea);
 			this.ShowAll ();
-			
-			int x = completionContext.TriggerXCoord;
-			int y = completionContext.TriggerYCoord;
+
+			var pos = completionContext.GetCoordinatesAsync().WaitAndGetResult (default (CancellationToken));
+			int x = pos.x;
+			int y = pos.y;
 
 			int w, h;
 			GetSize (out w, out h);
 			
 			int myMonitor = Screen.GetMonitorAtPoint (x, y);
-			Gdk.Rectangle geometry = DesktopService.GetUsableMonitorGeometry (Screen, myMonitor);
+			Xwt.Rectangle geometry = DesktopService.GetUsableMonitorGeometry (Screen.Number, myMonitor);
 
 			if (x + w > geometry.Right)
-				x = geometry.Right - w;
+				x = (int)geometry.Right - w;
 
 			if (y + h > geometry.Bottom)
-				y = y - completionContext.TriggerTextHeight - h;
+				y = y - pos.textHeight - h;
 			
 			Move (x, y);
 		}
@@ -174,9 +178,9 @@ namespace MonoDevelop.CodeGeneration
 			}
 		}
 		
-		public static void ShowIfValid (Document document, MonoDevelop.Ide.CodeCompletion.CodeCompletionContext completionContext)
+		public static void ShowIfValid (TextEditor editor, DocumentContext context, MonoDevelop.Ide.CodeCompletion.CodeCompletionContext completionContext)
 		{
-			var options = CodeGenerationOptions.CreateCodeGenerationOptions (document);
+			var options = CodeGenerationOptions.CreateCodeGenerationOptions (editor, context);
 			
 			var validGenerators = new List<ICodeGenerator> ();
 			foreach (var generator in CodeGenerationService.CodeGenerators) {

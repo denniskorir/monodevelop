@@ -30,8 +30,9 @@
 using System;
 using Gtk;
 using MonoDevelop.Core;
+using MonoDevelop.Ide.Fonts;
 using MonoDevelop.Ide.Gui;
-using Mono.TextEditor;
+using MonoDevelop.Components.AtkCocoaHelper;
 
 namespace MonoDevelop.Components
 {
@@ -87,8 +88,21 @@ namespace MonoDevelop.Components
 		}
 
 		public Menu Menu {
-			get { return menu; }
-			set { menu = value; menu.Deactivated += OnMenuDeactivated; }
+			get {
+				if (menu != null)
+					return menu;
+				return menu = new Menu ();
+			}
+			set {
+				if (menu != null) {
+					menu.Deactivated -= OnMenuDeactivated;
+					menu.Destroy ();
+				}
+				menu = value;
+				if (value != null) {
+					menu.Deactivated += OnMenuDeactivated;
+				}
+			}
 		}
 
 		public Entry Entry {
@@ -121,9 +135,11 @@ namespace MonoDevelop.Components
 			AppPaintable = true;
 
 			BuildWidget ();
-			BuildMenu ();
 
 			NoShowAll = true;
+			GtkWorkarounds.SetTransparentBgHint (this, true);
+
+			Accessible.SetShouldIgnore (true);
 		}
 
 		public Xwt.Drawing.Image FilterButtonPixbuf {
@@ -137,21 +153,32 @@ namespace MonoDevelop.Components
 
 		private void BuildWidget ()
 		{
-			var yscale = 0f;
-
-			if (Platform.IsWindows)
-				yscale = (float)GtkWorkarounds.GetScaleFactor (this);
-
-			alignment = new Alignment (0.5f, 0.5f, 1f, yscale);
+			alignment = new Alignment (0.5f, 0.5f, 1f, 0f);
+			alignment.Accessible.SetShouldIgnore (true);
 			alignment.SetPadding (1, 1, 3, 3);
 			VisibleWindow = false;
 
 			box = new HBox ();
+			box.Accessible.SetShouldIgnore (true);
 			entry = new FramelessEntry (this);
+			entry.UseNativeContextMenus ();
+			entry.Accessible.SetSubRole ("AXSearchField");
+			entry.Accessible.SetLabel (GettextCatalog.GetString ("Search"));
+
 			filter_button = new HoverImageButton (IconSize.Menu, "md-searchbox-search");
+			filter_button.Accessible.SetRole (AtkCocoa.Roles.AXMenuButton);
+			filter_button.Accessible.SetLabel (GettextCatalog.GetString ("Search filter menu"));
+			filter_button.Accessible.Description = GettextCatalog.GetString ("Change the search filters");
+
+			// This will be set to false if an event handler is attached to RequestMenu
+			filter_button.Accessible.SetShouldIgnore (true);
+
 			clear_button = new HoverImageButton (IconSize.Menu, "md-searchbox-clear");
+			clear_button.Accessible.SetLabel (GettextCatalog.GetString ("Clear"));
+			clear_button.Accessible.Description = GettextCatalog.GetString ("Clear the search entry");
 
 			entryAlignment = new Gtk.Alignment (0.5f, 0.5f, 1f, 1f);
+			entryAlignment.Accessible.SetShouldIgnore (true);
 			alignment.SetPadding (0, 0, 3, 3);
 			entryAlignment.Add (entry);
 			box.PackStart (filter_button, false, false, 0);
@@ -208,12 +235,6 @@ namespace MonoDevelop.Components
 				activated_event (this, EventArgs.Empty);
 		}
 
-		private void BuildMenu ()
-		{
-			menu = new Menu ();
-			menu.Deactivated += OnMenuDeactivated;
-		}
-
 		public void PopupFilterMenu ()
 		{
 			ShowMenu (0);
@@ -222,10 +243,15 @@ namespace MonoDevelop.Components
 		void ShowMenu (uint time)
 		{
 			OnRequestMenu (EventArgs.Empty);
-			if (menu.Children.Length > 0) {
-				menu.Popup (null, null, OnPositionMenu, 0, time);
-				menu.ShowAll ();
+			if (MenuHasChildren ()) {
+				Menu.Popup (null, null, OnPositionMenu, 0, time);
+				Menu.ShowAll ();
 			}
+		}
+
+		bool MenuHasChildren ()
+		{
+			return menu != null && Menu.Children.Length > 0;
 		}
 
 		private void ShowHideButtons ()
@@ -233,7 +259,7 @@ namespace MonoDevelop.Components
 			clear_button.Visible = entry.Text.Length > 0;
 			entryAlignment.RightPadding = (uint) (!clear_button.Visible && roundedShape ? 6 : 0);
 
-			filter_button.Visible = ForceFilterButtonVisible || (menu != null && menu.Children.Length > 0);
+			filter_button.Visible = ForceFilterButtonVisible || MenuHasChildren ();
 			entryAlignment.LeftPadding = (uint) (!filter_button.Visible && roundedShape ? 6 : 0);
 		}
 
@@ -265,7 +291,7 @@ namespace MonoDevelop.Components
 			toggling = true;
 			FilterMenuItem item = (FilterMenuItem)o;
 
-			foreach (MenuItem child_item in menu) {
+			foreach (MenuItem child_item in Menu) {
 				if (!(child_item is FilterMenuItem)) {
 					continue;
 				}
@@ -287,6 +313,7 @@ namespace MonoDevelop.Components
 
 			if (changed_timeout_id > 0) {
 				GLib.Source.Remove (changed_timeout_id);
+				changed_timeout_id = 0;
 			}
 
 			if (Ready)
@@ -295,6 +322,7 @@ namespace MonoDevelop.Components
 
 		private bool OnChangedTimeout ()
 		{
+			changed_timeout_id = 0;
 			OnChanged ();
 			return false;
 		}
@@ -347,12 +375,28 @@ namespace MonoDevelop.Components
 
 		protected virtual void OnRequestMenu (EventArgs e)
 		{
-			EventHandler handler = this.RequestMenu;
-			if (handler != null)
-				handler (this, e);
+			requestMenu?.Invoke (this, e);
 		}
 
-		public event EventHandler RequestMenu;
+		event EventHandler requestMenu;
+		object requestMenuLock = new object ();
+		public event EventHandler RequestMenu {
+			add {
+				lock (requestMenuLock) {
+					requestMenu += value;
+					filter_button.Accessible.SetShouldIgnore (false);
+				}
+			}
+
+			remove {
+				lock (requestMenuLock) {
+					requestMenu -= value;
+					if (requestMenu == null) {
+						filter_button.Accessible.SetShouldIgnore (true);
+					}
+				}
+			}
+		}
 
 		public void GrabFocusEntry ()
 		{
@@ -368,6 +412,7 @@ namespace MonoDevelop.Components
 		protected override void OnDestroyed ()
 		{
 			if (menu != null) {
+				menu.Deactivated -= OnMenuDeactivated;
 				menu.Destroy ();
 				menu = null;
 			}
@@ -390,7 +435,10 @@ namespace MonoDevelop.Components
 			var alloc = new Gdk.Rectangle (alignment.Allocation.X, box.Allocation.Y, alignment.Allocation.Width, box.Allocation.Height);
 
 			if (hasFrame && (!roundedShape || (roundedShape && !customRoundedShapeDrawing))) {
-				Style.PaintShadow (entry.Style, GdkWindow, StateType.Normal, ShadowType.In,
+				if (Platform.IsLinux)
+					Style.PaintFlatBox (Style, GdkWindow, entry.State, ShadowType.None,
+					                    evnt.Area, this, "entry_bg", alloc.X + 2, alloc.Y + 2, alloc.Width - 4, alloc.Height - 4);
+				Style.PaintShadow (entry.Style, GdkWindow, entry.State, entry.ShadowType,
 				                   evnt.Area, entry, "entry", alloc.X, alloc.Y, alloc.Width, alloc.Height);
 /*				using (var ctx = Gdk.CairoHelper.Create (GdkWindow)) {
 					ctx.LineWidth = 1;
@@ -419,7 +467,7 @@ namespace MonoDevelop.Components
 			if (hasFrame && roundedShape && customRoundedShapeDrawing) {
 				using (var ctx = Gdk.CairoHelper.Create (GdkWindow)) {
 					RoundBorder (ctx, alloc.X + 0.5, alloc.Y + 0.5, alloc.Width - 1, alloc.Height - 1);
-					ctx.SetSourceColor (Styles.WidgetBorderColor);
+					ctx.SetSourceColor (Styles.WidgetBorderColor.ToCairoColor ());
 					ctx.LineWidth = 1;
 					ctx.Stroke ();
 				}
@@ -479,7 +527,7 @@ namespace MonoDevelop.Components
 			FilterMenuItem item = new FilterMenuItem (id, label);
 
 			item.Toggled += OnMenuItemToggled;
-			menu.Append (item);
+			Menu.Append (item);
 
 			if (ActiveFilterID < 0) {
 				item.Toggle ();
@@ -492,20 +540,20 @@ namespace MonoDevelop.Components
 		public MenuItem AddMenuItem (string label)
 		{
 			var item = new MenuItem (label);
-			menu.Append (item);
+			Menu.Append (item);
 			return item;
 		}
 
 		public void AddFilterSeparator ()
 		{
-			menu.Append (new SeparatorMenuItem ());
+			Menu.Append (new SeparatorMenuItem ());
 		}
 
 		public void RemoveFilterOption (int id)
 		{
 			FilterMenuItem item = FindFilterMenuItem (id);
 			if (item != null) {
-				menu.Remove (item);
+				Menu.Remove (item);
 			}
 		}
 
@@ -519,7 +567,7 @@ namespace MonoDevelop.Components
 
 		private FilterMenuItem FindFilterMenuItem (int id)
 		{
-			foreach (MenuItem item in menu) {
+			foreach (MenuItem item in Menu) {
 				if (item is FilterMenuItem && ((FilterMenuItem)item).ID == id) {
 					return (FilterMenuItem)item;
 				}
@@ -635,6 +683,13 @@ namespace MonoDevelop.Components
 
 		}
 
+		public void SetEntryAccessibilityAttributes (string name, string label, string help)
+		{
+			entry.SetCommonAccessibilityAttributes (name, label, help);
+		}
+
+		public Atk.Object EntryAccessible => entry.Accessible;
+
 		private class FramelessEntry : Entry
 		{
 			private SearchEntry parent;
@@ -648,6 +703,8 @@ namespace MonoDevelop.Components
 
 				parent.StyleSet += OnParentStyleSet;
 				WidthChars = 1;
+
+				GtkWorkarounds.SetTransparentBgHint (this, true);
 			}
 
 			private void OnParentStyleSet (object o, EventArgs args)
@@ -658,11 +715,17 @@ namespace MonoDevelop.Components
 
 			private void RefreshGC ()
 			{
+				text_gc?.Dispose ();
 				text_gc = null;
 			}
 
 			protected override void OnDestroyed ()
 			{
+				RefreshGC ();
+				if (layout != null) {
+					layout.Dispose ();
+					layout = null;
+				}
 				parent.StyleSet -= OnParentStyleSet;
 				base.OnDestroyed ();
 			}
@@ -726,7 +789,7 @@ namespace MonoDevelop.Components
 
 				if (layout == null) {
 					layout = new Pango.Layout (PangoContext);
-					layout.FontDescription = PangoContext.FontDescription.Copy ();
+					layout.FontDescription = FontService.SansFont.CopyModified (Styles.FontScale11);
 				}
 
 				int width, height;

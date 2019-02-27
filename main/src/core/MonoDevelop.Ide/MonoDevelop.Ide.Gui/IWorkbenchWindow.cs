@@ -30,15 +30,16 @@ using System.ComponentModel;
 using System.Collections.Generic;
 using Mono.Addins;
 using MonoDevelop.Components.Docking;
+using System.Threading.Tasks;
 
 namespace MonoDevelop.Ide.Gui
 {
 	public interface IWorkbenchWindow
 	{
-		IViewContent ViewContent { get; }
-		IBaseViewContent ActiveViewContent { get; set; }
+		ViewContent ViewContent { get; }
+		BaseViewContent ActiveViewContent { get; set; }
 
-		IEnumerable<IAttachableViewContent> SubViewContents { get; }
+		IEnumerable<BaseViewContent> SubViewContents { get; }
 
 		Document Document { get; set; }
 		string DocumentType { get; set; }
@@ -46,28 +47,29 @@ namespace MonoDevelop.Ide.Gui
 		bool ShowNotification { get; set; }
 		ExtensionContext ExtensionContext { get; }
 
-		void AttachViewContent (IAttachableViewContent subViewContent);
-		void InsertViewContent (int index, IAttachableViewContent subViewContent);
+		void AttachViewContent (BaseViewContent subViewContent);
+		void InsertViewContent (int index, BaseViewContent subViewContent);
 
 		void SwitchView (int index);
-		void SwitchView (IAttachableViewContent subViewContent);
+		void SwitchView (BaseViewContent subViewContent);
 		int FindView <T>();
 		
-		bool CloseWindow (bool force);
+		Task<bool> CloseWindow (bool force);
 		void SelectWindow ();
 
 		/// <summary>
 		/// Returns a toolbar for the pad.
 		/// </summary>
-		DocumentToolbar GetToolbar (IBaseViewContent targetView);
+		DocumentToolbar GetToolbar (BaseViewContent targetView);
 
 		event EventHandler DocumentChanged;
 		event WorkbenchWindowEventHandler Closed;
-		event WorkbenchWindowEventHandler Closing;
+		event WorkbenchWindowAsyncEventHandler Closing;
 		event ActiveViewContentEventHandler ActiveViewContentChanged;
 		event EventHandler ViewsChanged;
 	}
 
+	public delegate Task WorkbenchWindowAsyncEventHandler (object o, WorkbenchWindowEventArgs e);
 	public delegate void WorkbenchWindowEventHandler (object o, WorkbenchWindowEventArgs e);
 	public class WorkbenchWindowEventArgs : CancelEventArgs
 	{
@@ -91,12 +93,12 @@ namespace MonoDevelop.Ide.Gui
 	public delegate void ActiveViewContentEventHandler (object o, ActiveViewContentEventArgs e);
 	public class ActiveViewContentEventArgs : EventArgs
 	{
-		private IBaseViewContent content = null;
-		public IBaseViewContent Content {
+		private BaseViewContent content = null;
+		public BaseViewContent Content {
 			get { return content; }
 		}
 
-		public ActiveViewContentEventArgs (IBaseViewContent content)
+		public ActiveViewContentEventArgs (BaseViewContent content)
 		{
 			this.content = content;
 		}

@@ -108,6 +108,7 @@ namespace MonoDevelop.Ide.Gui.Components
 					if (value != Selected) {
 						ExpandToNode ();
 						try {
+							pad.ClearSelectOnRelease ();
 							tree.Selection.SelectIter (currentIter);
 							tree.SetCursor (store.GetPath (currentIter), pad.CompleteColumn, false);
 						} catch (Exception) {}
@@ -369,6 +370,11 @@ namespace MonoDevelop.Ide.Gui.Components
 				}
 			}
 			
+			public T GetParentDataItem<T> (bool includeCurrent)
+			{
+				return (T)GetParentDataItem (typeof(T), includeCurrent);
+			}
+
 			public object GetParentDataItem (Type type, bool includeCurrent)
 			{
 				if (includeCurrent && type.IsInstanceOfType (DataItem))

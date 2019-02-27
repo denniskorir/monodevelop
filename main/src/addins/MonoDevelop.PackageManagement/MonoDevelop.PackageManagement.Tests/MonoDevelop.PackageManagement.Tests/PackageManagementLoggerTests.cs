@@ -24,10 +24,8 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 // THE SOFTWARE.
 
-using System;
 using System.Collections.Generic;
-using ICSharpCode.PackageManagement;
-using NuGet;
+using NuGet.ProjectManagement;
 using NUnit.Framework;
 
 namespace MonoDevelop.PackageManagement.Tests
@@ -79,30 +77,17 @@ namespace MonoDevelop.PackageManagement.Tests
 		}
 
 		[Test]
-		public void ResolveFileConflict_MessagePassed_RaisesOnResolveFileConflictEvent ()
+		public void Log_ErrorMessageLogged_CaptureErrorsForSummary ()
 		{
 			CreateLogger ();
-			string message = null;
-			packageManagementEvents.ResolveFileConflict += (sender, e) => {
-				message = e.Message;
-			};
+			logger.SaveErrors = true;
 
-			logger.ResolveFileConflict ("message");
+			logger.Log (MessageLevel.Error, "test");
+			messagesLoggedEventArgs.Clear ();
 
-			Assert.AreEqual ("message", message);
-		}
+			logger.LogSavedErrors ();
 
-		[Test]
-		public void ResolveFileConflict_PackageManagementEventsResolveFileConflictReturnsIgnoreAll_ReturnsIgnoreAll ()
-		{
-			CreateLogger ();
-			packageManagementEvents.ResolveFileConflict += (sender, e) => {
-				e.Resolution = FileConflictResolution.IgnoreAll;
-			};
-
-			FileConflictResolution resolution = logger.ResolveFileConflict ("message");
-
-			Assert.AreEqual (FileConflictResolution.IgnoreAll, resolution);
+			AssertOnPackageOperationMessageLoggedCalled (MessageLevel.Info, "test");
 		}
 	}
 }

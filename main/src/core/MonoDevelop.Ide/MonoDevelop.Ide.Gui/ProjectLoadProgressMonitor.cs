@@ -29,27 +29,24 @@ using MonoDevelop.Projects.Extensions;
 
 namespace MonoDevelop.Ide.Gui
 {
-	public class GtkProjectLoadProgressMonitor : WrappedProgressMonitor, IProjectLoadProgressMonitor
+	class GtkProjectLoadProgressMonitor : ProjectLoadProgressMonitor
 	{
 		MigrationType? Migration {
 			get; set;
 		}
 		
-		public MonoDevelop.Projects.Solution CurrentSolution { get; set; }
-
-		public GtkProjectLoadProgressMonitor (IProgressMonitor monitor)
-			: base (monitor)
+		public GtkProjectLoadProgressMonitor (ProgressMonitor monitor): base (Runtime.MainSynchronizationContext)
 		{
-			
+			AddFollowerMonitor (monitor);
 		}
 
-		protected override void Dispose (bool disposing)
+		protected override void OnDispose (bool disposing)
 		{
 			CurrentSolution = null;
-			base.Dispose (disposing);
+			base.OnDispose (disposing);
 		}
 		
-		public MigrationType ShouldMigrateProject ()
+		public override MigrationType ShouldMigrateProject ()
 		{
 			if (!IdeApp.IsInitialized)
 				return MigrationType.Ignore;

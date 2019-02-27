@@ -31,6 +31,7 @@ using System.Collections.Generic;
 using Gtk;
 using System.Runtime.InteropServices;
 using Mono.Addins;
+using MonoDevelop.Core;
 
 namespace MonoDevelop.Components
 {
@@ -38,7 +39,15 @@ namespace MonoDevelop.Components
 	{
 		static Dictionary<TreeView, TreeViewTooltipsData> treeData = new Dictionary<TreeView, TreeViewTooltipsData> ();
 
-		static readonly Xwt.Toolkit gtkToolkit = Xwt.Toolkit.Load (Xwt.ToolkitType.Gtk);
+		static Xwt.Toolkit gtkToolkit;
+
+		internal static Xwt.Toolkit GtkToolkit {
+			get {
+				if (gtkToolkit == null)
+					gtkToolkit = Xwt.Toolkit.LoadedToolkits.FirstOrDefault (t => t.Type == Xwt.ToolkitType.Gtk);
+				return gtkToolkit;
+			}
+		}
 
 		public static Cairo.Color ToCairoColor (this Gdk.Color color)
 		{
@@ -52,6 +61,14 @@ namespace MonoDevelop.Components
 			return new Xwt.Drawing.Color ((double)color.Red / ushort.MaxValue,
 				(double)color.Green / ushort.MaxValue,
 				(double)color.Blue / ushort.MaxValue);
+		}
+
+		public static string GetHex (this Gdk.Color color)
+		{
+			return String.Format("#{0:x2}{1:x2}{2:x2}",
+			                     (byte)(((double)color.Red / ushort.MaxValue) * 255),
+			                     (byte)(((double)color.Green / ushort.MaxValue) * 255),
+			                     (byte)(((double)color.Blue / ushort.MaxValue) * 255));
 		}
 
 		public static Gdk.Color ToGdkColor (this Cairo.Color color)
@@ -88,6 +105,19 @@ namespace MonoDevelop.Components
 			return c.ToGdkColor ();
 		}
 
+		/// <summary>
+		/// Makes a color lighter or darker
+		/// </summary>
+		/// <param name='lightAmount'>
+		/// Amount of lightness to add. If the value is positive, the color will be lighter,
+		/// if negative it will be darker. Value must be between 0 and 1.
+		/// </param>
+		public static HslColor AddLight (this HslColor color, double lightAmount)
+		{
+			color.L += lightAmount;
+			return color;
+		}
+
 		public static Cairo.Color AddLight (this Cairo.Color color, double lightAmount)
 		{
 			var c = color.ToXwtColor ();
@@ -95,64 +125,165 @@ namespace MonoDevelop.Components
 			return c.ToCairoColor ();
 		}
 
+		/// <summary>
+		/// Makes a color lighter or darker
+		/// </summary>
+		/// <param name='lightAmount'>
+		/// Amount of lightness to add. If the value is positive, the color will be lighter,
+		/// if negative it will be darker. Value must be between 0 and 1.
+		/// </param>
+		public static Xwt.Drawing.Color AddLight (this Xwt.Drawing.Color color, double lightAmount)
+		{
+			color.Light += lightAmount;
+			return color;
+		}
+
 		public static Xwt.Drawing.Context CreateXwtContext (this Gtk.Widget w)
 		{
 			var c = Gdk.CairoHelper.Create (w.GdkWindow);
-			return gtkToolkit.WrapContext (w, c);
+			return GtkToolkit.WrapContext (w, c);
 		}
 
 		public static Gtk.Widget ToGtkWidget (this Xwt.Widget widget)
 		{
-			return (Gtk.Widget) gtkToolkit.GetNativeWidget (widget);
+			return (Gtk.Widget) GtkToolkit.GetNativeWidget (widget);
 		}
 
 		public static void DrawImage (this Cairo.Context s, Gtk.Widget widget, Xwt.Drawing.Image image, double x, double y)
 		{
-			gtkToolkit.RenderImage (widget, s, image, x, y);
+			GtkToolkit.RenderImage (widget, s, image, x, y);
 		}
 
 		public static Xwt.Drawing.Image ToXwtImage (this Gdk.Pixbuf pix)
 		{
-			return gtkToolkit.WrapImage (pix);
+			return GtkToolkit.WrapImage (pix);
 		}
 
 		public static Gdk.Pixbuf ToPixbuf (this Xwt.Drawing.Image image)
 		{
-			return (Gdk.Pixbuf)gtkToolkit.GetNativeImage (image);
+			return (Gdk.Pixbuf)GtkToolkit.GetNativeImage (image);
 		}
 
 		public static Gdk.Pixbuf ToPixbuf (this Xwt.Drawing.Image image, Gtk.IconSize size)
 		{
-			return (Gdk.Pixbuf)gtkToolkit.GetNativeImage (image.WithSize (size));
+			return (Gdk.Pixbuf)GtkToolkit.GetNativeImage (image.WithSize (size));
 		}
 
 		public static Xwt.Drawing.Image WithSize (this Xwt.Drawing.Image image, Gtk.IconSize size)
 		{
 			int w, h;
-			if (!Gtk.Icon.SizeLookup (size, out w, out h))
-				return image;
-			if (size == IconSize.Menu)
-				w = h = 16;
+			size.GetSize (out w, out h);
 			return image.WithSize (w, h);
 		}
 
-		public static Xwt.Drawing.Image GetImageResource (this RuntimeAddin addin, string resource)
+		public static Xwt.Size GetSize (this IconSize size)
 		{
-			using (var s = addin.GetResource (resource)) {
-				var img = Xwt.Drawing.Image.FromStream (s);
-				int i = resource.LastIndexOf ('.');
-				if (i != -1) {
-					var resource2x = resource.Substring (0, i) + "@2x" + resource.Substring (i);
-					var s2x = addin.GetResource (resource2x);
-					if (s2x != null) {
-						using (s2x) {
-							var img2x = Xwt.Drawing.Image.FromStream (s2x);
-							return Xwt.Drawing.Image.CreateMultiSizeIcon (new Xwt.Drawing.Image[] {img, img2x});
-						}
-					}
-				}
-				return img;
+			var displayScale = Platform.IsWindows ? GtkWorkarounds.GetScaleFactor () : 1.0;
+			int w, h;
+			size.GetSize (out w, out h);
+			return new Xwt.Size ((double)w / displayScale, (double)h / displayScale);
+		}
+
+		public static void GetSize (this IconSize size, out int width, out int height)
+		{
+			if (!Icon.SizeLookup (size, out width, out height))
+				return;
+			if (size == IconSize.Menu)
+				width = height = 16;
+		}
+
+		public static Gdk.Rectangle ToGdkRectangle (this Xwt.Rectangle rect)
+		{
+			return new Gdk.Rectangle ((int)rect.X, (int)rect.Y, (int)rect.Width, (int)rect.Height);
+		}
+
+		public static Xwt.Rectangle ToXwtRectangle (this Gdk.Rectangle rect)
+		{
+			return new Xwt.Rectangle (rect.X, rect.Y, rect.Width, rect.Height);
+		}
+
+		public static Gdk.Point ToGdkPoint (this Xwt.Point point)
+		{
+			return new Gdk.Point ((int)point.X, (int)point.Y);
+		}
+
+		public static Xwt.Point ToXwtPoint (this Gdk.Point point)
+		{
+			return new Xwt.Point (point.X, point.Y);
+		}
+
+		#if MAC
+		static Gdk.Point ConvertToGdkCoordinates (this AppKit.NSScreen screen, Gdk.Point screenPoint)
+		{
+			if (screen == null)
+				return Gdk.Point.Zero;
+			var monitor = AppKit.NSScreen.Screens.IndexOf (screen);
+			var macgeometry = screen.Frame;
+			Gdk.Rectangle geometry = Gdk.Screen.Default.GetMonitorGeometry (monitor);
+
+			// HACK: Cocoa screen frames are always relative to the main monitor 0, but we need absolute
+			// coordinates in the Gdk system (origin is top-left corner of the left screen).
+
+			// x position is relative to main monitor 0,
+			// calculate X pos relative to current monitor first
+			screenPoint.X = (int)Math.Abs (macgeometry.X - screenPoint.X);
+			screenPoint.X += geometry.X;
+			return screenPoint;
+		}
+
+		public static Gdk.Rectangle GetSceenBounds (this AppKit.NSView widget)
+		{
+			var frame = widget.Frame;
+			var point = ConvertToGdkCoordinates (widget.Window?.Screen, new Gdk.Point ((int)frame.Location.X, (int)frame.Location.Y));
+			frame.X = point.X;
+			frame.Y = point.Y;
+			return new Gdk.Rectangle ((int)frame.X, (int)frame.Y, (int)frame.Width, (int)frame.Height);
+		}
+		#endif
+
+		public static Gdk.Rectangle GetSceenBounds (this Xwt.Widget widget)
+		{
+			var wbounds = widget.ScreenBounds.ToGdkRectangle ();
+			#if MAC
+			// Xwt.Widget.ScreenBounds is toolkit specific and Cocoa uses a different screen coordinate system.
+			var view = widget.Surface.NativeWidget as AppKit.NSView;
+			if (view != null) {
+				var point = ConvertToGdkCoordinates (view.Window?.Screen, wbounds.Location);
+				wbounds.X = point.X;
+				wbounds.Y = point.Y;
+
+				//var monitor = AppKit.NSScreen.Screens.IndexOf (view.Window.Screen);
+				//var macgeometry = view.Window.Screen.Frame;
+				//Gdk.Rectangle geometry = Gdk.Screen.Default.GetMonitorGeometry (monitor);
+
+				//// HACK: Cocoa screen frames are always relative to the main monitor 0, but we need absolute
+				//// coordinates in the Gdk system (origin is top-left corner of the left screen).
+
+				//// x position is relative to main monitor 0,
+				//// calculate X pos relative to current monitor first
+				//wbounds.X = (int) Math.Abs (macgeometry.X - wbounds.X);
+				//wbounds.X += geometry.X;
 			}
+			#endif
+			return wbounds;
+		}
+
+		public static Gdk.Point ToScreenCoordinates (this Xwt.Widget widget, Xwt.Point point)
+		{
+			var spoint = widget.ConvertToScreenCoordinates (point).ToGdkPoint ();
+			#if MAC
+			// Xwt.Widget.ScreenBounds is toolkit specific and Cocoa uses a different screen coordinate system.
+			var view = widget.Surface.NativeWidget as AppKit.NSView;
+			if (view != null) {
+				spoint = ConvertToGdkCoordinates (view.Window?.Screen, spoint);
+			}
+			#endif
+			return spoint;
+		}
+
+		public static Gdk.Rectangle ToScreenCoordinates (Xwt.Widget widget, Xwt.Rectangle rect)
+		{
+			return new Gdk.Rectangle (ToScreenCoordinates (widget, rect.Location), new Gdk.Size ((int)rect.Width, (int)rect.Height));
 		}
 
 		public static Gdk.Point GetScreenCoordinates (this Gtk.Widget w, Gdk.Point p)
@@ -186,10 +317,7 @@ namespace MonoDevelop.Components
 			tree.ScrollEvent += HandleTreeScrollEvent;
 			tree.Hidden += HandleTreeHidden;
 			tree.Unrealized += HandleTreeHidden;
-			tree.Destroyed += delegate {
-				ResetTooltip (tree);
-				treeData.Remove (tree);
-			};
+			tree.Destroyed += HandleTreeDestroyed;
 		}
 		
 		static void ResetTooltip (Gtk.TreeView tree)
@@ -210,6 +338,14 @@ namespace MonoDevelop.Components
 			ResetTooltip ((Gtk.TreeView) sender);
 		}
 
+		static void HandleTreeDestroyed (object sender, EventArgs e)
+		{
+			var tree = (Gtk.TreeView)sender;
+
+			ResetTooltip (tree);
+			treeData.Remove (tree);
+		}
+
 		[GLib.ConnectBeforeAttribute]
 		static void HandleTreeScrollEvent (object o, ScrollEventArgs args)
 		{
@@ -220,16 +356,30 @@ namespace MonoDevelop.Components
 		static void HandleLeaveNotifyEvent(object o, LeaveNotifyEventArgs args)
 		{
 			TreeView tree = (TreeView) o;
+			ScheduleHideTooltip (tree);
+		}
+
+		internal static void ScheduleHideTooltip (TreeView tree)
+		{
 			TreeViewTooltipsData data;
 			if (!treeData.TryGetValue (tree, out data))
 				return;
 			data.LeaveTimer = GLib.Timeout.Add (50, delegate {
 				data.LeaveTimer = 0;
-				if (data != null && data.Tooltip != null && data.Tooltip.MouseIsOver)
-					return false;
 				HideTooltip (tree);
 				return false;
 			});
+		}
+
+		internal static void UnscheduleHideTooltip (TreeView tree)
+		{
+			TreeViewTooltipsData data;
+			if (!treeData.TryGetValue (tree, out data))
+				return;
+			if (data.LeaveTimer != 0) {
+				GLib.Source.Remove (data.LeaveTimer);
+				data.LeaveTimer = 0;
+			}
 		}
 
 		internal static void HideTooltip (TreeView tree)
@@ -241,6 +391,10 @@ namespace MonoDevelop.Components
 				GLib.Source.Remove (data.ShowTimer);
 				data.ShowTimer = 0;
 				return;
+			}
+			if (data.LeaveTimer != 0) {
+				GLib.Source.Remove (data.LeaveTimer);
+				data.LeaveTimer = 0;
 			}
 			if (data.Tooltip != null) {
 				data.Tooltip.Destroy ();
@@ -298,6 +452,21 @@ namespace MonoDevelop.Components
 			}
 		}
 
+		public static bool GetCellForegroundSet (this Gtk.CellRendererText cell)
+		{
+			GLib.Value property = cell.GetProperty ("foreground-set");
+			bool result = (bool)property;
+			property.Dispose ();
+			return result;
+		}
+
+		public static void SetCellForegroundSet (this Gtk.CellRendererText cell, bool value)
+		{
+			GLib.Value val = new GLib.Value (value);
+			cell.SetProperty ("foreground-set", val);
+			val.Dispose ();
+		}
+
 		public static Gdk.Rectangle ToScreenCoordinates (Gtk.Widget widget, Gdk.Window w, Gdk.Rectangle rect)
 		{
 			return new Gdk.Rectangle (ToScreenCoordinates (widget, w, rect.X, rect.Y), rect.Size);
@@ -307,8 +476,14 @@ namespace MonoDevelop.Components
 		{
 			int ox, oy;
 			w.GetOrigin (out ox, out oy);
-			ox += widget.Allocation.X;
-			oy += widget.Allocation.Y;
+			//Bug 31032 - this is workaround bug in GTK on Windows OS which has widget.Allocation.X/Y
+			//relative to widget.GdkWindow.Toplevel instead to widget.GdkWindow which is GdkWindow decicated
+			//to TreeView so widget.Allocation.X/Y should always be 0,0(which is true on Mac)
+			//hence skipping adding Allocation.X/Y since they should always be 0,0 anyway
+			if (!(widget is TreeView)) {
+				ox += widget.Allocation.X;
+				oy += widget.Allocation.Y;
+			}
 			return new Gdk.Point (ox + x, oy + y);
 		}
 
@@ -430,15 +605,20 @@ namespace MonoDevelop.Components
 
 		public static Gdk.EventKey CreateKeyEvent (uint keyval, Gdk.ModifierType state, Gdk.EventType eventType, Gdk.Window win)
 		{
-			return CreateKeyEvent (keyval, -1, state, eventType, win);
+			return CreateKeyEvent (keyval, -1, state, eventType, win, null);
 		}
 
 		public static Gdk.EventKey CreateKeyEventFromKeyCode (ushort keyCode, Gdk.ModifierType state, Gdk.EventType eventType, Gdk.Window win)
 		{
-			return CreateKeyEvent (0, keyCode, state, eventType, win);
+			return CreateKeyEvent (0, keyCode, state, eventType, win, null);
 		}
 
-		static Gdk.EventKey CreateKeyEvent (uint keyval, int keyCode, Gdk.ModifierType state, Gdk.EventType eventType, Gdk.Window win)
+		public static Gdk.EventKey CreateKeyEventFromKeyCode (ushort keyCode, Gdk.ModifierType state, Gdk.EventType eventType, Gdk.Window win, uint time)
+		{
+			return CreateKeyEvent (0, keyCode, state, eventType, win, time);
+		}
+
+		static Gdk.EventKey CreateKeyEvent (uint keyval, int keyCode, Gdk.ModifierType state, Gdk.EventType eventType, Gdk.Window win, uint? time)
 		{
 			int effectiveGroup, level;
 			Gdk.ModifierType cmods;
@@ -458,11 +638,185 @@ namespace MonoDevelop.Components
 				group = (byte)keyms [0].Group,
 				hardware_keycode = keyCode == -1 ? (ushort)keyms [0].Keycode : (ushort)keyCode,
 				length = 0,
-				time = Gtk.Global.CurrentEventTime
+				time = time ?? Gtk.Global.CurrentEventTime
 			};
 
 			IntPtr ptr = GLib.Marshaller.StructureToPtrAlloc (nativeEvent); 
 			return new EventKeyWrapper (ptr);
+		}
+
+		static IEnumerable<Gtk.Widget> FindAllChildWidgets (this Gtk.Container container)
+		{
+			var widgets = new Stack<Widget> (new[] { container });
+
+			while (widgets.Any ()) {
+				var widget = widgets.Pop ();
+				yield return widget;
+
+				if (widget is Gtk.Container) {
+					var c = (Gtk.Container)widget;
+					foreach (var w in c.Children) {
+						widgets.Push (w);
+					}
+				}
+			}
+		}
+
+		public static void UseNativeContextMenus (this Gtk.Window window)
+		{
+			#if MAC
+			var entries = window.FindAllChildWidgets ().OfType<Gtk.Entry> ();
+			foreach (var entry in entries) {
+				entry.UseNativeContextMenus ();
+			}
+			#endif
+		}
+
+		public static void UseNativeContextMenus (this Gtk.Entry entry)
+		{
+			#if MAC
+			entry.ButtonPressEvent += EntryButtonPressHandler;
+			#endif
+		}
+
+		static void ShowNativeContextMenu (this Gtk.Entry entry, Gdk.EventButton evt)
+		{
+			var context_menu = new ContextMenu ();
+
+			var cut = new ContextMenuItem { Label = GettextCatalog.GetString ("Cut"), Context = entry };
+			cut.Clicked += CutClicked;
+			context_menu.Items.Add (cut);
+
+			var copy = new ContextMenuItem { Label = GettextCatalog.GetString ("Copy"), Context = entry };
+			copy.Clicked += CopyClicked;
+			context_menu.Items.Add (copy);
+
+			var paste = new ContextMenuItem { Label = GettextCatalog.GetString ("Paste"), Context = entry };
+			paste.Clicked += PasteClicked;
+			context_menu.Items.Add (paste);
+
+			context_menu.Items.Add (new SeparatorContextMenuItem ());
+
+			var delete = new ContextMenuItem { Label = GettextCatalog.GetString ("Delete"), Context = entry };
+			delete.Clicked += DeleteClicked;
+			context_menu.Items.Add (delete);
+
+			context_menu.Items.Add (new SeparatorContextMenuItem ());
+
+			var select_all = new ContextMenuItem { Label = GettextCatalog.GetString ("Select All"), Context = entry };
+			select_all.Clicked += SelectAllClicked;
+			context_menu.Items.Add (select_all);
+
+			/* Update the menu items' sensitivities */
+			copy.Sensitive = select_all.Sensitive = (entry.Text.Length > 0);
+			cut.Sensitive = delete.Sensitive = (entry.Text.Length > 0 && entry.IsEditable);
+			paste.Sensitive = entry.IsEditable;
+
+			context_menu.Show (entry, evt);
+		}
+
+		static void CutClicked (object o, ContextMenuItemClickedEventArgs e)
+		{
+			var entry = (Gtk.Entry)e.Context;
+
+			if (entry.IsEditable) {
+				int selection_start, selection_end;
+
+				if (entry.GetSelectionBounds (out selection_start, out selection_end)) {
+					var text = entry.GetChars (selection_start, selection_end);
+					var clipboard = Gtk.Clipboard.Get (Gdk.Atom.Intern ("CLIPBOARD", false));
+
+					clipboard.Text = text;
+					entry.DeleteText (selection_start, selection_end);
+				}
+			} else {
+				entry.ErrorBell ();
+			}
+		}
+
+		static void CopyClicked (object o, ContextMenuItemClickedEventArgs e)
+		{
+			var entry = (Gtk.Entry)e.Context;
+			int selection_start, selection_end;
+
+			if (entry.GetSelectionBounds (out selection_start, out selection_end)) {
+				var text = entry.GetChars (selection_start, selection_end);
+				var clipboard = Gtk.Clipboard.Get (Gdk.Atom.Intern ("CLIPBOARD", false));
+
+				clipboard.Text = text;
+			}
+		}
+
+		static void PasteClicked (object o, ContextMenuItemClickedEventArgs e)
+		{
+			var entry = (Gtk.Entry)e.Context;
+
+			if (entry.IsEditable) {
+				var clipboard = Gtk.Clipboard.Get (Gdk.Atom.Intern ("CLIPBOARD", false));
+
+				clipboard.RequestText ((cb, text) => {
+					entry.InsertText (text);
+				});
+			} else {
+				entry.ErrorBell ();
+			}
+		}
+
+		static void DeleteClicked (object o, ContextMenuItemClickedEventArgs e)
+		{
+			var entry = (Gtk.Entry)e.Context;
+
+			if (entry.IsEditable) {
+				int selection_start, selection_end;
+
+				if (entry.GetSelectionBounds (out selection_start, out selection_end)) {
+					entry.DeleteText (selection_start, selection_end);
+				}
+			}
+		}
+
+		static void SelectAllClicked (object o, ContextMenuItemClickedEventArgs e)
+		{
+			var entry = (Gtk.Entry)e.Context;
+
+			entry.SelectRegion (0, entry.Text.Length - 1);
+		}
+
+		[GLib.ConnectBefore]
+		static void EntryButtonPressHandler (object o, ButtonPressEventArgs args)
+		{
+			if (args.Event.Button == 3) {
+				var entry = (Gtk.Entry)o;
+
+				entry.ShowNativeContextMenu (args.Event);
+				args.RetVal = true;
+			}
+		}
+
+		/// <summary>
+		/// Shows the context menu for a TreeView.
+		/// </summary>
+		/// <returns><c>true</c>, if context menu was shown, <c>false</c> otherwise.</returns>
+		/// <param name="tree">Gtk TreeView for which the context menu is shown</param>
+		/// <param name="evt">The current mouse event, or <c>null</c>.</param>
+		/// <param name="entrySet">Entry set with the command definitions</param>
+		/// <param name="initialCommandTarget">Initial command target.</param>
+		public static bool ShowContextMenu (this Gtk.TreeView tree, Gdk.EventButton evt, Commands.CommandEntrySet entrySet,
+			object initialCommandTarget = null)
+		{
+			if (evt == null) {
+				var paths = tree.Selection.GetSelectedRows ();
+				if (paths != null) {
+					var area = tree.GetCellArea (paths [0], tree.Columns [0]);
+					return Ide.IdeApp.CommandService.ShowContextMenu (tree, area.Left, area.Top, entrySet, initialCommandTarget);
+				} else
+					return Ide.IdeApp.CommandService.ShowContextMenu (tree, 0, 0, entrySet, initialCommandTarget);
+			} else {
+				int x = (int)evt.X, y = (int)evt.Y;
+				if (Platform.IsMac && tree.BinWindow == evt.Window)
+					tree.ConvertBinWindowToWidgetCoords (x, y, out x, out y);
+				return Ide.IdeApp.CommandService.ShowContextMenu (tree, x, y, entrySet, initialCommandTarget);
+			}
 		}
 	}
 
@@ -572,7 +926,7 @@ namespace MonoDevelop.Components
 
 			// Delay the call to the leave handler since the pointer may be
 			// entering a child widget, in which case the event doesn't have to be fired
-			Gtk.Application.Invoke (delegate {
+			Gtk.Application.Invoke ((o2, a2) => {
 				if (!Inside)
 					LeaveHandler ();
 			});
@@ -591,14 +945,16 @@ namespace MonoDevelop.Components
 	{
 		TreeViewColumn col;
 		TreeView tree;
+		TreePath path;
 		TreeIter iter;
+		TreeStore treeStore;
 
-		public bool MouseIsOver;
-		
 		public CellTooltipWindow (TreeView tree, TreeViewColumn col, TreePath path)
 		{
 			this.tree = tree;
 			this.col = col;
+			this.treeStore = tree.Model as TreeStore;
+			this.path = path;
 			
 			NudgeHorizontal = true;
 			
@@ -636,8 +992,15 @@ namespace MonoDevelop.Components
 
 			Gdk.Rectangle expose = Allocation;
 			Gdk.Color save = Gdk.Color.Zero;
+			bool hasFgColor = false;
 			int x = 1;
 
+			// Make sure that the row has not been removed inbetween.
+			// If the model is a TreeStore, it can do the validation for us, otherwise we need to validate the path.
+			if ((treeStore != null && treeStore.IterIsValid (iter) == false) || !tree.Model.GetIter (out iter, path)) {
+				GtkUtil.HideTooltip (tree);
+				return true;
+			}
 			col.CellSetCellData (tree.Model, iter, false, false);
 
 			foreach (CellRenderer cr in col.CellRenderers) {
@@ -645,6 +1008,7 @@ namespace MonoDevelop.Components
 					continue;
 
 				if (cr is CellRendererText) {
+					hasFgColor = ((CellRendererText)cr).GetCellForegroundSet ();
 					save = ((CellRendererText)cr).ForegroundGdk;
 					((CellRendererText)cr).ForegroundGdk = Style.Foreground (State);
 				}
@@ -661,6 +1025,7 @@ namespace MonoDevelop.Components
 
 				if (cr is CellRendererText) {
 					((CellRendererText)cr).ForegroundGdk = save;
+					((CellRendererText)cr).SetCellForegroundSet (hasFgColor);
 				}
 			}
 
@@ -742,14 +1107,16 @@ namespace MonoDevelop.Components
 		
 		protected override bool OnLeaveNotifyEvent (Gdk.EventCrossing evnt)
 		{
-			MouseIsOver = false;
-			GtkUtil.HideTooltip (tree);
+			// While showing a window, if the cursor is in the area of the new window, sometimes we get several Enter/Leave events
+			// in sequence, until the window is fully visible. To avoid hiding the window too early, we schedule here a tooltip
+			// hide, which will be canceled if we get a new Enter event.
+			GtkUtil.ScheduleHideTooltip (tree);
 			return base.OnLeaveNotifyEvent (evnt);
 		}
 		
 		protected override bool OnEnterNotifyEvent (Gdk.EventCrossing evnt)
 		{
-			MouseIsOver = true;
+			GtkUtil.UnscheduleHideTooltip (tree);
 			return base.OnEnterNotifyEvent (evnt);
 		}
 	}

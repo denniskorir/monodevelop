@@ -38,17 +38,20 @@ namespace MonoDevelop.Ide.Projects.OptionPanels
 	{
 		CustomCommandCollection commands;
 		CustomCommandWidget lastSlot;
-		SolutionEntityItem entry;
+		SolutionItem entry;
 		ConfigurationSelector configSelector;
 		CustomCommandType[] supportedTypes;
 		
 		public CustomCommandPanelWidget ()
 		{
 			this.Build();
+
+			// Disable this so that the children can be focused
+			vboxCommands.CanFocus = false;
 			label3.LabelProp = MonoDevelop.Core.BrandingService.BrandApplicationName (label3.LabelProp);
 		}
 		
-		public void Load (SolutionEntityItem entry, CustomCommandCollection commands, ConfigurationSelector configSelector, CustomCommandType[] supportedTypes)
+		public void Load (SolutionItem entry, CustomCommandCollection commands, ConfigurationSelector configSelector, CustomCommandType[] supportedTypes)
 		{
 			this.entry = entry;
 			this.commands = commands;

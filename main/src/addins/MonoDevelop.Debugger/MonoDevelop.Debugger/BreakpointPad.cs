@@ -37,10 +37,12 @@ using Mono.Debugging.Client;
 using MonoDevelop.Components.Docking;
 using MonoDevelop.Ide.Gui.Components;
 using MonoDevelop.Ide;
+using MonoDevelop.Components.AutoTest;
+using System.ComponentModel;
 
 namespace MonoDevelop.Debugger
 {
-	public class BreakpointPad : IPadContent
+	public class BreakpointPad : PadContent
 	{
 		BreakpointStore breakpoints;
 		
@@ -50,11 +52,8 @@ namespace MonoDevelop.Debugger
 		ScrolledWindow sw;
 		CommandEntrySet menuSet;
 		TreeViewState treeState;
-		
-		EventHandler<BreakpointEventArgs> breakpointUpdatedHandler;
-		EventHandler<BreakpointEventArgs> breakpointRemovedHandler;
-		EventHandler<BreakpointEventArgs> breakpointAddedHandler;
-		EventHandler breakpointChangedHandler;
+
+		ActionCommand gotoCmd;
 		
 		enum Columns
 		{
@@ -74,22 +73,27 @@ namespace MonoDevelop.Debugger
 			Properties
 		}
 		
-		public void Initialize (IPadWindow window)
+		protected override void Initialize (IPadWindow window)
 		{
+			Id = "MonoDevelop.Debugger.BreakpointPad";
 			// Toolbar and menu definitions
 			
-			ActionCommand gotoCmd = new ActionCommand (LocalCommands.GoToFile, GettextCatalog.GetString ("Go to File"));
-			ActionCommand propertiesCmd = new ActionCommand (LocalCommands.Properties, GettextCatalog.GetString ("Properties"), Gtk.Stock.Properties);
-			
+			gotoCmd = new ActionCommand (LocalCommands.GoToFile, GettextCatalog.GetString ("Go to Breakpoint"));
+			ActionCommand propertiesCmd = new ActionCommand (LocalCommands.Properties, GettextCatalog.GetString ("Edit Breakpoint…"), Stock.Properties);
+
+			// The toolbar registers the Properties command with the CommandManager for us,
+			// but gotoCmd isn't used in the toolbar so we need to register it ourselves for the menu to work
+			IdeApp.CommandService.RegisterCommand (gotoCmd);
+
 			menuSet = new CommandEntrySet ();
+			menuSet.Add (propertiesCmd);
 			menuSet.Add (gotoCmd);
 			menuSet.AddSeparator ();
 			menuSet.AddItem (DebugCommands.EnableDisableBreakpoint);
-			menuSet.AddItem (DebugCommands.ClearAllBreakpoints);
 			menuSet.AddItem (DebugCommands.DisableAllBreakpoints);
-			menuSet.AddItem (EditCommands.DeleteKey);
 			menuSet.AddSeparator ();
-			menuSet.Add (propertiesCmd);
+			menuSet.AddItem (EditCommands.DeleteKey);
+			menuSet.AddItem (DebugCommands.ClearAllBreakpoints);
 			
 			CommandEntrySet toolbarSet = new CommandEntrySet ();
 			toolbarSet.AddItem (DebugCommands.EnableDisableBreakpoint);
@@ -99,12 +103,15 @@ namespace MonoDevelop.Debugger
 			toolbarSet.AddSeparator ();
 			toolbarSet.Add (propertiesCmd);
 			toolbarSet.AddSeparator ();
-			toolbarSet.Add (new CommandEntry (DebugCommands.NewFunctionBreakpoint){ DispayType = CommandEntryDisplayType.IconAndText });
-			toolbarSet.Add (new CommandEntry (DebugCommands.NewCatchpoint){ DispayType = CommandEntryDisplayType.IconAndText });
+			toolbarSet.Add (new CommandEntry (DebugCommands.NewFunctionBreakpoint){ DisplayType = CommandEntryDisplayType.IconAndText });
+			toolbarSet.Add (new CommandEntry (DebugCommands.NewCatchpoint){ DisplayType = CommandEntryDisplayType.IconAndText });
 			
 			// The breakpoint list
 			
 			store = new TreeStore (typeof(string), typeof (bool), typeof(string), typeof(object), typeof(string), typeof(string), typeof(string), typeof(string));
+			SemanticModelAttribute modelAttr = new SemanticModelAttribute ("store__Icon", "store__Selected","store_FileName",
+				"store_Breakpoint", "store_Condition", "store_TraceExp", "store_HitCount", "store_LastTrace");
+			TypeDescriptor.AddAttributes (store, modelAttr);
 
 			tree = new PadTreeView ();
 			tree.Model = store;
@@ -162,15 +169,10 @@ namespace MonoDevelop.Debugger
 			
 			UpdateDisplay ();
 
-			breakpointUpdatedHandler = DispatchService.GuiDispatch<EventHandler<BreakpointEventArgs>> (OnBreakpointUpdated);
-			breakpointRemovedHandler = DispatchService.GuiDispatch<EventHandler<BreakpointEventArgs>> (OnBreakpointRemoved);
-			breakpointAddedHandler = DispatchService.GuiDispatch<EventHandler<BreakpointEventArgs>> (OnBreakpointAdded);
-			breakpointChangedHandler = DispatchService.GuiDispatch<EventHandler> (OnBreakpointChanged);
-			
-			breakpoints.BreakpointAdded += breakpointAddedHandler;
-			breakpoints.BreakpointRemoved += breakpointRemovedHandler;
-			breakpoints.Changed += breakpointChangedHandler;
-			breakpoints.BreakpointUpdated += breakpointUpdatedHandler;
+			breakpoints.BreakpointAdded += OnBreakpointAdded;
+			breakpoints.BreakpointRemoved += OnBreakpointRemoved;
+			breakpoints.Changed += OnBreakpointChanged;
+			breakpoints.BreakpointUpdated += OnBreakpointUpdated;
 			
 			DebuggingService.PausedEvent += OnDebuggerStatusCheck;
 			DebuggingService.ResumedEvent += OnDebuggerStatusCheck;
@@ -178,26 +180,29 @@ namespace MonoDevelop.Debugger
 			
 			tree.RowActivated += OnRowActivated;
 			
-			DockItemToolbar toolbar = window.GetToolbar (PositionType.Top);
+			DockItemToolbar toolbar = window.GetToolbar (DockPositionType.Top);
 			toolbar.Add (toolbarSet, sw);
 			toolbar.ShowAll ();
 		}
 		
-		public void Dispose ()
+		public override void Dispose ()
 		{
-			breakpoints.BreakpointAdded -= breakpointAddedHandler;
-			breakpoints.BreakpointRemoved -= breakpointRemovedHandler;
-			breakpoints.Changed -= breakpointChangedHandler;
-			breakpoints.BreakpointUpdated -= breakpointUpdatedHandler;
+			breakpoints.BreakpointAdded -= OnBreakpointAdded;
+			breakpoints.BreakpointRemoved -= OnBreakpointRemoved;
+			breakpoints.Changed -= OnBreakpointChanged;
+			breakpoints.BreakpointUpdated -= OnBreakpointUpdated;
 			
 			DebuggingService.PausedEvent -= OnDebuggerStatusCheck;
 			DebuggingService.ResumedEvent -= OnDebuggerStatusCheck;
 			DebuggingService.StoppedEvent -= OnDebuggerStatusCheck;
+
+			IdeApp.CommandService.UnregisterCommand (gotoCmd);
+			base.Dispose ();
 		}
 
 		void ShowPopup (Gdk.EventButton evt)
 		{
-			IdeApp.CommandService.ShowContextMenu (tree, evt, menuSet, tree);
+			tree.ShowContextMenu (evt, menuSet, tree);
 		}
 		
 		[CommandHandler (LocalCommands.Properties)]
@@ -226,7 +231,7 @@ namespace MonoDevelop.Debugger
 		[CommandHandler (DebugCommands.EnableDisableBreakpoint)]
 		protected void OnEnableDisable ()
 		{
-			breakpoints.Changed -= breakpointChangedHandler;
+			breakpoints.Changed -= OnBreakpointChanged;
 
 			try {
 				bool enable = false;
@@ -258,7 +263,7 @@ namespace MonoDevelop.Debugger
 					store.SetValue (iter, (int) Columns.Selected, enable);
 				}
 			} finally {
-				breakpoints.Changed += breakpointChangedHandler;
+				breakpoints.Changed += OnBreakpointChanged;
 			}
 		}
 		
@@ -273,7 +278,7 @@ namespace MonoDevelop.Debugger
 				var bp = be as Breakpoint;
 				if (bp != null) {
 					if (!string.IsNullOrEmpty (bp.FileName))
-						IdeApp.Workbench.OpenDocument (bp.FileName, bp.Line, 1);
+						IdeApp.Workbench.OpenDocument (bp.FileName, null, bp.Line, 1);
 				}
 			}
 		}
@@ -282,7 +287,7 @@ namespace MonoDevelop.Debugger
 		{
 			bool deleted = false;
 
-			breakpoints.BreakpointRemoved -= breakpointRemovedHandler;
+			breakpoints.BreakpointRemoved -= OnBreakpointRemoved;
 
 			try {
 				// Note: since we'll be modifying the list of breakpoints, we need to sort
@@ -302,7 +307,7 @@ namespace MonoDevelop.Debugger
 					deleted = true;
 				}
 			} finally {
-				breakpoints.BreakpointRemoved += breakpointRemovedHandler;
+				breakpoints.BreakpointRemoved += OnBreakpointRemoved;
 			}
 
 			return deleted;
@@ -339,10 +344,45 @@ namespace MonoDevelop.Debugger
 		
 		[CommandUpdateHandler (EditCommands.Delete)]
 		[CommandUpdateHandler (EditCommands.DeleteKey)]
-		[CommandUpdateHandler (DebugCommands.EnableDisableBreakpoint)]
-		protected void UpdateMultiBpCommand (CommandInfo cmd)
+		protected void UpdateDeleteCommand (CommandInfo cmd)
 		{
-			cmd.Enabled = tree.Selection.CountSelectedRows () > 0;
+			var selectedCount = tree.Selection.CountSelectedRows ();
+			cmd.Enabled = selectedCount > 0;
+			cmd.Text = cmd.Description = GettextCatalog.GetPluralString ("Remove Breakpoint", "Remove Breakpoints", selectedCount);
+		}
+
+		[CommandUpdateHandler (DebugCommands.EnableDisableBreakpoint)]
+		[CommandUpdateHandler (DebugCommands.DisableAllBreakpoints)]
+		protected void UpdateEnableDisableBreakpointCommand (CommandInfo cmd)
+		{
+			var selectedCount = tree.Selection.CountSelectedRows ();
+			cmd.Enabled = selectedCount > 0;
+			bool enable = false;
+
+			foreach (var path in tree.Selection.GetSelectedRows ()) {
+				TreeIter iter;
+
+				if (!store.GetIter (out iter, path))
+					continue;
+
+				BreakEvent bp = (BreakEvent)store.GetValue (iter, (int)Columns.Breakpoint);
+				if (!bp.Enabled) {
+					enable = true;
+					break;
+				}
+			}
+
+			if (cmd.Command.Id.Equals (CommandManager.ToCommandId (DebugCommands.DisableAllBreakpoints))) {
+				if (enable)
+					cmd.Text = GettextCatalog.GetString ("Enable All Breakpoints");
+				else
+					cmd.Text = GettextCatalog.GetString ("Disable All Breakpoints");
+			} else {
+				if (enable)
+					cmd.Text = GettextCatalog.GetPluralString ("Enable Breakpoint", "Enable Breakpoints", selectedCount);
+				else
+					cmd.Text = GettextCatalog.GetPluralString ("Disable Breakpoint", "Disable Breakpoints", selectedCount);
+			}
 		}
 
 		[GLib.ConnectBefore]
@@ -369,7 +409,7 @@ namespace MonoDevelop.Debugger
 		
 		void ItemToggled (object o, ToggledArgs args)
 		{
-			breakpoints.Changed -= breakpointChangedHandler;
+			breakpoints.Changed -= OnBreakpointChanged;
 			
 			try {
 				TreeIter iter;
@@ -382,7 +422,7 @@ namespace MonoDevelop.Debugger
 					store.SetValue (iter, (int) Columns.Selected, bp.Enabled);
 				}
 			} finally {
-				breakpoints.Changed += breakpointChangedHandler;
+				breakpoints.Changed += OnBreakpointChanged;
 			}
 		}
 		
@@ -397,6 +437,8 @@ namespace MonoDevelop.Debugger
 			if (breakpoints != null) {	
 				lock (breakpoints) {
 					foreach (BreakEvent be in breakpoints.GetBreakevents ()) {
+						if (be.NonUserBreakpoint)
+							continue;
 						string hitCount = be.HitCountMode != HitCountMode.None ? be.CurrentHitCount.ToString () : "";
 						string traceExp = (be.HitAction & HitAction.PrintExpression) != HitAction.None ? be.TraceExpression : "";
 						string traceVal = (be.HitAction & HitAction.PrintExpression) != HitAction.None ? be.LastTraceValue : "";
@@ -428,36 +470,38 @@ namespace MonoDevelop.Debugger
 		
 		void OnBreakpointUpdated (object s, BreakpointEventArgs args)
 		{
-			TreeIter it;
+			Runtime.RunInMainThread (() => {
+				TreeIter it;
 
-			if (!store.GetIterFirst (out it))
-				return;
+				if (!store.GetIterFirst (out it))
+					return;
 
-			do {
-				var bp = (BreakEvent) store.GetValue (it, (int) Columns.Breakpoint);
-				if (bp == args.Breakpoint) {
-					string hitCount = bp.HitCountMode != HitCountMode.None ? bp.CurrentHitCount.ToString () : "";
-					string traceVal = (bp.HitAction & HitAction.PrintExpression) != HitAction.None ? bp.LastTraceValue : "";
-					store.SetValue (it, (int) Columns.HitCount, hitCount);
-					store.SetValue (it, (int) Columns.LastTrace, traceVal);
-					break;
-				}
-			} while (store.IterNext (ref it));
+				do {
+					var bp = (BreakEvent) store.GetValue (it, (int) Columns.Breakpoint);
+					if (bp == args.Breakpoint) {
+						string hitCount = bp.HitCountMode != HitCountMode.None ? bp.CurrentHitCount.ToString () : "";
+						string traceVal = (bp.HitAction & HitAction.PrintExpression) != HitAction.None ? bp.LastTraceValue : "";
+						store.SetValue (it, (int) Columns.HitCount, hitCount);
+						store.SetValue (it, (int) Columns.LastTrace, traceVal);
+						break;
+					}
+				} while (store.IterNext (ref it));
+			});
 		}
 		
 		protected void OnBreakpointAdded (object o, EventArgs args)
 		{
-			UpdateDisplay ();	
+			Runtime.RunInMainThread ((System.Action)UpdateDisplay);
 		}
 		
 		protected void OnBreakpointRemoved (object o, EventArgs args)
 		{
-			UpdateDisplay ();	
+			Runtime.RunInMainThread ((System.Action)UpdateDisplay);
 		}
 		
 		protected void OnBreakpointChanged (object o, EventArgs args)
 		{
-			UpdateDisplay ();	
+			Runtime.RunInMainThread ((System.Action)UpdateDisplay);
 		}
 		
 		void OnDebuggerStatusCheck (object s, EventArgs a)
@@ -471,25 +515,16 @@ namespace MonoDevelop.Debugger
 			OnBpJumpTo ();
 		}
 		
-		public Gtk.Widget Control {
+		public override Control Control {
 			get {
 				return control;
 			}
-		}
-
-		public string Id {
-			get { return "MonoDevelop.Debugger.BreakpointPad"; }
 		}
 
 		public string DefaultPlacement {
 			get { return "Bottom"; }
 		}
 
-		public void RedrawContent ()
-		{
-			UpdateDisplay ();
-		}
-		
 		protected void OnDeleteClicked (object o, EventArgs args)
 		{
 			OnDeleted ();

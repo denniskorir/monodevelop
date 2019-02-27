@@ -25,33 +25,23 @@
 // THE SOFTWARE.
 
 using System;
-using ICSharpCode.PackageManagement;
-using NuGet;
 using MonoDevelop.Core;
-using MonoDevelop.Ide;
 
 namespace MonoDevelop.PackageManagement.Tests.Helpers
 {
-	public class TestablePackageCompatibilityRunner : PackageCompatibilityRunner
+	class TestablePackageCompatibilityRunner : PackageCompatibilityRunner
 	{
-		MessageHandler backgroundDispatcher;
+		Action backgroundDispatcher;
 
 		public TestablePackageCompatibilityRunner (
 			IDotNetProject project,
-			IPackageManagementSolution solution,
-			IRegisteredPackageRepositories registeredRepositories,
 			IPackageManagementProgressMonitorFactory progressMonitorFactory,
-			IPackageManagementEvents packageManagementEvents,
-			IProgressProvider progressProvider)
+			IPackageManagementEvents packageManagementEvents)
 			: base (
 				project,
-				solution,
-				registeredRepositories,
 				progressMonitorFactory,
-				packageManagementEvents,
-				progressProvider)
+				packageManagementEvents)
 		{
-			PackageReferenceFile = new PackageReferenceFile (FileSystem, "packages.config");
 		}
 
 		public void ExecuteBackgroundDispatch ()
@@ -59,17 +49,16 @@ namespace MonoDevelop.PackageManagement.Tests.Helpers
 			backgroundDispatcher.Invoke ();
 		}
 
-		protected override void BackgroundDispatch (MessageHandler handler)
+		protected override void BackgroundDispatch (Action action)
 		{
-			backgroundDispatcher = handler;
+			backgroundDispatcher = action;
 		}
 
 		protected override PackageManagementEventsMonitor CreateEventMonitor (
-			IProgressMonitor monitor,
-			IPackageManagementEvents packageManagementEvents,
-			IProgressProvider progressProvider)
+			ProgressMonitor monitor,
+			IPackageManagementEvents packageManagementEvents)
 		{
-			EventsMonitor = new TestablePackageManagementEventsMonitor (monitor, packageManagementEvents, progressProvider);
+			EventsMonitor = new TestablePackageManagementEventsMonitor (monitor, packageManagementEvents, null);
 			return EventsMonitor;
 		}
 
@@ -83,21 +72,16 @@ namespace MonoDevelop.PackageManagement.Tests.Helpers
 
 		public ProgressMonitorStatusMessage ProgressStatusMessage;
 
-		protected override PackageCompatibilityChecker CreatePackageCompatibilityChecker (
-			IPackageManagementSolution solution,
-			IRegisteredPackageRepositories registeredRepositories)
-		{
-			return new TestablePackageCompatibilityChecker (solution, registeredRepositories) {
-				PackageReferenceFile = PackageReferenceFile
-			};
-		}
+		public TestablePackageCompatibilityChecker PackageCompatibilityChecker = new TestablePackageCompatibilityChecker ();
 
-		public PackageReferenceFile PackageReferenceFile;
-		public FakeFileSystem FileSystem = new FakeFileSystem ();
+		protected override PackageCompatibilityChecker CreatePackageCompatibilityChecker ()
+		{
+			return PackageCompatibilityChecker;
+		}
 
 		public bool PackageConsoleIsShown;
 
-		protected override void ShowPackageConsole (IProgressMonitor progressMonitor)
+		protected override void ShowPackageConsole (ProgressMonitor progressMonitor)
 		{
 			PackageConsoleIsShown = true;
 		}

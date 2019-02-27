@@ -25,22 +25,38 @@
 // THE SOFTWARE.
 
 using System;
+using System.Linq;
 using System.Collections.Generic;
 using MonoDevelop.Core;
+using MonoDevelop.Ide.Projects;
 using MonoDevelop.Projects;
 
 namespace MonoDevelop.Ide.Templates
 {
 	class TemplateWizardProvider
 	{
+		TemplateWizard currentWizard;
 		WizardPage currentWizardPage;
 
 		List<WizardPage> cachedWizardPages = new List<WizardPage> ();
+		List<ProjectConfigurationControl> cachedFinalPageControls;
 
 		public bool IsFirstPage { get; private set; }
 		public bool IsLastPage { get; private set; }
 		public int CurrentPageNumber { get; private set; }
-		public TemplateWizard CurrentWizard { get; private set; }
+
+		public TemplateWizard CurrentWizard {
+			get { return currentWizard; }
+			private set {
+				if (currentWizard != null) {
+					currentWizard.TotalPagesChanged -= OnTotalPagesChanged;
+				}
+				currentWizard = value;
+				if (currentWizard != null) {
+					currentWizard.TotalPagesChanged += OnTotalPagesChanged;
+				}
+			}
+		}
 
 		public WizardPage CurrentWizardPage {
 			get { return currentWizardPage; }
@@ -76,6 +92,19 @@ namespace MonoDevelop.Ide.Templates
 			if (handler != null) {
 				handler (sender, e);
 			}
+		}
+
+		void OnTotalPagesChanged (object sender, EventArgs e)
+		{
+			// Note: if the user goes back and changes values in a previous page,
+			// it's possible for the number of wizard pages to change. Remove any
+			// pages beyond the current page from the cache.
+			for (int i = cachedWizardPages.Count; i > CurrentPageNumber; i--) {
+				cachedWizardPages[i - 1].Dispose ();
+				cachedWizardPages.RemoveAt (i - 1);
+			}
+
+			IsLastPage = (CurrentPageNumber == CurrentWizard.TotalPages);
 		}
 
 		public bool MoveToFirstPage (SolutionTemplate template, ProjectCreateParameters parameters)
@@ -135,6 +164,7 @@ namespace MonoDevelop.Ide.Templates
 			IsLastPage = false;
 
 			DisposeWizardPages ();
+			DisposeFinalPageControls ();
 		}
 
 		void DisposeWizardPages ()
@@ -144,6 +174,18 @@ namespace MonoDevelop.Ide.Templates
 			}
 
 			cachedWizardPages.Clear ();
+		}
+
+		void DisposeFinalPageControls ()
+		{
+			if (cachedFinalPageControls == null)
+				return;
+
+			foreach (ProjectConfigurationControl control in cachedFinalPageControls) {
+				control.Dispose ();
+			}
+
+			cachedFinalPageControls = null;
 		}
 
 		public bool MoveToNextPage ()
@@ -183,6 +225,19 @@ namespace MonoDevelop.Ide.Templates
 		public void Dispose ()
 		{
 			Reset ();
+		}
+
+		public IEnumerable<ProjectConfigurationControl> GetFinalPageControls ()
+		{
+			if (cachedFinalPageControls != null)
+				return cachedFinalPageControls;
+
+			if (HasWizard) {
+				cachedFinalPageControls = CurrentWizard.GetFinalPageControls ().ToList ();
+				return cachedFinalPageControls;
+			}
+
+			return Enumerable.Empty <ProjectConfigurationControl> ();
 		}
 	}
 }

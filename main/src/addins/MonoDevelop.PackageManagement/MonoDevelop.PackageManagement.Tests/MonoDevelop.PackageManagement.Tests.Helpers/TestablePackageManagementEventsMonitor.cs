@@ -26,52 +26,34 @@
 
 using System;
 using System.Collections.Generic;
-using ICSharpCode.PackageManagement;
-using MonoDevelop.Ide;
+using System.Threading.Tasks;
 using MonoDevelop.Core;
-using NuGet;
 
 namespace MonoDevelop.PackageManagement.Tests.Helpers
 {
-	public class TestablePackageManagementEventsMonitor : PackageManagementEventsMonitor
+	class TestablePackageManagementEventsMonitor : PackageManagementEventsMonitor
 	{
 		public TestablePackageManagementEventsMonitor (
-			IProgressMonitor progressMonitor,
+			ProgressMonitor progressMonitor,
 			IPackageManagementEvents packageManagementEvents,
-			IProgressProvider progressProvider)
-			: base (progressMonitor, packageManagementEvents, progressProvider)
+			TaskCompletionSource<bool> taskCompletionSource)
+			: base (progressMonitor, packageManagementEvents, taskCompletionSource)
 		{
 		}
 
-		public List<FilePath> FilesChanged = new List<FilePath> ();
-
-		protected override void NotifyFilesChanged (FilePath[] files)
+		protected override void GuiSyncDispatch (Action action)
 		{
-			FilesChanged.AddRange (files);
+			action.Invoke ();
 		}
 
-		protected override void GuiSyncDispatch (MessageHandler handler)
-		{
-			handler.Invoke ();
-		}
-
-		protected override void ShowPackageConsole (IProgressMonitor progressMonitor)
+		protected override void ShowPackageConsole (ProgressMonitor progressMonitor)
 		{
 			IsPackageConsoleShown = true;
 			ProgressMonitorPassedToShowPackageConsole = progressMonitor;
 		}
 
 		public bool IsPackageConsoleShown;
-		public IProgressMonitor ProgressMonitorPassedToShowPackageConsole;
-
-		protected override void ReconnectAssemblyReferences (IPackageManagementProject project)
-		{
-			ProjectsPassedToReconnectAssemblyReferences.Add (project);
-			IsTypeSystemRefreshed = true;
-		}
-
-		public List<IPackageManagementProject> ProjectsPassedToReconnectAssemblyReferences = new List<IPackageManagementProject> ();
-		public bool IsTypeSystemRefreshed;
+		public ProgressMonitor ProgressMonitorPassedToShowPackageConsole;
 	}
 }
 

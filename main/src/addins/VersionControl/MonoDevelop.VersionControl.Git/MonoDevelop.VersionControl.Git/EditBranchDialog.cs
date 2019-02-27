@@ -30,11 +30,15 @@ using MonoDevelop.Core;
 using MonoDevelop.Ide;
 using MonoDevelop.Components;
 using LibGit2Sharp;
+using MonoDevelop.Components.AutoTest;
+using System.ComponentModel;
 
 namespace MonoDevelop.VersionControl.Git
 {
-	partial class EditBranchDialog : Dialog
+	partial class EditBranchDialog : Gtk.Dialog
 	{
+		const int GitRefnameMax = 1024;
+
 		readonly ListStore comboStore;
 		readonly string currentTracking;
 		readonly string oldName;
@@ -51,6 +55,8 @@ namespace MonoDevelop.VersionControl.Git
 			oldName = name;
 			currentTracking = tracking;
 
+			this.UseNativeContextMenus ();
+
 			comboStore = new ListStore (typeof(string), typeof(Xwt.Drawing.Image), typeof (string), typeof(string));
 			comboSources.Model = comboStore;
 			var crp = new CellRendererImage ();
@@ -60,8 +66,11 @@ namespace MonoDevelop.VersionControl.Git
 			comboSources.PackStart (crt, true);
 			comboSources.AddAttribute (crt, "text", 2);
 
+			SemanticModelAttribute modelAttr = new SemanticModelAttribute ("comboStore__Branch", "comboStore__Icon", "comboStore__Name", "comboStore__Tracking");
+			TypeDescriptor.AddAttributes (comboStore, modelAttr);
+
 			foreach (Branch b in repo.GetBranches ()) {
-				AddValues (b.Name, ImageService.GetIcon ("vc-branch", IconSize.Menu), "refs/heads/");
+				AddValues (b.FriendlyName, ImageService.GetIcon ("vc-branch", IconSize.Menu), "refs/heads/");
 			}
 
 			foreach (Remote r in repo.GetRemotes ()) {
@@ -73,6 +82,8 @@ namespace MonoDevelop.VersionControl.Git
 			checkTrack.Active = !string.IsNullOrEmpty (tracking);
 
 			UpdateStatus ();
+
+			WidthRequest = 400;
 		}
 
 		void AddValues (string name, Xwt.Drawing.Image icon, string prefix)
@@ -112,14 +123,18 @@ namespace MonoDevelop.VersionControl.Git
 		{
 			comboSources.Sensitive = checkTrack.Active;
 			buttonOk.Sensitive = entryName.Text.Length > 0;
-			if (oldName != entryName.Text && repo.GetBranches ().Any (b => b.Name == entryName.Text)) {
-				labelError.Markup = "<span color='red'>" + GettextCatalog.GetString ("A branch with this name already exists") + "</span>";
+			if (oldName != entryName.Text && repo.GetBranches ().Any (b => b.FriendlyName == entryName.Text)) {
+				labelError.Markup = "<span color='" + Ide.Gui.Styles.ErrorForegroundColor.ToHexString (false) + "'>" + GettextCatalog.GetString ("A branch with this name already exists") + "</span>";
 				labelError.Show ();
 				buttonOk.Sensitive = false;
 			} else if (!Reference.IsValidName ("refs/" + entryName.Text)) {
-				labelError.Markup = "<span color='red'>" + GettextCatalog.GetString (@"A branch name can not:
+				labelError.Markup = "<span color='" + Ide.Gui.Styles.ErrorForegroundColor.ToHexString (false) + "'>" + GettextCatalog.GetString (@"A branch name can not:
 Start with '.' or end with '/' or '.lock'
 Contain a ' ', '..', '~', '^', ':', '\', '?', '['") + "</span>";
+				labelError.Show ();
+				buttonOk.Sensitive = false;
+			} else if (entryName.Text.Length > GitRefnameMax) {
+				labelError.Markup = "<span color='" + Ide.Gui.Styles.ErrorForegroundColor.ToHexString (false) + "'>" + GettextCatalog.GetString ("Branch name too long") + "</span>";
 				labelError.Show ();
 				buttonOk.Sensitive = false;
 			} else

@@ -27,53 +27,55 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using ICSharpCode.PackageManagement;
+using System.Threading.Tasks;
 using MonoDevelop.Core;
-using MonoDevelop.Ide;
-using NuGet;
-using MonoDevelop.Ide.TypeSystem;
+using NuGet.PackageManagement;
+using NuGet.ProjectManagement;
 
 namespace MonoDevelop.PackageManagement
 {
-	public class PackageManagementEventsMonitor : IDisposable
+	internal class PackageManagementEventsMonitor : IDisposable
 	{
-		IProgressMonitor progressMonitor;
+		ProgressMonitor progressMonitor;
 		IPackageManagementEvents packageManagementEvents;
-		IProgressProvider progressProvider;
-		FileConflictResolution lastFileConflictResolution;
+		FileConflictAction lastFileConflictResolution;
 		IFileConflictResolver fileConflictResolver = new FileConflictResolver ();
-		string currentProgressOperation;
 		List<FileEventArgs> fileChangedEvents = new List<FileEventArgs> ();
-		List<IPackageManagementProject> projectsRequiringTypeSystemRefresh = new List<IPackageManagementProject> ();
+		ISolution solutionContainingProjectBuildersToDispose;
+		TaskCompletionSource<bool> taskCompletionSource;
 
 		public PackageManagementEventsMonitor (
-			IProgressMonitor progressMonitor,
+			ProgressMonitor progressMonitor,
+			IPackageManagementEvents packageManagementEvents)
+			: this (progressMonitor, packageManagementEvents, null)
+		{
+		}
+
+		public PackageManagementEventsMonitor (
+			ProgressMonitor progressMonitor,
 			IPackageManagementEvents packageManagementEvents,
-			IProgressProvider progressProvider)
+			TaskCompletionSource<bool> taskCompletionSource)
 		{
 			this.progressMonitor = progressMonitor;
 			this.packageManagementEvents = packageManagementEvents;
-			this.progressProvider = progressProvider;
+			this.taskCompletionSource = taskCompletionSource;
 
 			packageManagementEvents.PackageOperationMessageLogged += PackageOperationMessageLogged;
 			packageManagementEvents.ResolveFileConflict += ResolveFileConflict;
-			packageManagementEvents.AcceptLicenses += AcceptLicenses;
-			packageManagementEvents.FileChanged += FileChanged;
-			packageManagementEvents.ParentPackageInstalled += PackageInstalled;
-			progressProvider.ProgressAvailable += ProgressAvailable;
+			packageManagementEvents.ImportRemoved += ImportRemoved;
 		}
 
 		public void Dispose ()
 		{
-			progressProvider.ProgressAvailable -= ProgressAvailable;
-			packageManagementEvents.ParentPackageInstalled -= PackageInstalled;
-			packageManagementEvents.FileChanged -= FileChanged;
-			packageManagementEvents.AcceptLicenses -= AcceptLicenses;
+			packageManagementEvents.ImportRemoved -= ImportRemoved;
 			packageManagementEvents.ResolveFileConflict -= ResolveFileConflict;
 			packageManagementEvents.PackageOperationMessageLogged -= PackageOperationMessageLogged;
 
-			NotifyFilesChanged ();
-			RefreshTypeSystem ();
+			if (taskCompletionSource != null && taskCompletionSource.Task == PackageManagementMSBuildExtension.PackageRestoreTask) {
+				PackageManagementMSBuildExtension.PackageRestoreTask = null;
+			}
+
+			UnloadMSBuildHost ();
 		}
 
 		void ResolveFileConflict(object sender, ResolveFileConflictEventArgs e)
@@ -91,13 +93,13 @@ namespace MonoDevelop.PackageManagement
 		bool UserPreviouslySelectedOverwriteAllOrIgnoreAll()
 		{
 			return
-				(lastFileConflictResolution == FileConflictResolution.IgnoreAll) ||
-				(lastFileConflictResolution == FileConflictResolution.OverwriteAll);
+				(lastFileConflictResolution == FileConflictAction.IgnoreAll) ||
+				(lastFileConflictResolution == FileConflictAction.OverwriteAll);
 		}
 
-		protected virtual void GuiSyncDispatch (MessageHandler handler)
+		protected virtual void GuiSyncDispatch (Action action)
 		{
-			DispatchService.GuiSyncDispatch (handler);
+			Runtime.RunInMainThread (action).Wait ();
 		}
 
 		void PackageOperationMessageLogged (object sender, PackageOperationMessageLoggedEventArgs e)
@@ -131,106 +133,58 @@ namespace MonoDevelop.PackageManagement
 			} else {
 				progressMonitor.ReportSuccess (progressMessage.Success);
 			}
-		}
 
-		void AcceptLicenses (object sender, AcceptLicensesEventArgs e)
-		{
-			foreach (IPackage package in e.Packages) {
-				ReportLicenseAgreementWarning (package);
+			if (taskCompletionSource != null) {
+				taskCompletionSource.TrySetResult (true);
 			}
-			e.IsAccepted = true;
 		}
 
-		void ReportLicenseAgreementWarning (IPackage package)
+		public void ReportError (ProgressMonitorStatusMessage progressMessage, Exception ex, bool showPackageConsole = true)
 		{
-			string message = GettextCatalog.GetString (
-				"The {0} package has a license agreement which is available at {1}{2}" +
-				"Please review this license agreement and remove the package if you do not accept the agreement.{2}" +
-				"Check the package for additional dependencies which may also have license agreements.{2}" +
-				"Using this package and any dependencies constitutes your acceptance of these license agreements.",
-				package.Id,
-				package.LicenseUrl,
-				Environment.NewLine);
+			if (!ex.IsOperationCanceledException ())
+				LoggingService.LogError (progressMessage.Error, ex);
 
-			ReportWarning (message);
-		}
-
-		void ProgressAvailable (object sender, ProgressEventArgs e)
-		{
-			if (currentProgressOperation == e.Operation)
-				return;
-
-			currentProgressOperation = e.Operation;
-			progressMonitor.Log.WriteLine (e.Operation);
-		}
-
-		void FileChanged (object sender, FileEventArgs e)
-		{
-			fileChangedEvents.Add (e);
-		}
-
-		void NotifyFilesChanged ()
-		{
-			GuiSyncDispatch (() => {
-				FilePath[] files = fileChangedEvents
-					.SelectMany (fileChangedEvent => fileChangedEvent.ToArray ())
-					.Select (fileInfo => fileInfo.FileName)
-					.ToArray ();
-
-				NotifyFilesChanged (files);
-			});
-		}
-
-		protected virtual void NotifyFilesChanged (FilePath[] files)
-		{
-			FileService.NotifyFilesChanged (files);
-		}
-
-		public void ReportError (ProgressMonitorStatusMessage progressMessage, Exception ex)
-		{
-			LoggingService.LogInternalError (ex);
-			progressMonitor.Log.WriteLine (ex.Message);
+			progressMonitor.Log.WriteLine (GetErrorMessageForPackageConsole (ex));
 			progressMonitor.ReportError (progressMessage.Error, null);
-			ShowPackageConsole (progressMonitor);
+			if (showPackageConsole)
+				ShowPackageConsole (progressMonitor);
 			packageManagementEvents.OnPackageOperationError (ex);
+
+			if (taskCompletionSource != null) {
+				taskCompletionSource.TrySetException (ExceptionUtility.Unwrap (ex));
+			}
 		}
 
-		protected virtual void ShowPackageConsole (IProgressMonitor progressMonitor)
+		static string GetErrorMessageForPackageConsole (Exception ex)
+		{
+			var aggregateEx = ex as AggregateException;
+			if (aggregateEx != null) {
+				var message = new AggregateExceptionErrorMessage (aggregateEx);
+				return message.ToString ();
+			}
+			return ex.Message;
+		}
+
+		protected virtual void ShowPackageConsole (ProgressMonitor progressMonitor)
 		{
 			progressMonitor.ShowPackageConsole ();
 		}
 
-		void RefreshTypeSystem ()
+		void ImportRemoved (object sender, DotNetProjectImportEventArgs e)
 		{
-			foreach (IPackageManagementProject project in projectsRequiringTypeSystemRefresh) {
-				ReconnectAssemblyReferences (project);
-			}
+			solutionContainingProjectBuildersToDispose = e.Project.ParentSolution;
 		}
 
-		protected virtual void ReconnectAssemblyReferences (IPackageManagementProject project)
+		void UnloadMSBuildHost ()
 		{
-			var projectWrapper = TypeSystemService.GetProjectContentWrapper (project.DotNetProject);
-			if (projectWrapper != null) {
-				projectWrapper.ReconnectAssemblyReferences ();
-			}
-		}
+			if (solutionContainingProjectBuildersToDispose == null)
+				return;
 
-		void PackageInstalled (object sender, ParentPackageOperationEventArgs e)
-		{
-			if (ShouldRefreshTypeSystemForProject (e)) {
-				projectsRequiringTypeSystemRefresh.Add (e.Project);
-			}
-		}
-
-		bool ShouldRefreshTypeSystemForProject (ParentPackageOperationEventArgs e)
-		{
-			return e.Operations.Any (operation => IsInstallingMSBuildFiles (operation));
-		}
-
-		bool IsInstallingMSBuildFiles (PackageOperation operation)
-		{
-			return (operation.Action == PackageAction.Install) &&
-				operation.Package.GetBuildFiles ().Any ();
+			GuiSyncDispatch (() => {
+				foreach (IDotNetProject project in solutionContainingProjectBuildersToDispose.GetAllProjects ()) {
+					project.DisposeProjectBuilder ();
+				}
+			});
 		}
 	}
 }

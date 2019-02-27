@@ -28,6 +28,8 @@ using System;
 using System.CodeDom.Compiler;
 using System.Linq;
 using MonoDevelop.Core;
+using MonoDevelop.TextTemplating;
+using System.Threading.Tasks;
 using MonoDevelop.Ide.CustomTools;
 using MonoDevelop.Projects;
 
@@ -35,21 +37,21 @@ namespace MonoDevelop.AspNet.Razor.Generator
 {
 	class RazorTemplatePreprocessor : ISingleFileCustomTool
 	{
-		public IAsyncOperation Generate (IProgressMonitor monitor, ProjectFile file, SingleFileCustomToolResult result)
+		public Task Generate (ProgressMonitor monitor, ProjectFile file, SingleFileCustomToolResult result)
 		{
-			return new ThreadAsyncOperation (delegate {
+			return Task.Run (delegate {
 				try {
 					GenerateInternal (monitor, file, result);
 				} catch (Exception ex) {
 					result.UnhandledException = ex;
 				}
-			}, result);
+			});
 		}
 
-		static void GenerateInternal (IProgressMonitor monitor, ProjectFile file, SingleFileCustomToolResult result)
+		static void GenerateInternal (ProgressMonitor monitor, ProjectFile file, SingleFileCustomToolResult result)
 		{
 			if (file.Project.SupportedLanguages.All (l => l != "C#")) {
-				const string msg = "Razor templates are only supported in C# projects";
+				string msg = GettextCatalog.GetString ("Razor templates are only supported in C# projects");
 				result.Errors.Add (new CompilerError (file.Name, -1, -1, null, msg));
 				monitor.Log.WriteLine (msg);
 				return;

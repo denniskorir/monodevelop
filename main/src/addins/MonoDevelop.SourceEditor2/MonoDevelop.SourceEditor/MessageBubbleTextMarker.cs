@@ -34,24 +34,28 @@ using MonoDevelop.Ide;
 using System.Text.RegularExpressions;
 using Mono.TextEditor.Highlighting;
 using MonoDevelop.Ide.Fonts;
-using MonoDevelop.Components;
 using Gtk;
+using MonoDevelop.Components;
+using MonoDevelop.SourceEditor.Wrappers;
+using MonoDevelop.Core;
+using MonoDevelop.Core.Text;
+using MonoDevelop.Ide.Editor.Highlighting;
 
 namespace MonoDevelop.SourceEditor
 {
-	class MessageBubbleTextMarker : MarginMarker, IDisposable, IActionTextLineMarker
+	class MessageBubbleTextMarker : MarginMarker, IDisposable, IActionTextLineMarker, MonoDevelop.Ide.Editor.IMessageBubbleLineMarker
 	{
 		readonly MessageBubbleCache cache;
 		
 		internal const int border = 4;
 		
-		TextEditor editor {
+		MonoTextEditor editor {
 			get { return cache.editor;}
 		}
 
 		public override bool IsVisible {
 			get { return !task.Completed; }
-			set { task.Completed = !value; }
+			set { task.Completed = !value; editor.QueueDraw (); }
 		}
 
 		public bool UseVirtualLines { get; set; }
@@ -61,13 +65,20 @@ namespace MonoDevelop.SourceEditor
 			get { return errors; }
 		}
 
-		Task task;
-		DocumentLine lineSegment;
+		TaskListEntry task;
+		internal TaskListEntry Task {
+			get {
+				return this.task;
+			}
+		}
+
+		TaskListEntry primaryTask;
+
 //		int editorAllocHeight = -1;
 //		int lastLineLength = -1;
 		internal double lastHeight = 0;
 
-		public double GetLineHeight (TextEditor editor)
+		public double GetLineHeight (MonoTextEditor editor)
 		{
 			return editor.LineHeight;
 			/*
@@ -96,8 +107,10 @@ namespace MonoDevelop.SourceEditor
 			return height;*/
 		}
 
-		public void SetPrimaryError (string text)
+		public void SetPrimaryError (TaskListEntry task)
 		{
+			this.primaryTask = task;
+			var text = task.Description;
 			EnsureLayoutCreated (editor);
 			
 			var match = mcsErrorFormat.Match (text);
@@ -134,39 +147,48 @@ namespace MonoDevelop.SourceEditor
 
 		public override TextLineMarkerFlags Flags {
 			get {
-				if (lineSegment != null && lineSegment.Markers.Any (m => m is DebugTextMarker)) 
+				if (LineSegment != null && editor.Document.GetTextSegmentMarkersAt (LineSegment).Any (m => m is DebugTextMarker)) 
 					return TextLineMarkerFlags.None;
 
 				return TextLineMarkerFlags.DrawsSelection;
 			}
 		}
 
-		string initialText;
 		bool isError;
-		internal MessageBubbleTextMarker (MessageBubbleCache cache, Task task, DocumentLine lineSegment, bool isError, string errorMessage)
+
+		public MessageBubbleTextMarker (MessageBubbleCache cache)
+		{
+			if (cache == null)
+				throw new ArgumentNullException ("cache");
+			this.cache = cache;
+			this.IsVisible = true;
+		}
+
+		internal MessageBubbleTextMarker (MessageBubbleCache cache, TaskListEntry task, bool isError, string errorMessage)
 		{
 			if (cache == null)
 				throw new ArgumentNullException ("cache");
 			this.cache = cache;
 			this.task = task;
-			this.IsVisible = true;
-			this.lineSegment = lineSegment;
-			this.initialText = editor.Document.GetTextAt (lineSegment);
 			this.isError = isError;
 			AddError (task, isError, errorMessage);
 //			cache.Changed += (sender, e) => CalculateLineFit (editor, lineSegment);
 		}
 		
 		static System.Text.RegularExpressions.Regex mcsErrorFormat = new System.Text.RegularExpressions.Regex ("(.+)\\(CS\\d+\\)\\Z");
-		public void AddError (Task task, bool isError, string errorMessage)
+		public void AddError (TaskListEntry task, bool isError, string errorMessage)
 		{
+			if (this.task == null) {
+				this.task = task;
+			}
 			var match = mcsErrorFormat.Match (errorMessage);
+			string trimmedMessage = errorMessage;
 			if (match.Success)
-				errorMessage = match.Groups [1].Value;
-			errors.Add (new ErrorText (task, isError, errorMessage));
+				trimmedMessage = match.Groups [1].Value;
+			errors.Add (new ErrorText (task, isError, trimmedMessage, errorMessage));
 			DisposeLayout ();
 		}
-		
+
 		public void DisposeLayout ()
 		{
 			layouts = null;
@@ -185,47 +207,80 @@ namespace MonoDevelop.SourceEditor
 		internal Pango.Layout errorCountLayout;
 		List<MessageBubbleCache.LayoutDescriptor> layouts;
 		
-		internal AmbientColor MarkerColor {
+		internal HslColor MarkerColor {
 			get {
-				return isError ? editor.ColorStyle.MessageBubbleErrorMarker : editor.ColorStyle.MessageBubbleWarningMarker;
+				return Ide.Editor.Highlighting.SyntaxHighlightingService.GetColor (editor.EditorTheme, isError ? EditorThemeColors.MessageBubbleErrorMarker : EditorThemeColors.MessageBubbleWarningMarker);
 			}
 		}
 
-		internal AmbientColor TagColor {
+		internal HslColor TagColor {
 			get {
-				return isError ? editor.ColorStyle.MessageBubbleErrorTag : editor.ColorStyle.MessageBubbleWarningTag;
+				return Ide.Editor.Highlighting.SyntaxHighlightingService.GetColor (editor.EditorTheme, isError ? EditorThemeColors.MessageBubbleErrorTag : EditorThemeColors.MessageBubbleWarningTag);
 			}
 		}
 
-		internal AmbientColor TooltipColor {
+		internal HslColor TagColor2 {
 			get {
-				return isError ? editor.ColorStyle.MessageBubbleErrorTooltip : editor.ColorStyle.MessageBubbleWarningTooltip;
+				return Ide.Editor.Highlighting.SyntaxHighlightingService.GetColor (editor.EditorTheme, isError ? EditorThemeColors.MessageBubbleErrorTag2 : EditorThemeColors.MessageBubbleWarningTag2);
 			}
 		}
 
-		internal AmbientColor LineColor {
+		internal HslColor TooltipColor {
 			get {
-				return isError ? editor.ColorStyle.MessageBubbleErrorLine : editor.ColorStyle.MessageBubbleWarningLine;
+				return Ide.Editor.Highlighting.SyntaxHighlightingService.GetColor (editor.EditorTheme, isError ? EditorThemeColors.MessageBubbleErrorTooltip : EditorThemeColors.MessageBubbleWarningTooltip);
 			}
 		}
 
-		internal AmbientColor CounterColor {
+		internal HslColor LineColor {
 			get {
-				return isError ? editor.ColorStyle.MessageBubbleErrorCounter : editor.ColorStyle.MessageBubbleWarningCounter;
+				return Ide.Editor.Highlighting.SyntaxHighlightingService.GetColor (editor.EditorTheme, isError ? EditorThemeColors.MessageBubbleErrorLine : EditorThemeColors.MessageBubbleWarningLine);
 			}
 		}
 
-		internal AmbientColor IconMarginColor {
+		internal HslColor LineColor2 {
 			get {
-				return isError ? editor.ColorStyle.MessageBubbleErrorIconMargin : editor.ColorStyle.MessageBubbleWarningIconMargin;
+				return Ide.Editor.Highlighting.SyntaxHighlightingService.GetColor (editor.EditorTheme, isError ? EditorThemeColors.MessageBubbleErrorLine2 : EditorThemeColors.MessageBubbleWarningLine2);
 			}
 		}
+
+		internal HslColor BorderLineColor {
+			get {
+				return Ide.Editor.Highlighting.SyntaxHighlightingService.GetColor (editor.EditorTheme, isError ? EditorThemeColors.MessageBubbleErrorBorderLine : EditorThemeColors.MessageBubbleWarningBorderLine);
+			}
+		}
+
+
+		internal HslColor CounterColor {
+			get {
+				return Ide.Editor.Highlighting.SyntaxHighlightingService.GetColor (editor.EditorTheme, isError ? EditorThemeColors.MessageBubbleErrorCounter : EditorThemeColors.MessageBubbleWarningCounter);
+			}
+		}
+
+		internal HslColor CounterColor2 {
+			get {
+				return Ide.Editor.Highlighting.SyntaxHighlightingService.GetColor (editor.EditorTheme, isError ? EditorThemeColors.MessageBubbleErrorCounter2 : EditorThemeColors.MessageBubbleWarningCounter2);
+			}
+		}
+
+		internal HslColor IconMarginColor {
+			get {
+				return Ide.Editor.Highlighting.SyntaxHighlightingService.GetColor (editor.EditorTheme, isError ? EditorThemeColors.MessageBubbleErrorIconMargin : EditorThemeColors.MessageBubbleWarningIconMargin);
+			}
+		}
+
+		internal HslColor IconMarginBorderColor {
+			get {
+				return Ide.Editor.Highlighting.SyntaxHighlightingService.GetColor (editor.EditorTheme, isError ? EditorThemeColors.MessageBubbleErrorIconMarginBorder : EditorThemeColors.MessageBubbleWarningIconMarginBorder);
+			}
+		}
+
 
 		Cairo.Color BlendSelection (Cairo.Color color, bool selected)
 		{
 			if (!selected)
 				return color;
-			var selectionColor = editor.ColorStyle.SelectedText.Background;
+
+			var selectionColor = (Cairo.Color)Ide.Editor.Highlighting.SyntaxHighlightingService.GetColor (editor.EditorTheme, EditorThemeColors.Selection);
 			const double bubbleAlpha = 0.1;
 			return new Cairo.Color (
 				(color.R * bubbleAlpha + selectionColor.R * (1 - bubbleAlpha)), 
@@ -238,7 +293,7 @@ namespace MonoDevelop.SourceEditor
 		{
 			if (!highlighted)
 				return color;
-			var selectionColor = editor.ColorStyle.PlainText.Background;
+			var selectionColor = (Cairo.Color)Ide.Editor.Highlighting.SyntaxHighlightingService.GetColor (editor.EditorTheme, EditorThemeColors.Background);
 			const double bubbleAlpha = 0.7;
 			return new Cairo.Color (
 				(color.R * bubbleAlpha + selectionColor.R * (1 - bubbleAlpha)), 
@@ -249,29 +304,29 @@ namespace MonoDevelop.SourceEditor
 
 		Cairo.Color GetLineColor (bool highlighted, bool selected) 
 		{
-			return BlendSelection (Highlight (LineColor.Color, highlighted), selected);
+			return BlendSelection (Highlight (LineColor, highlighted), selected);
 		}
 
 		Cairo.Color GetMarkerColor (bool highlighted, bool selected) 
 		{
-			return BlendSelection (Highlight (MarkerColor.Color, highlighted), selected);
+			return BlendSelection (Highlight (MarkerColor, highlighted), selected);
 		}
 
 		Cairo.Color GetLineColorBottom (bool highlighted, bool selected) 
 		{
-			return BlendSelection (Highlight (LineColor.SecondColor, highlighted), selected);
+			return BlendSelection (Highlight (LineColor2, highlighted), selected);
 		}
 
 		Cairo.Color GetLineColorBorder (bool highlighted, bool selected) 
 		{
-			return BlendSelection (Highlight (LineColor.BorderColor, highlighted), selected);
+			return BlendSelection (Highlight (BorderLineColor, highlighted), selected);
 		}
 
 		internal IList<MessageBubbleCache.LayoutDescriptor> Layouts {
 			get { return layouts; }
 		}
 		
-		internal void EnsureLayoutCreated (TextEditor editor)
+		internal void EnsureLayoutCreated (MonoTextEditor editor)
 		{
 			if (layouts != null)
 				return;
@@ -332,16 +387,27 @@ namespace MonoDevelop.SourceEditor
 		}
 
 		#region IActionTextMarker implementation
-		public bool MousePressed (TextEditor editor, MarginMouseEventArgs args)
+		int curError = 0;
+		public bool MousePressed (MonoTextEditor editor, MarginMouseEventArgs args)
+		{
+			if (bubbleDrawX < args.X && args.X < bubbleDrawX + bubbleWidth) {
+				errors [curError].Task.SelectInPad ();
+				curError = (curError + 1) % errors.Count;
+				return true;
+			}
+			return false;
+		}
+
+		bool IActionTextLineMarker.MouseReleased (MonoTextEditor editor, MarginMouseEventArgs args)
 		{
 			return false;
 		}
 
-		public void MouseHover (TextEditor editor, MarginMouseEventArgs args, TextLineMarkerHoverResult result)
+		public void MouseHover (MonoTextEditor editor, MarginMouseEventArgs args, TextLineMarkerHoverResult result)
 		{
 			if (!IsVisible)
 				return;
-			if (LineSegment == null)
+			if (base.LineSegment == null)
 				return;
 			if (bubbleDrawX < args.X && args.X < bubbleDrawX + bubbleWidth) {
 				editor.HideTooltip ();
@@ -355,12 +421,12 @@ namespace MonoDevelop.SourceEditor
 		double bubbleWidth;
 		bool bubbleIsReduced;
 		
-		public override void Draw (TextEditor editor, Cairo.Context g, double y, LineMetrics metrics)
+		public override void Draw (MonoTextEditor editor, Cairo.Context g, LineMetrics metrics)
 		{
 
 		}
 
-		public override void DrawAfterEol (TextEditor textEditor, Cairo.Context g, double y, EndOfLineMetrics metrics)
+		public override void DrawAfterEol (MonoTextEditor textEditor, Cairo.Context g, EndOfLineMetrics metrics)
 		{
 			if (!IsVisible)
 				return;
@@ -374,6 +440,7 @@ namespace MonoDevelop.SourceEditor
 			var sx = metrics.TextRenderEndPosition;
 			var width = LayoutWidth + errorCounterWidth + editor.LineHeight;
 			var drawLayout = layouts[0].Layout;
+			var y = metrics.LineYRenderStartPosition;
 			bool customLayout = true; //sx + width > editor.Allocation.Width;
 			bool hideText = false;
 			bubbleIsReduced = customLayout;
@@ -410,7 +477,7 @@ namespace MonoDevelop.SourceEditor
 			var bubbleHeight = editor.LineHeight;
 
 			g.RoundedRectangle (sx, y, width, bubbleHeight, roundingRadius);
-			g.SetSourceColor (TagColor.Color);
+			g.SetSourceColor (TagColor);
 			g.Fill ();
 
 			// Draw error count icon
@@ -427,9 +494,10 @@ namespace MonoDevelop.SourceEditor
 					editor.LineHeight / 2 - 2
 				);
 
+				// FIXME: VV: Remove gradient features
 				using (var lg = new Cairo.LinearGradient (errorCounterX, errorCounterY, errorCounterX, errorCounterY + errorCounterHeight)) {
-					lg.AddColorStop (0, CounterColor.Color);
-					lg.AddColorStop (1, CounterColor.Color.AddLight (-0.1));
+					lg.AddColorStop (0, CounterColor);
+					lg.AddColorStop (1, CounterColor.AddLight (-0.1));
 					g.SetSource (lg);
 					g.Fill ();
 				}
@@ -443,7 +511,7 @@ namespace MonoDevelop.SourceEditor
 				var ty = Math.Round (errorCounterY + (-1 + errorCounterHeight - eh) / 2);
 
 				g.Translate (tx, ty);
-				g.SetSourceColor (CounterColor.SecondColor);
+				g.SetSourceColor (CounterColor2);
 				g.ShowLayout (errorCountLayout);
 				g.Restore ();
 			}
@@ -457,7 +525,7 @@ namespace MonoDevelop.SourceEditor
 
 				for (int i = 0; i < 3; i++) {
 					g.Arc (sx, y + bubbleHeight / 2, radius, 0, Math.PI * 2);
-					g.SetSourceColor (TagColor.SecondColor);
+					g.SetSourceColor (TagColor2);
 					g.Fill ();
 					sx += radius * 2 + spacing;
 				}
@@ -469,7 +537,7 @@ namespace MonoDevelop.SourceEditor
 				g.Save ();
 				g.Translate (tx, ty);
 
-				g.SetSourceColor (TagColor.SecondColor);
+				g.SetSourceColor (TagColor2);
 				g.ShowLayout (drawLayout);
 				g.Restore ();
 			}
@@ -494,37 +562,38 @@ namespace MonoDevelop.SourceEditor
 			return margin is IconMargin;
 		}
 
-		void DrawIconMarginBackground (TextEditor ed, Cairo.Context cr, MarginDrawMetrics metrics)
+		void DrawIconMarginBackground (MonoTextEditor ed, Cairo.Context cr, MarginDrawMetrics metrics)
 		{
 			cr.Rectangle (metrics.X, metrics.Y, metrics.Width, metrics.Height);
-			cr.SetSourceColor (IconMarginColor.Color);
+			cr.SetSourceColor (IconMarginColor);
 			cr.Fill ();
 			cr.MoveTo (metrics.Right - 0.5, metrics.Y);
 			cr.LineTo (metrics.Right - 0.5, metrics.Bottom);
-			cr.SetSourceColor (IconMarginColor.BorderColor);
+			cr.SetSourceColor (IconMarginBorderColor);
 			cr.Stroke ();
 			if (cache.CurrentSelectedTextMarker != null && cache.CurrentSelectedTextMarker != this) {
 				cr.Rectangle (metrics.X, metrics.Y, metrics.Width, metrics.Height);
-				cr.SetSourceRGBA (ed.ColorStyle.IndicatorMargin.Color.R, ed.ColorStyle.IndicatorMargin.Color.G, ed.ColorStyle.IndicatorMargin.Color.B, 0.5);
+				var color = (Cairo.Color)IconMarginColor;
+				cr.SetSourceRGBA (color.R, color.G, color.B, 0.5);
 				cr.Fill ();
 			}
 		}
 
-		public override void DrawForeground (TextEditor editor, Cairo.Context cr, MarginDrawMetrics metrics)
+		public override void DrawForeground (MonoTextEditor editor, Cairo.Context cr, MarginDrawMetrics metrics)
 		{
-			var tx = Math.Round (metrics.X + (metrics.Width - cache.errorPixbuf.Width) / 2) - 1;
-			var ty = Math.Floor (metrics.Y + (metrics.Height - cache.errorPixbuf.Height) / 2);
+			var tx = Math.Round (metrics.X + (metrics.Width - MessageBubbleCache.errorPixbuf.Width) / 2) - 1;
+			var ty = Math.Floor (metrics.Y + (metrics.Height - MessageBubbleCache.errorPixbuf.Height) / 2);
 
 			cr.Save ();
 			cr.Translate (tx, ty);
-			cr.DrawImage (editor, errors.Any (e => e.IsError) ? cache.errorPixbuf : cache.warningPixbuf, 0, 0);
+			cr.DrawImage (editor, errors.Any (e => e.IsError) ? MessageBubbleCache.errorPixbuf : MessageBubbleCache.warningPixbuf, 0, 0);
 			cr.Restore ();
 		}
 
-		public override bool DrawBackground (TextEditor editor, Cairo.Context cr, MarginDrawMetrics metrics)
+		public override bool DrawBackground (MonoTextEditor editor, Cairo.Context cr, MarginDrawMetrics metrics)
 		{
 			if (metrics.Margin is FoldMarkerMargin || metrics.Margin is GutterMargin || metrics.Margin is ActionMargin)
-				return DrawMarginBackground (editor, metrics.Margin, cr, metrics.Area, lineSegment, metrics.LineNumber, metrics.X, metrics.Y, metrics.Height);
+				return DrawMarginBackground (editor, metrics.Margin, cr, metrics.Area, LineSegment, metrics.LineNumber, metrics.X, metrics.Y, metrics.Height);
 			if (metrics.Margin is IconMargin) {
 				DrawIconMarginBackground (editor, cr, metrics);
 				return true;
@@ -532,12 +601,12 @@ namespace MonoDevelop.SourceEditor
 			return false;
 		}
 
-		bool DrawMarginBackground (TextEditor e, Margin margin, Cairo.Context cr, Cairo.Rectangle area, DocumentLine documentLine, long line, double x, double y, double lineHeight)
+		bool DrawMarginBackground (MonoTextEditor e, Margin margin, Cairo.Context cr, Cairo.Rectangle area, DocumentLine documentLine, long line, double x, double y, double lineHeight)
 		{
 			if (cache.CurrentSelectedTextMarker != null && cache.CurrentSelectedTextMarker != this)
 				return false;
 			cr.Rectangle (x, y, margin.Width, lineHeight);
-			cr.SetSourceColor (LineColor.Color);
+			cr.SetSourceColor (LineColor);
 			cr.Fill ();
 			return true;
 		}
@@ -547,12 +616,12 @@ namespace MonoDevelop.SourceEditor
 
 		#region text background
 
-		public override bool DrawBackground (TextEditor editor, Cairo.Context g, double y, LineMetrics metrics)
+		public override bool DrawBackground (MonoTextEditor editor, Cairo.Context g, LineMetrics metrics)
 		{
 			if (!IsVisible)
 				return false;
 			bool markerShouldDrawnAsHidden = cache.CurrentSelectedTextMarker != null && cache.CurrentSelectedTextMarker != this;
-			if (metrics.LineSegment.Markers.Any (m => m is DebugTextMarker))
+			if (editor.Document.GetTextSegmentMarkersAt (metrics.LineSegment).Any (m => m is DebugTextMarker))
 				return false;
 
 			EnsureLayoutCreated (editor);
@@ -561,19 +630,19 @@ namespace MonoDevelop.SourceEditor
 			bool isCaretInLine = metrics.TextStartOffset <= editor.Caret.Offset && editor.Caret.Offset <= metrics.TextEndOffset;
 			int errorCounterWidth = GetErrorCountBounds (metrics).Item1;
 
-			var min = right - LayoutWidth - border - (ShowIconsInBubble ? cache.errorPixbuf.Width : 0) - errorCounterWidth;
+			var min = right - LayoutWidth - border - (ShowIconsInBubble ? MessageBubbleCache.errorPixbuf.Width : 0) - errorCounterWidth;
 			var max = Math.Round (editor.TextViewMargin.XOffset + editor.LineHeight / 2);
 			double x2 = Math.Max (min, max);
 
-			bool isEolSelected = editor.IsSomethingSelected && editor.SelectionMode != Mono.TextEditor.SelectionMode.Block ? editor.SelectionRange.Contains (lineSegment.Offset + lineSegment.Length) : false;
+			bool isEolSelected = editor.IsSomethingSelected && editor.SelectionMode != MonoDevelop.Ide.Editor.SelectionMode.Block ? editor.SelectionRange.Contains (LineSegment.Offset + LineSegment.Length) : false;
 
-			int active = editor.Document.GetTextAt (lineSegment) == initialText ? 0 : 1;
+			int active = 0;
 			bool highlighted = active == 0 && isCaretInLine;
-
+			var y = metrics.LineYRenderStartPosition;
 			// draw background
 			if (!markerShouldDrawnAsHidden) {
 				DrawRectangle (g, x, y, right, editor.LineHeight);
-				g.SetSourceColor (LineColor.Color);
+				g.SetSourceColor (LineColor);
 				g.Fill ();
 
 				if (metrics.Layout.StartSet || metrics.SelectionStart == metrics.TextEndOffset) {
@@ -581,16 +650,16 @@ namespace MonoDevelop.SourceEditor
 					double endX;
 
 					if (metrics.SelectionStart != metrics.TextEndOffset) {
-						var start = metrics.Layout.Layout.IndexToPos ((int)metrics.Layout.SelectionStartIndex);
+						var start = metrics.Layout.IndexToPos ((int)metrics.Layout.SelectionStartIndex);
 						startX = (int)(start.X / Pango.Scale.PangoScale);
-						var end = metrics.Layout.Layout.IndexToPos ((int)metrics.Layout.SelectionEndIndex);
+						var end = metrics.Layout.IndexToPos ((int)metrics.Layout.SelectionEndIndex);
 						endX = (int)(end.X / Pango.Scale.PangoScale);
 					} else {
 						startX = x2;
 						endX = startX;
 					}
 
-					if (editor.MainSelection.SelectionMode == Mono.TextEditor.SelectionMode.Block && startX == endX)
+					if (editor.MainSelection.SelectionMode == MonoDevelop.Ide.Editor.SelectionMode.Block && startX == endX)
 						endX = startX + 2;
 					startX += metrics.TextRenderStartPosition;
 					endX += metrics.TextRenderStartPosition;
@@ -627,30 +696,74 @@ namespace MonoDevelop.SourceEditor
 			return true;
 		}
 
-		void DrawErrorMarkers (TextEditor editor, Cairo.Context g, LineMetrics metrics, double y)
+		void DrawErrorMarkers (MonoTextEditor editor, Cairo.Context g, LineMetrics metrics, double y)
 		{
 			uint curIndex = 0, byteIndex = 0;
 
 			var o = metrics.LineSegment.Offset;
 
 			foreach (var task in errors.Select (t => t.Task)) {
-				var column = (uint)(Math.Min (Math.Max (0, task.Column - 1), metrics.Layout.LineChars.Length));
-				int index = (int)metrics.Layout.TranslateToUTF8Index (column, ref curIndex, ref byteIndex);
-				var pos = metrics.Layout.Layout.IndexToPos (index);
-				var co = o + task.Column - 1;
-				g.SetSourceColor (GetMarkerColor (false, metrics.SelectionStart <= co && co < metrics.SelectionEnd));
-				g.MoveTo (
-					metrics.TextRenderStartPosition + editor.TextViewMargin.TextStartPosition + pos.X / Pango.Scale.PangoScale,
-					y + editor.LineHeight - 3
-					);
-				g.RelLineTo (3, 3);
-				g.RelLineTo (-6, 0);
-				g.ClosePath ();
+				try {
+					var column = (uint)(Math.Min (Math.Max (0, task.Column - 1), metrics.Layout.Text.Length));
+					var line = editor.GetLine (task.Line);
+					// skip possible white space locations 
+					while (column < line.Length && char.IsWhiteSpace (editor.GetCharAt (line.Offset + (int)column))) {
+						column++;
+					}
+					if (column >= metrics.Layout.Text.Length)
+						continue;
+					int index = (int)metrics.Layout.TranslateToUTF8Index (column, ref curIndex, ref byteIndex);
+					var pos = metrics.Layout.IndexToPos (index);
+					var co = o + task.Column - 1;
+					g.SetSourceColor (GetMarkerColor (false, metrics.SelectionStart <= co && co < metrics.SelectionEnd));
+					g.MoveTo (
+						metrics.TextRenderStartPosition + editor.TextViewMargin.TextStartPosition + pos.X / Pango.Scale.PangoScale,
+						y + editor.LineHeight - 3
+						);
+					g.RelLineTo (3, 3);
+					g.RelLineTo (-6, 0);
+					g.ClosePath ();
 
-				g.Fill ();
+					g.Fill ();
+				} catch (Exception e) {
+					LoggingService.LogError ("Error while drawing task marker " + task, e);
+				}				
 			}
 		}
 
 		#endregion
+
+		MonoDevelop.Ide.Editor.IDocumentLine MonoDevelop.Ide.Editor.ITextLineMarker.Line {
+			get {
+				return base.LineSegment;
+			}
+		}
+
+		void MonoDevelop.Ide.Editor.IMessageBubbleLineMarker.AddTask (TaskListEntry task)
+		{
+			AddError (task, task.Severity == TaskSeverity.Error, task.Description);
+		}
+
+		TaskListEntry MonoDevelop.Ide.Editor.IMessageBubbleLineMarker.PrimaryTask {
+			get {
+				return primaryTask;
+			}
+			set {
+				SetPrimaryError (task);
+			}
+		}
+
+		int MonoDevelop.Ide.Editor.IMessageBubbleLineMarker.TaskCount {
+			get {
+				return errors.Count;
+			}
+		}
+
+		IEnumerable<TaskListEntry> MonoDevelop.Ide.Editor.IMessageBubbleLineMarker.Tasks {
+			get {
+				return errors.Select (e => e.Task);
+			}
+		}
+
 	}
 }

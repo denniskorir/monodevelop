@@ -60,8 +60,8 @@ namespace MonoDevelop.Ide.Execution
 			}
 			return null;
 		}
-		
-		public static void GenerateExecutionModeCommands (SolutionEntityItem project, CanExecuteDelegate runCheckDelegate, CommandArrayInfo info)
+
+		public static void GenerateExecutionModeCommands (SolutionItem project, CanExecuteDelegate runCheckDelegate, CommandArrayInfo info)
 		{
 			CommandExecutionContext ctx = new CommandExecutionContext (project, runCheckDelegate);
 			bool supportsParameterization = false;
@@ -90,7 +90,8 @@ namespace MonoDevelop.Ide.Execution
 			}
 
 			var targets = new List<ExecutionTarget> ();
-			FlattenExecutionTargets (targets, project.GetExecutionTargets (IdeApp.Workspace.ActiveConfiguration));
+			if (project != null)
+				FlattenExecutionTargets (targets, project.GetExecutionTargets (IdeApp.Workspace.ActiveConfiguration));
 
 			if (targets.Count > 1) {
 				foreach (var t in targets) {
@@ -123,8 +124,8 @@ namespace MonoDevelop.Ide.Execution
 		{
 			CommandItem item = (CommandItem) data;
 			if (item.Mode == null) {
-				var dlg = new CustomExecutionModeManagerDialog (item.Context);
-				MessageService.ShowCustomDialog (dlg);
+				using (var dlg = new CustomExecutionModeManagerDialog (item.Context))
+					MessageService.ShowCustomDialog (dlg);
 				return null;
 			}
 			
@@ -241,9 +242,8 @@ namespace MonoDevelop.Ide.Execution
 		
 		internal static CustomExecutionMode ShowParamtersDialog (CommandExecutionContext ctx, IExecutionMode mode, CustomExecutionMode currentMode)
 		{
-			CustomExecutionMode cmode = null;
-			
-			DispatchService.GuiSyncDispatch (delegate {
+			return Runtime.RunInMainThread (delegate {
+				CustomExecutionMode cmode = null;
 				CustomExecutionModeDialog dlg = new CustomExecutionModeDialog ();
 				try {
 					dlg.Initialize (ctx, mode, currentMode);
@@ -253,11 +253,12 @@ namespace MonoDevelop.Ide.Execution
 						if (dlg.Save)
 							SaveCustomCommand (ctx.Project, cmode);
 					}
+					return cmode;
 				} finally {
 					dlg.Destroy ();
+					dlg.Dispose ();
 				}
-			});
-			return cmode;
+			}).Result;
 		}
 		
 		internal class CommandItem
@@ -287,7 +288,7 @@ namespace MonoDevelop.Ide.Execution
 			}
 		}
 		
-		internal static void SaveCustomCommand (SolutionEntityItem project, CustomExecutionMode cmode)
+		internal static void SaveCustomCommand (SolutionItem project, CustomExecutionMode cmode)
 		{
 			CustomExecutionModes modes = GetCustomExecutionModeList (project, cmode.Scope);
 			bool found = false;
@@ -311,7 +312,7 @@ namespace MonoDevelop.Ide.Execution
 				IdeApp.Workspace.SavePreferences ();
 		}
 		
-		static CustomExecutionModes GetCustomExecutionModeList (SolutionEntityItem project, CustomModeScope scope)
+		static CustomExecutionModes GetCustomExecutionModeList (SolutionItem project, CustomModeScope scope)
 		{
 			CustomExecutionModes modes;
 			if (scope == CustomModeScope.Global) {
@@ -334,7 +335,7 @@ namespace MonoDevelop.Ide.Execution
 			return modes;
 		}
 		
-		internal static void RemoveCustomCommand (SolutionEntityItem project, CustomExecutionMode cmode)
+		internal static void RemoveCustomCommand (SolutionItem project, CustomExecutionMode cmode)
 		{
 			CustomExecutionModes modes = GetCustomExecutionModeList (project, cmode.Scope);
 			modes.Data.Remove (cmode);
@@ -415,13 +416,195 @@ namespace MonoDevelop.Ide.Execution
 					yield return mode;
 			}
 		}
+
+		internal static bool GetExecutionMode (CommandExecutionContext ctx, string id, out IExecutionModeSet modeSet, out IExecutionMode mode)
+		{
+			foreach (IExecutionModeSet mset in Runtime.ProcessService.GetExecutionModes ()) {
+				foreach (IExecutionMode m in mset.ExecutionModes) {
+					if (m.Id == id && ctx.CanExecute (m.ExecutionHandler)) {
+						modeSet = mset;
+						mode = m;
+						return true;
+					}
+				}
+			}
+			modeSet = null;
+			mode = null;
+			return false;
+		}
+
+		/*
+
+				public static void GenerateExecutionModeCommands (SolutionItem item, CommandArrayInfo info)
+				{
+					foreach (var c in ExecutionModeCommandService.GetExecutionConfigurations (item)) {
+						info.Add (c.ModeSet.Name + " – " + c.RunConfiguration.Name, c);
+					}
+					info.AddSeparator ();
+
+					var configs = item.GetRunConfigurations ().ToArray ();
+
+					var options = GetExecutionConfigurations (item, configs);
+					foreach (var modeGroup in options) {
+						string label = options.Count (m => m.Item1 == modeGroup.Item1) == 1 ? modeGroup.Item1.Name : modeGroup.Item1.Name + " – " + modeGroup.Item2.Name;
+						if (configs.Length == 1) {
+							info.Add (label, modeGroup.Item3);
+						} else {
+							var modeMenu = new CommandInfoSet ();
+							modeMenu.Text = label;
+							foreach (var ec in modeGroup.Item3)
+								modeMenu.CommandInfos.Add (ec.RunConfiguration.Name, ec);
+							info.Add (modeMenu);
+						}
+					}
+					//			info.Add (GettextCatalog.GetString ("Custom Configuration..."), "selector");
+				}
+
+				static List<Tuple<IExecutionModeSet, IExecutionMode, List<ExecutionConfiguration>>> GetExecutionConfigurations (SolutionItem item, SolutionItemRunConfiguration [] configs)
+				{
+					var res = new List<Tuple<IExecutionModeSet, IExecutionMode, List<ExecutionConfiguration>>> ();
+					foreach (var modeSet in Runtime.ProcessService.GetExecutionModes ()) {
+						foreach (var mode in modeSet.ExecutionModes) {
+							var list = new List<ExecutionConfiguration> ();
+							foreach (var conf in configs) {
+								var ctx = new CommandExecutionContext (item, h => item.CanExecute (new ExecutionContext (h, null, IdeApp.Workspace.ActiveExecutionTarget), IdeApp.Workspace.ActiveConfiguration, conf));
+								if (ctx.CanExecute (mode.ExecutionHandler))
+									list.Add (new ExecutionConfiguration (conf, modeSet, mode));
+							}
+							if (list.Count > 0)
+								res.Add (new Tuple<IExecutionModeSet, IExecutionMode, List<ExecutionConfiguration>> (modeSet, mode, list));
+						}
+					}
+					return res;
+				}
+
+
+
+		*/
+
+		public static void GenerateExecutionModeCommands (SolutionItem item, CommandArrayInfo info)
+		{
+			// Disable for now
+/*			foreach (var c in ExecutionModeCommandService.GetExecutionConfigurations (item)) {
+				info.Add (c.ModeSet.Name + " – " + c.RunConfiguration.Name, c);
+			}
+			info.AddSeparator ();
+			info.Add (GettextCatalog.GetString ("Select Project Configuration..."), "selector");*/
+			if (item is Project)
+				info.Add (GettextCatalog.GetString ("Custom Configuration..."), "custom");
+		}
+
+		public static void ExecuteCommand (SolutionItem item, object data)
+		{
+			if (data is string) {
+				if ((string)data == "selector") {
+					using (var dlg = new ExecutionModeSelectorDialog ()) {
+						dlg.Load (item);
+						var cmd = dlg.Run ();
+						if (cmd?.Id == "run") {
+							// Store the configuration for quick reuse
+							var ec = new ExecutionConfiguration (dlg.SelectedConfiguration, dlg.SelectedExecutionModeSet, dlg.SelectedExecutionMode);
+							var list = ExecutionModeCommandService.GetExecutionConfigurations (item).ToList ();
+							list.Remove (ec);
+							list.Insert (0, ec);
+							while (list.Count > 10)
+								list.RemoveAt (list.Count - 1);
+							ExecutionModeCommandService.SetExecutionConfigurations (item, list.ToArray ());
+
+							// Run the configuration
+							IdeApp.ProjectOperations.Execute (item, dlg.SelectedExecutionMode.ExecutionHandler, IdeApp.Workspace.ActiveConfiguration, dlg.SelectedConfiguration);
+						}
+						return;
+					}
+				}
+				else if ((string)data == "custom") {
+					using (var dlg = new RunWithCustomParametersDialog ((Project)item)) {
+						var cmd = dlg.Run ();
+						if (cmd?.Id == "run") {
+							// Run the configuration
+							IdeApp.ProjectOperations.Execute (item, dlg.SelectedExecutionMode.ExecutionHandler, IdeApp.Workspace.ActiveConfiguration, dlg.SelectedConfiguration);
+						}
+						return;
+					}
+				}
+			}
+			var c = (ExecutionConfiguration)data;
+			IdeApp.ProjectOperations.Execute (item, c.Mode.ExecutionHandler, IdeApp.Workspace.ActiveConfiguration, c.RunConfiguration);
+		}
+
+		internal static ExecutionConfiguration[] GetExecutionConfigurations (SolutionItem item)
+		{
+			var res = item.UserProperties.GetValue<ExecutionConfiguration []> ("ExecutionConfigurations") ?? new ExecutionConfiguration [0];
+			return res.Where (c => c.Resolve (item)).ToArray ();
+		}
+
+		internal static void SetExecutionConfigurations (SolutionItem item, ExecutionConfiguration [] configs)
+		{
+			item.UserProperties.SetValue ("ExecutionConfigurations", configs);
+		}
+	}
+
+	class ExecutionConfiguration
+	{
+		[ItemProperty]
+		string runConfigurationId { get; set; }
+
+		[ItemProperty]
+		string executionModeId { get; set; }
+
+		public IExecutionModeSet ModeSet { get; private set; }
+		public IExecutionMode Mode { get; private set; }
+		public RunConfiguration RunConfiguration { get; private set; }
+
+		internal ExecutionConfiguration ()
+		{
+		}
+
+		public ExecutionConfiguration (RunConfiguration runConfiguration, IExecutionModeSet modeSet, IExecutionMode mode)
+		{
+			ModeSet = modeSet;
+			Mode = mode;
+			RunConfiguration = runConfiguration;
+			runConfigurationId = runConfiguration.Id;
+			executionModeId = mode.Id;
+		}
+
+		internal bool Resolve (IRunTarget item)
+		{
+			if (RunConfiguration != null && Mode != null)
+				return true;
+			RunConfiguration = item.GetRunConfigurations ().FirstOrDefault (co => co.Id == runConfigurationId);
+			if (RunConfiguration == null)
+				return false;
+			var ctx = new CommandExecutionContext (item, h => item.CanExecute (new MonoDevelop.Projects.ExecutionContext (h, null, IdeApp.Workspace.ActiveExecutionTarget), IdeApp.Workspace.ActiveConfiguration, RunConfiguration));
+			IExecutionModeSet modeSet;
+			IExecutionMode mode;
+			if (!ExecutionModeCommandService.GetExecutionMode (ctx, executionModeId, out modeSet, out mode))
+				return false;
+			ModeSet = modeSet;
+			Mode = mode;
+			return true;
+		}
+
+		public override bool Equals (object obj)
+		{
+			var c = obj as ExecutionConfiguration;
+			return c != null && c.runConfigurationId == runConfigurationId && c.executionModeId == executionModeId;
+		}
+
+		public override int GetHashCode ()
+		{
+			unchecked {
+				return runConfigurationId.GetHashCode () ^ executionModeId.GetHashCode ();
+			}
+		}
 	}
 	
 	class ExecutionCommandCustomizer: TypeExtensionNode, IExecutionCommandCustomizer
 	{
 		IExecutionCommandCustomizer customizer;
 		
-		[NodeAttribute ("_name")]
+		[NodeAttribute ("_name", Localizable=true)]
 		string name;
 		
 		protected override void Read (Mono.Addins.NodeElement elem)
@@ -462,7 +645,7 @@ namespace MonoDevelop.Ide.Execution
 			return Mode.ExecutionHandler.CanExecute (command);
 		}
 		
-		public IProcessAsyncOperation Execute (ExecutionCommand command, IConsole console)
+		public ProcessAsyncOperation Execute (ExecutionCommand command, OperationConsole console)
 		{
 			if (Mode is CustomExecutionMode)
 				return ((CustomExecutionMode)Mode).Execute (command, console, true, true);
@@ -487,7 +670,7 @@ namespace MonoDevelop.Ide.Execution
 			return Handler.CanExecute (command);
 		}
 		
-		public IProcessAsyncOperation Execute (ExecutionCommand command, IConsole console)
+		public ProcessAsyncOperation Execute (ExecutionCommand command, OperationConsole console)
 		{
 			return Handler.InternalExecute (Context, ParentMode, command, console);
 		}

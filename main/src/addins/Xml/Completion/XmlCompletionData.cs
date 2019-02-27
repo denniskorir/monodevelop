@@ -22,23 +22,53 @@
 // OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
 // WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
-using System;
 using Gdk;
-using Mono.TextEditor;
-using MonoDevelop.Core;
-using MonoDevelop.Ide;
+using Gtk;
+using MonoDevelop.Ide.Gui;
 using MonoDevelop.Ide.CodeCompletion;
-using MonoDevelop.Ide.Commands;
+using System;
+using MonoDevelop.Core;
 using MonoDevelop.Ide.Gui.Content;
+using MonoDevelop.Ide;
+using MonoDevelop.Ide.Commands;
 using MonoDevelop.Xml.Editor;
+using MonoDevelop.Ide.Editor.Extension;
+using MonoDevelop.Ide.Editor;
+using System.Linq;
 
 namespace MonoDevelop.Xml.Completion
 {
+	public class BaseXmlCompletionData : CompletionData
+	{
+		const string commitChars = " <>()[]{}=+*%~&^|.,;?\"'";
+
+		public BaseXmlCompletionData ()
+		{
+		}
+
+		public BaseXmlCompletionData (string text) : base (text)
+		{
+		}
+
+		public BaseXmlCompletionData (string text, string description) : base (text, IconId.Null, description)
+		{
+		}
+
+		public BaseXmlCompletionData (string text, IconId icon, string description) : base (text, icon, description)
+		{
+		}
+
+		public override bool IsCommitCharacter (char keyChar, string partialWord)
+		{
+			return commitChars.IndexOf (keyChar) >= 0;
+		}
+
+	}
 	/// <summary>
 	/// Holds the text for  namespace, child element or attribute 
 	/// autocomplete (intellisense).
 	/// </summary>
-	public class XmlCompletionData : CompletionData
+	public class XmlCompletionData : BaseXmlCompletionData
 	{
 		string text;
 		DataType dataType = DataType.XmlElement;
@@ -67,14 +97,20 @@ namespace MonoDevelop.Xml.Completion
 		public XmlCompletionData(string text, DataType dataType)
 			: this(text, String.Empty, dataType)
 		{
-		}		
+		}
 
-		public XmlCompletionData(string text, string description, DataType dataType)
+		public XmlCompletionData (string text, string description, DataType dataType)
+			: this (text, description, dataType, IconId.Null)
+		{
+		}
+
+		public XmlCompletionData (string text, string description, DataType dataType, IconId icon)
+			: base (text, icon, description)
 		{
 			this.text = text;
 			this.description = description;
-			this.dataType = dataType;  
-		}		
+			this.dataType = dataType;
+		}
 		
 		public DataType XmlCompletionDataType {
 			get { return dataType; }
@@ -104,18 +140,23 @@ namespace MonoDevelop.Xml.Completion
 			}
 		}
 
-		public override void InsertCompletionText (CompletionListWindow window, ref KeyActions ka, Gdk.Key closeChar, char keyChar, ModifierType modifier)
+		public override void InsertCompletionText (CompletionListWindow window, ref KeyActions ka, KeyDescriptor descriptor)
 		{
 			if (XmlEditorOptions.AutoInsertFragments && dataType == DataType.XmlAttribute) {
-				var textEditorDataProvier = window.CompletionWidget as ITextEditorDataProvider;
-				var textBuffer = window.CompletionWidget as ITextBuffer;
-				base.InsertCompletionText (window, ref ka, closeChar, keyChar, modifier);
-				if (textEditorDataProvier != null && textBuffer != null)
-					textEditorDataProvier.GetTextEditorData ().SetSkipChar (textBuffer.CursorPosition, '"');
-				IdeApp.CommandService.DispatchCommand (TextEditorCommands.ShowCompletionWindow);
+				//This temporary variable is needed because
+				//base.InsertCompletionText sets window.CompletionWidget to null
+				var completionWidget = window.CompletionWidget;
+				base.InsertCompletionText (window, ref ka, descriptor);
+				if (completionWidget is ITextEditorImpl) {
+					((ITextEditorImpl)completionWidget).EditorExtension.Editor.StartSession (new SkipCharSession ('"'));
+				}
+
+				//Even if we are on UI thread call Application.Invoke to postpone calling command
+				//otherwise code calling InsertCompletionText will close completion window created by this command
+				Application.Invoke ((s,e) => IdeApp.CommandService.DispatchCommand (TextEditorCommands.ShowCompletionWindow));
 				ka &= ~KeyActions.CloseWindow;
 			} else {
-				base.InsertCompletionText (window, ref ka, closeChar, keyChar, modifier);
+				base.InsertCompletionText (window, ref ka, descriptor);
 			}
 		}
 		
@@ -126,5 +167,6 @@ namespace MonoDevelop.Xml.Completion
 		public override string Description {
 			get { return description; }
 		}
+
 	}
 }

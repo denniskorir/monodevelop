@@ -25,46 +25,29 @@
 // THE SOFTWARE.
 
 using System;
-using System.Collections.Generic;
-using System.Linq;
-using ICSharpCode.PackageManagement;
 using MonoDevelop.Components.Commands;
-using MonoDevelop.Ide;
 
 namespace MonoDevelop.PackageManagement.Commands
 {
-	public class UpdateAllPackagesInProjectHandler : PackagesCommandHandler
+	internal class UpdateAllPackagesInProjectHandler : PackagesCommandHandler
 	{
 		protected override void Run ()
 		{
 			try {
-				IPackageManagementProject project = PackageManagementServices.Solution.GetActiveProject ();
-				RestoreBeforeUpdateAction.Restore (project, () => {
-					DispatchService.GuiSyncDispatch (() => Update (project));
-				});
+				Update ();
 			} catch (Exception ex) {
 				ShowStatusBarError (ex);
 			}
 		}
 
-		void Update (IPackageManagementProject project)
+		void Update ()
 		{
-			try {
-				var updateAllPackages = new UpdateAllPackagesInProject (project);
-				List<UpdatePackageAction> updateActions = updateAllPackages.CreateActions ().ToList ();
-				ProgressMonitorStatusMessage progressMessage = CreateProgressMessage (updateActions, project);
-				PackageManagementServices.BackgroundPackageActionRunner.Run (progressMessage, updateActions);
-			} catch (Exception ex) {
-				ShowStatusBarError (ex);
-			}
-		}
+			var solutionManager = PackageManagementServices.Workspace.GetSolutionManager (GetSelectedSolution ());
+			var project = GetSelectedDotNetProject ();
+			var action = new UpdateAllNuGetPackagesInProjectAction (solutionManager, project);
 
-		ProgressMonitorStatusMessage CreateProgressMessage (List<UpdatePackageAction> updateActions, IPackageManagementProject project)
-		{
-			if (updateActions.Count == 1) {
-				return ProgressMonitorStatusMessageFactory.CreateUpdatingSinglePackageMessage (updateActions.First ().PackageId, project);
-			}
-			return ProgressMonitorStatusMessageFactory.CreateUpdatingPackagesInProjectMessage (updateActions.Count, project);
+			var progressMessage = ProgressMonitorStatusMessageFactory.CreateUpdatingPackagesInProjectMessage (new DotNetProjectProxy (project));
+			PackageManagementServices.BackgroundPackageActionRunner.Run (progressMessage, action);
 		}
 
 		void ShowStatusBarError (Exception ex)
@@ -75,7 +58,7 @@ namespace MonoDevelop.PackageManagement.Commands
 
 		protected override void Update (CommandInfo info)
 		{
-			info.Enabled = SelectedDotNetProjectHasPackages ();
+			info.Enabled = CanUpdatePackagesForSelectedDotNetProject ();
 		}
 	}
 }

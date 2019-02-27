@@ -35,7 +35,6 @@ using MonoDevelop.Core.Execution;
 using System.IO;
 using MonoDevelop.Core;
 using MonoDevelop.Projects;
-using ICSharpCode.NRefactory.Semantics;
 
 namespace MonoDevelop.Ide
 {
@@ -56,7 +55,10 @@ namespace MonoDevelop.Ide
 				var url = topic != null ? "monodoc://" + System.Web.HttpUtility.UrlEncode (topic) : null;
 				var mdapp = new FilePath (typeof (HelpOperations).Assembly.Location).ParentDirectory.Combine ("..", "..", "..", "..", "MacOS", "MonoDoc.app").FullPath;
 				if (Directory.Exists (mdapp)) {
-					builder.AddQuoted ("-a", mdapp, url, "--args");
+					builder.Add ("-a");
+					builder.AddQuoted (mdapp);
+					builder.Add ("--args");
+					builder.AddQuoted (url);
 					AddDirArgs (builder);
 					builder.AddQuoted (extraArgs);
 				} else {
@@ -210,9 +212,8 @@ namespace MonoDevelop.Ide
 								return;
 
 							MessageService.ShowError (
-								String.Format (
-								"MonoDoc exited with exit code {0}.", 
-								pw.ExitCode, errWriter.ToString ()));
+								$"MonoDoc exited with exit code {pw.ExitCode}{Environment.NewLine}{errWriter.ToString()}."
+							);
 							pw = null;
 						}, true);
 				}
@@ -228,14 +229,14 @@ namespace MonoDevelop.Ide
 			}
 		}
 		
-		public bool CanShowHelp (ResolveResult result)
-		{
-			try {
-				return CanShowHelp (HelpService.GetMonoDocHelpUrl (result));
-			} catch (Exception e) {
-				LoggingService.LogError ("Error while trying to get monodoc help.", e);
-				return false;
-			}
-		}
+//		public bool CanShowHelp (ResolveResult result)
+//		{
+//			try {
+//				return CanShowHelp (HelpService.GetMonoDocHelpUrl (result));
+//			} catch (Exception e) {
+//				LoggingService.LogError ("Error while trying to get monodoc help.", e);
+//				return false;
+//			}
+//		}
 	}
 }

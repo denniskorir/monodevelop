@@ -25,26 +25,37 @@
 // THE SOFTWARE.
 
 using System;
-using ICSharpCode.PackageManagement;
+using MonoDevelop.Core;
 using Xwt;
 using Xwt.Drawing;
 
 namespace MonoDevelop.PackageManagement
 {
-	public class PackageCellView : CanvasCellView
+	internal class PackageCellView : CanvasCellView
 	{
+		int packageIdFontSize;
+		int packageDescriptionFontSize;
+
 		public PackageCellView ()
 		{
 			CellWidth = 260;
 
-			BackgroundColor = Color.FromBytes (243, 246, 250);
-			StrongSelectionColor = Color.FromBytes (49, 119, 216);
-			SelectionColor = Color.FromBytes (204, 204, 204);
+			BackgroundColor = Styles.CellBackgroundColor;
+			StrongSelectionColor = Styles.CellStrongSelectionColor;
+			SelectionColor = Styles.CellSelectionColor;
 
 			UseStrongSelectionColor = true;
+
+			if (Platform.IsWindows) {
+				packageIdFontSize = 10;
+				packageDescriptionFontSize = 9;
+			} else {
+				packageIdFontSize = 12;
+				packageDescriptionFontSize = 11;
+			}
 		}
 
-		public IDataField<PackageViewModel> PackageField { get; set; }
+		public IDataField<PackageSearchResultViewModel> PackageField { get; set; }
 		public IDataField<Image> ImageField { get; set; }
 		public IDataField<bool> HasBackgroundColorField { get; set; }
 		public IDataField<double> CheckBoxAlphaField { get; set; }
@@ -61,7 +72,7 @@ namespace MonoDevelop.PackageManagement
 
 		protected override void OnDraw (Context ctx, Rectangle cellArea)
 		{
-			PackageViewModel packageViewModel = GetValue (PackageField);
+			PackageSearchResultViewModel packageViewModel = GetValue (PackageField);
 			if (packageViewModel == null) {
 				return;
 			}
@@ -87,8 +98,11 @@ namespace MonoDevelop.PackageManagement
 			}
 
 			// Package Id.
+			// Use the package id and not the package title to prevent a pango crash if the title
+			// contains Chinese characters.
 			var packageIdTextLayout = new TextLayout ();
-			packageIdTextLayout.Markup = packageViewModel.GetNameMarkup ();
+			packageIdTextLayout.Font = packageIdTextLayout.Font.WithSize (packageIdFontSize);
+			packageIdTextLayout.Markup = packageViewModel.GetIdMarkup ();
 			packageIdTextLayout.Trimming = TextTrimming.WordElipsis;
 			Size packageIdTextSize = packageIdTextLayout.GetSize ();
 			packageIdTextLayout.Width = packageIdWidth;
@@ -99,7 +113,7 @@ namespace MonoDevelop.PackageManagement
 
 			// Package description.
 			var descriptionTextLayout = new TextLayout ();
-			descriptionTextLayout.Font = descriptionTextLayout.Font.WithScaledSize (0.9);
+			descriptionTextLayout.Font = descriptionTextLayout.Font.WithSize (packageDescriptionFontSize);
 			descriptionTextLayout.Width = cellArea.Width - packageDescriptionPadding.HorizontalSpacing - packageDescriptionLeftOffset;
 			descriptionTextLayout.Height = cellArea.Height - packageIdTextSize.Height - packageDescriptionPadding.VerticalSpacing;
 			descriptionTextLayout.Text = packageViewModel.Summary;
@@ -114,9 +128,9 @@ namespace MonoDevelop.PackageManagement
 		void UpdateTextColor (Context ctx)
 		{
 			if (UseStrongSelectionColor && Selected) {
-				ctx.SetColor (Colors.White);
+				ctx.SetColor (Styles.CellTextSelectionColor);
 			} else {
-				ctx.SetColor (Colors.Black);
+				ctx.SetColor (Styles.CellTextColor);
 			}
 		}
 
@@ -149,7 +163,7 @@ namespace MonoDevelop.PackageManagement
 			ctx.Fill ();
 		}
 
-		void DrawCheckBox (Context ctx, PackageViewModel packageViewModel, Rectangle cellArea)
+		void DrawCheckBox (Context ctx, PackageSearchResultViewModel packageViewModel, Rectangle cellArea)
 		{
 			CreateCheckboxImages ();
 
@@ -230,6 +244,9 @@ namespace MonoDevelop.PackageManagement
 				image = defaultPackageImage;
 			}
 
+			if (Selected)
+				image = image.WithStyles ("sel");
+
 			if (PackageImageNeedsResizing (image)) {
 				Point imageLocation = GetPackageImageLocation (maxPackageImageSize, cellArea);
 				ctx.DrawImage (
@@ -259,18 +276,18 @@ namespace MonoDevelop.PackageManagement
 			return new Point (width, height);
 		}
 
-		protected override Size OnGetRequiredSize ()
+		protected override Size OnGetRequiredSize (SizeConstraint widthConstraint)
 		{
 			var layout = new TextLayout ();
 			layout.Text = "W";
-			layout.Font = layout.Font.WithScaledSize (0.9);
+			layout.Font = layout.Font.WithSize (packageDescriptionFontSize);
 			Size size = layout.GetSize ();
 			return new Size (CellWidth, size.Height * linesDisplayedCount + packageDescriptionPaddingHeight + packageDescriptionPadding.VerticalSpacing);
 		}
 
 		protected override void OnButtonPressed (ButtonEventArgs args)
 		{
-			PackageViewModel packageViewModel = GetValue (PackageField);
+			PackageSearchResultViewModel packageViewModel = GetValue (PackageField);
 			if (packageViewModel == null) {
 				base.OnButtonPressed (args);
 				return;
@@ -285,7 +302,7 @@ namespace MonoDevelop.PackageManagement
 			}
 		}
 
-		void OnPackageChecked (PackageViewModel packageViewModel)
+		void OnPackageChecked (PackageSearchResultViewModel packageViewModel)
 		{
 			if (PackageChecked != null) {
 				PackageChecked (this, new PackageCellViewEventArgs (packageViewModel));
@@ -317,7 +334,7 @@ namespace MonoDevelop.PackageManagement
 		Image checkedCheckBoxWithBackgroundColorImage;
 		Image uncheckedCheckBoxWithBackgroundColorImage;
 
-		static readonly Image defaultPackageImage = Image.FromResource (typeof(PackageCellView), "reference-48.png");
+		static readonly Image defaultPackageImage = Image.FromResource (typeof(PackageCellView), "package-48.png");
 	}
 }
 

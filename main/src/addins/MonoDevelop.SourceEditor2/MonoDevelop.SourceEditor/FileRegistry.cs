@@ -26,11 +26,12 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 
-
 using MonoDevelop.Core;
 using Services = MonoDevelop.Projects.Services;
 using MonoDevelop.Ide;
 using MonoDevelop.Ide.TypeSystem;
+using MonoDevelop.Ide.Editor;
+using MonoDevelop.Ide.Gui;
 
 namespace MonoDevelop.SourceEditor
 {
@@ -40,148 +41,11 @@ namespace MonoDevelop.SourceEditor
 	/// </summary>
 	static class FileRegistry
 	{
-		readonly static List<SourceEditorView> openFiles = new List<SourceEditorView> ();
-		readonly static FileSystemWatcher fileSystemWatcher;
-		readonly static StringComparison fileNameComparer = Platform.IsWindows ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
-
-		public static bool SuspendFileWatch {
-			get;
-			set;
-		}
-
-		static FileRegistry ()
-		{
-			fileSystemWatcher = new FileSystemWatcher ();
-			fileSystemWatcher.Created += (FileSystemEventHandler)DispatchService.GuiDispatch (new FileSystemEventHandler (OnFileChanged));
-			fileSystemWatcher.Changed += (FileSystemEventHandler)DispatchService.GuiDispatch (new FileSystemEventHandler (OnFileChanged));
-
-			var fileChanged = DispatchService.GuiDispatch (new EventHandler<FileEventArgs> (HandleFileServiceChange));
-			FileService.FileCreated += fileChanged;
-			FileService.FileChanged += fileChanged;
-
-		}
-
-		public static void Add (SourceEditorView sourceEditorView)
-		{
-			openFiles.Add (sourceEditorView);
-		}
-
-		public static void Remove (SourceEditorView sourceEditorView)
-		{
-			openFiles.Remove (sourceEditorView);
-			UpdateEolMessages ();
-		}
-
-		static bool SkipView (SourceEditorView view)
-		{
-			return view.Document == null || !view.IsFile || view.IsUntitled;
-		}
-
-		static void HandleFileServiceChange (object sender, FileEventArgs e)
-		{
-			// The Ide.Document generates a file service changed event this needs to be skipped.
-			if (!TypeSystemService.TrackFileChanges)
-				return;
-			bool foundOneChange = false;
-			foreach (var file in e) {
-				foreach (var view in openFiles) {
-					if (SkipView (view) || !string.Equals (view.ContentName, file.FileName, fileNameComparer))
-						continue;
-					if (!view.IsDirty/* && (IdeApp.Workbench.AutoReloadDocuments || file.AutoReload)*/)
-						view.SourceEditorWidget.Reload ();
-					else
-						foundOneChange = true;
-				}
-			}
-
-			if (foundOneChange)
-				CommitViewChange (GetAllChangedFiles ());
-		}
-
-		static List<SourceEditorView> GetAllChangedFiles ()
-		{
-			var changedViews = new List<SourceEditorView> ();
-			foreach (var view in openFiles) {
-				if (SkipView (view))
-					continue;
-				if (view.LastSaveTimeUtc == File.GetLastWriteTimeUtc (view.ContentName))
-					continue;
-				if (!view.IsDirty/* && IdeApp.Workbench.AutoReloadDocuments*/)
-					view.SourceEditorWidget.Reload ();
-				else
-					changedViews.Add (view);
-			}
-			return changedViews;
-		}
-
-
-		static void OnFileChanged (object sender, FileSystemEventArgs e)
-		{
-			if (e.ChangeType == WatcherChangeTypes.Changed || e.ChangeType == WatcherChangeTypes.Created) 
-				CheckFileChange (e.FullPath);
-		}
-
-		static void CheckFileChange (string fileName)
-		{
-			if (SuspendFileWatch)
-				return;
-
-			var changedViews = new List<SourceEditorView> ();
-			foreach (var view in openFiles) {
-				if (SkipView (view))
-					continue;
-				if (string.Equals (view.ContentName, fileName, fileNameComparer)) {
-					if (view.LastSaveTimeUtc == File.GetLastWriteTimeUtc (fileName))
-						continue;
-					if (!view.IsDirty/* && IdeApp.Workbench.AutoReloadDocuments*/)
-						view.SourceEditorWidget.Reload ();
-					else
-						changedViews.Add (view);
-				}
-			}
-			CommitViewChange (changedViews);
-		}
-
-		static void CommitViewChange (List<SourceEditorView> changedViews)
-		{
-			if (changedViews.Count == 0)
-				return;
-			if (changedViews.Count == 1) {
-				changedViews [0].SourceEditorWidget.ShowFileChangedWarning (false);
-			} else {
-				foreach (var view in changedViews) {
-					view.SourceEditorWidget.ShowFileChangedWarning (true);
-				}
-				if (!changedViews.Contains (IdeApp.Workbench.ActiveDocument.PrimaryView.GetContent<SourceEditorView> ()))
-					changedViews [0].WorkbenchWindow.SelectWindow ();
-			}
-		}
-
-		public static void IgnoreAllChangedFiles ()
-		{
-			foreach (var view in GetAllChangedFiles ()) {
-				view.LastSaveTimeUtc = File.GetLastWriteTime (view.ContentName);
-				view.SourceEditorWidget.RemoveMessageBar ();
-				view.WorkbenchWindow.ShowNotification = false;
-			}
-		}
-
-		public static void ReloadAllChangedFiles ()
-		{
-			foreach (var view in GetAllChangedFiles ()) {
-				view.SourceEditorWidget.RemoveMessageBar ();
-				view.SourceEditorWidget.Reload ();
-				view.WorkbenchWindow.ShowNotification = false;
-			}
-		}
-
 		#region EOL markers
 		public static bool HasMultipleIncorrectEolMarkers {
 			get {
 				int count = 0;
-				foreach (var view in openFiles) {
-					if (SkipView (view) || !view.SourceEditorWidget.HasIncorrectEolMarker)
-						continue;
+				foreach (var view in EnumerateViewsWithIncorrectEolMarkers ()) {
 					count++;
 					if (count > 1)
 						return true;
@@ -193,10 +57,7 @@ namespace MonoDevelop.SourceEditor
 		public static void ConvertLineEndingsInAllFiles ()
 		{
 			DefaultSourceEditorOptions.Instance.LineEndingConversion = LineEndingConversion.ConvertAlways;
-			foreach (var view in openFiles) {
-				if (SkipView (view) || !view.SourceEditorWidget.HasIncorrectEolMarker)
-					continue;
-				
+			foreach (var view in EnumerateViewsWithIncorrectEolMarkers ()) {
 				view.SourceEditorWidget.ConvertLineEndings ();
 				view.SourceEditorWidget.RemoveMessageBar ();
 				view.WorkbenchWindow.ShowNotification = false;
@@ -208,10 +69,7 @@ namespace MonoDevelop.SourceEditor
 		{
 			DefaultSourceEditorOptions.Instance.LineEndingConversion = LineEndingConversion.LeaveAsIs;
 
-			foreach (var view in openFiles) {
-				if (SkipView (view) || !view.SourceEditorWidget.HasIncorrectEolMarker)
-					continue;
-
+			foreach (var view in EnumerateViewsWithIncorrectEolMarkers ()) {
 				view.SourceEditorWidget.UseIncorrectMarkers = true;
 				view.SourceEditorWidget.RemoveMessageBar ();
 				view.WorkbenchWindow.ShowNotification = false;
@@ -222,12 +80,22 @@ namespace MonoDevelop.SourceEditor
 		public static void UpdateEolMessages ()
 		{
 			var multiple = HasMultipleIncorrectEolMarkers;
-			foreach (var view in openFiles) {
-				if (SkipView (view) || !view.SourceEditorWidget.HasIncorrectEolMarker)
-					continue;
-				view.SourceEditorWidget.UpdateEolMarkerMessage(multiple);
+			foreach (var view in EnumerateViewsWithIncorrectEolMarkers ()) {
+				view.SourceEditorWidget.UpdateEolMarkerMessage (multiple);
 			}
 		}
 		#endregion
+
+		static IEnumerable<SourceEditorView> EnumerateViewsWithIncorrectEolMarkers ()
+		{
+			foreach (var doc in DocumentRegistry.OpenFiles) {
+				if (DocumentRegistry.SkipView (doc))
+					continue;
+				var view = doc.GetContent<SourceEditorView> ();
+				if (view?.SourceEditorWidget == null || !view.SourceEditorWidget.HasIncorrectEolMarker)
+					continue;
+				yield return view;
+			}
+		}
 	}
-} 
+}

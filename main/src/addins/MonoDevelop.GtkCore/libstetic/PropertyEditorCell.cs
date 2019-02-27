@@ -33,7 +33,7 @@ namespace Stetic
 			editors[typeof (float)] = typeof (Stetic.Editor.FloatRange);
 			editors[typeof (double)] = typeof (Stetic.Editor.FloatRange);
 			editors[typeof (char)] = typeof (Stetic.Editor.Char);
-			editors[typeof (string)] = typeof (Stetic.Editor.TextEditor);
+			editors[typeof (string)] = typeof (Stetic.Editor.PropertyTextEditor);
 			editors[typeof (DateTime)] = typeof (Stetic.Editor.DateTimeEditorCell);
 			editors[typeof (TimeSpan)] = typeof (Stetic.Editor.TimeSpanEditorCell);
 			editors[typeof (string[])] = typeof (Stetic.Editor.StringArray);
@@ -56,10 +56,14 @@ namespace Stetic
 		public void Initialize (Widget container, PropertyDescriptor property, object obj)
 		{
 			this.container = container;
+			if (layout != null) {
+				layout.Dispose ();
+			}
 			layout = new Pango.Layout (container.PangoContext);
 			layout.Width = -1;
 			
 			Pango.FontDescription des = container.Style.FontDescription.Copy();
+			des.Size = 10 * (int) Pango.Scale.PangoScale;
 			layout.FontDescription = des;
 			
 			this.property = property;

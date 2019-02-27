@@ -34,9 +34,7 @@ using MonoDevelop.Core;
 using MonoDevelop.Ide.Gui;
 using MonoDevelop.Ide.Gui.Pads;
 using MonoDevelop.Ide.Gui.Components;
-using Mono.TextEditor;
 using System.Collections.Generic;
-using ICSharpCode.NRefactory.TypeSystem;
 
 namespace MonoDevelop.AssemblyBrowser
 {

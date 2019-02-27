@@ -25,7 +25,9 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 // THE SOFTWARE.
 
+using System;
 using MonoDevelop.Core;
+using MonoDevelop.Core.StringParsing;
 
 namespace MonoDevelop.Projects
 {
@@ -82,28 +84,9 @@ namespace MonoDevelop.Projects
 			Parameters = projectCreateInformation.Parameters;
 		}
 
-		public bool ShouldCreate (string createCondition)
-		{
-			if (string.IsNullOrWhiteSpace (createCondition))
-				return true;
-
-			createCondition = createCondition.Trim ();
-
-			string parameter = GetNotConditionParameterName (createCondition);
-			if (parameter != null) {
-				return !Parameters.GetBoolean (parameter);
-			}
-
-			return Parameters.GetBoolean (createCondition);
-		}
-
-		static string GetNotConditionParameterName (string createCondition)
-		{
-			if (createCondition.StartsWith ("!")) {
-				return createCondition.Substring (1).TrimStart ();
-			}
-
-			return null;
-		}
+		/// <summary>
+		/// A callback that will be invoked to initialize the project
+		/// </summary>
+		public Action<SolutionItem> TemplateInitializationCallback { get; set; }
 	}
 }

@@ -18,14 +18,14 @@ namespace MonoDevelop.WebReferences
 		/// <summary>Read the service description for a specified uri.</summary>
 		/// <param name="uri">A string containing the unique reference identifier for the service.</param>
 		/// <returns>A ServiceDescription for the specified uri.</returns>
+		[Obsolete]
 		public static ServiceDescription ReadServiceDescription(string uri) 
 		{
 			var desc = new ServiceDescription();
 			try 
 			{
-				var request = (HttpWebRequest)WebRequest.Create(uri);
-				WebResponse response  = request.GetResponse();
-			
+				WebResponse response = WebRequestHelper.GetResponse (() => (HttpWebRequest)WebRequest.Create (uri));
+
 				desc = ServiceDescription.Read(response.GetResponseStream());
 				response.Close();
 				desc.RetrievalUrl = uri;
@@ -64,17 +64,23 @@ namespace MonoDevelop.WebReferences
 		/// <returns>An XmlDocument containing the generated xml for the specified discovery document.</returns>
 		public static void GenerateDiscoXml (StringBuilder text, DiscoveryDocument doc)
 		{
-			text.Append ("<big><b>" + GettextCatalog.GetString ("Web Service References") + "</b></big>\n\n");
+			text.Append ("<big><b>")
+				.Append (GettextCatalog.GetString ("Web Service References"))
+				.Append ("</b></big>\n\n");
 			foreach (object oref in doc.References)
 			{
 				var dref = oref as DiscoveryReference;
 				if (dref == null)
 					continue;
 				if (dref is ContractReference) {
-					text.AppendFormat ("<b>Service: {0}</b>\n<span size='small'>{1}</span>", Path.GetFileNameWithoutExtension (dref.DefaultFilename), dref.Url);
+					text.Append ("<b>")
+					    .Append (GettextCatalog.GetString ("Service: {0}", Path.GetFileNameWithoutExtension (dref.DefaultFilename)))
+					    .AppendFormat ("</b>\n<span size='small'>{0}</span>", dref.Url);
 				}
 				else if (dref is DiscoveryDocumentReference) {
-					text.AppendFormat ("<b>Discovery document</b>\n<small>{0}</small>", dref.Url);
+					text.Append ("<b>")
+					    .Append (GettextCatalog.GetString ("Discovery document"))
+					    .AppendFormat ("</b>\n<small>{0}</small>", dref.Url);
 				}
 				text.Append ("\n\n");
 			}

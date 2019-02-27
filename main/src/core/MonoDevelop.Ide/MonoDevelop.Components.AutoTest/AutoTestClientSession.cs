@@ -31,8 +31,10 @@ using System.Runtime.Serialization.Formatters.Binary;
 using System.IO;
 using System.Threading;
 using System.Collections.Generic;
+using System.Xml;
 using MonoDevelop.Core.Instrumentation;
 using MonoDevelop.Components.Commands;
+using MonoDevelop.Ide.Tasks;
 
 namespace MonoDevelop.Components.AutoTest
 {
@@ -58,11 +60,20 @@ namespace MonoDevelop.Components.AutoTest
 			}
 		}
 				
-		public void StartApplication (string file = null, string args = null, IDictionary<string, string> environment = null)
+		public int StartApplication (string file = null, string args = null, IDictionary<string, string> environment = null)
 		{
 			if (file == null) {
 				var binDir = Path.GetDirectoryName (typeof(AutoTestClientSession).Assembly.Location);
 				file = Path.Combine (binDir, "MonoDevelop.exe");
+				if (!File.Exists (file)) {
+					file = Path.Combine (binDir, "XamarinStudio.exe");
+				}
+			} else if (!File.Exists (file)) {
+				file = file.Replace ("MonoDevelop.exe", "XamarinStudio.exe");
+			}
+
+			if (!File.Exists (file)) {
+				throw new FileNotFoundException (file);
 			}
 
 			MonoDevelop.Core.Execution.RemotingService.RegisterRemotingChannel ();
@@ -75,19 +86,20 @@ namespace MonoDevelop.Components.AutoTest
 
 			var pi = new ProcessStartInfo (file, args) { UseShellExecute = false };
 			pi.EnvironmentVariables ["MONO_AUTOTEST_CLIENT"] = sref;
-			pi.EnvironmentVariables ["GTK_MODULES"] = "gail:atk-bridge";
 			if (environment != null)
 				foreach (var e in environment)
 					pi.EnvironmentVariables [e.Key] = e.Value;
 
 			process = Process.Start (pi);
 
-			if (!waitEvent.WaitOne (15000)) {
+			if (!waitEvent.WaitOne (120000)) {
 				try {
 					process.Kill ();
 				} catch { }
 				throw new Exception ("Could not connect to application");
 			}
+
+			return process.Id;
 		}
 
 		public void AttachApplication ()
@@ -110,6 +122,8 @@ namespace MonoDevelop.Components.AutoTest
 			return null;
 		}
 
+		public void DisconnectQueries () => session.DisconnectQueries ();
+
 		public void Stop ()
 		{
 			if (service != null)
@@ -117,9 +131,21 @@ namespace MonoDevelop.Components.AutoTest
 			else
 				try {
 					process.Kill ();
-				} catch (InvalidOperationException invalidExp) {
+				} catch (InvalidOperationException) {
 					Console.WriteLine ("Process has already exited");
 				}
+		}
+
+		public AutoTestSession.MemoryStats MemoryStats {
+			get {
+				return session.GetMemoryStats ();
+			}
+		}
+
+		public string[] CounterStats {
+			get {
+				return session.GetCounterStats ();
+			}
 		}
 
 		public void ExitApp ()
@@ -169,7 +195,8 @@ namespace MonoDevelop.Components.AutoTest
 
 		public T GetGlobalValue<T> (string name)
 		{
-			return (T) session.GetGlobalValue (name);
+			var val = (T)session.GetGlobalValue(name);
+			return val;
 		}
 
 		public void SetGlobalValue (string name, object value)
@@ -186,10 +213,14 @@ namespace MonoDevelop.Components.AutoTest
 		}
 		*/
 
-		// FIXME: This shouldn't be here
-		public bool IsBuildSuccessful ()
+		public int ErrorCount (TaskSeverity severity)
 		{
-			return session.IsBuildSuccessful ();
+			return session.ErrorCount (severity);
+		}
+
+		public List<TaskListEntryDTO> GetErrors (TaskSeverity severity)
+		{
+			return session.GetErrors (severity);
 		}
 
 		public void WaitForEvent (string name)
@@ -211,7 +242,9 @@ namespace MonoDevelop.Components.AutoTest
 
 		void ClearEventQueue ()
 		{
-			eventQueue.Clear ();
+			lock (eventQueue) {
+				eventQueue.Clear ();
+			}
 		}
 
 		void IAutoTestClient.Connect (AutoTestSession session)
@@ -266,11 +299,21 @@ namespace MonoDevelop.Components.AutoTest
 			return false;
 		}
 
-		public bool ClickElement (Func<AppQuery, AppQuery> query)
+		public bool ClickElement (Func<AppQuery, AppQuery> query, bool wait = true)
 		{
 			AppResult[] results = Query (query);
 			if (results.Length > 0) {
-				return session.Click (results [0]);
+				return session.Click (results [0], wait);
+			}
+
+			return false;
+		}
+
+		public bool ClickElement (Func<AppQuery, AppQuery> query, double x, double y, bool wait = true)
+		{
+			AppResult [] results = Query (query);
+			if (results.Length > 0) {
+				return session.Click (results [0], x, y, wait);
 			}
 
 			return false;
@@ -291,6 +334,36 @@ namespace MonoDevelop.Components.AutoTest
 			return false;
 		}
 
+		public bool TypeKey (Func<AppQuery, AppQuery> query, char key, string modifiers)
+		{
+			AppResult[] results = Query (query);
+			if (results.Length > 0) {
+				bool result = session.Select (results [0]);
+				if (!result) {
+					return false;
+				}
+
+				return session.TypeKey (results [0], key, modifiers);
+			}
+
+			return false;
+		}
+
+		public bool TypeKey (Func<AppQuery, AppQuery> query, string keyString, string modifiers)
+		{
+			AppResult[] results = Query (query);
+			if (results.Length > 0) {
+				bool result = session.Select (results [0]);
+				if (!result) {
+					return false;
+				}
+
+				return session.TypeKey (results [0], keyString, modifiers);
+			}
+
+			return false;
+		}
+
 		// FIXME: Not convinced this is the best name
 		public bool ToggleElement (Func<AppQuery, AppQuery> query, bool active)
 		{
@@ -302,11 +375,72 @@ namespace MonoDevelop.Components.AutoTest
 			return session.Toggle (results [0], active);
 		}
 
+		public void Flash (Func<AppQuery, AppQuery> query)
+		{
+			AppResult[] results = Query (query);
+			foreach (var result in results) {
+				session.Flash (result);
+			}
+		}
+
+		public void SetProperty (Func<AppQuery, AppQuery> query, string propertyName, object value)
+		{
+			AppResult[] results = Query (query);
+			foreach (var result in results) {
+				session.SetProperty (result, propertyName, value);
+			}
+		}
+
+		public bool SetActiveConfiguration (Func<AppQuery, AppQuery> query, string configuration)
+		{
+			AppResult[] results = Query (query);
+			if (results.Length == 0) {
+				return false;
+			}
+
+			return session.SetActiveConfiguration (results [0], configuration);
+		}
+
+		public bool SetActiveRuntime (Func<AppQuery, AppQuery> query, string runtime)
+		{
+			AppResult[] results = Query (query);
+			if (results.Length == 0) {
+				return false;
+			}
+
+			return session.SetActiveRuntime (results [0], runtime);
+		}
+
 		public void RunAndWaitForTimer (Action action, string counterName, int timeout = 20000)
 		{
 			AutoTestSession.TimerCounterContext context = session.CreateNewTimerContext (counterName);
 			action ();
-			session.WaitForTimerContext (context);
+			session.WaitForTimerContext (context, timeout);
+		}
+
+		public TimeSpan GetTimerDuration (string timerName)
+		{
+			return session.CreateNewTimerContext (timerName).TotalTime;
+		}
+
+		public T GetCounterMetadataValue<T> (string counterName, string propertyName)
+		{
+			var counter = session.GetCounterByIDOrName (counterName);
+			var metadata = counter.LastValue.Metadata;
+			if (metadata != null && metadata.TryGetValue (propertyName, out var property)) {
+				return (T)Convert.ChangeType (property, typeof (T));
+			}
+
+			return default (T);
+		}
+
+		public XmlDocument ResultsAsXml (AppResult[] results)
+		{
+			string xmlResults = session.ResultsAsXml (results);
+			XmlDocument document = new XmlDocument ();
+			document.LoadXml (xmlResults);
+
+			return document;
 		}
 	}
 

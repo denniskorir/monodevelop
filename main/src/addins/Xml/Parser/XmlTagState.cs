@@ -28,8 +28,8 @@
 
 using System;
 using System.Diagnostics;
-using ICSharpCode.NRefactory;
 using MonoDevelop.Xml.Dom;
+using MonoDevelop.Ide.Editor;
 
 namespace MonoDevelop.Xml.Parser
 {
@@ -68,6 +68,10 @@ namespace MonoDevelop.Xml.Parser
 				element = new XElement (context.LocationMinus (2)); // 2 == < + current char
 				element.Parent = parent;
 				context.Nodes.Push (element);
+				if (context.BuildTree) {
+					var parentContainer = (XContainer)context.Nodes.Peek (element.IsClosed ? 0 : 1);
+					parentContainer.AddChildNode (element);
+				}
 			}
 			
 			if (c == '<') {
@@ -126,12 +130,12 @@ namespace MonoDevelop.Xml.Parser
 
 			context.StateTag = OK;
 
-			if (!element.IsNamed && XmlChar.IsFirstNameChar (c)) {
+			if (!element.IsNamed && (XmlChar.IsFirstNameChar (c) || XmlChar.IsWhitespace (c))) {
 				rollback = string.Empty;
 				return NameState;
 			}
 
-			if (context.CurrentStateLength > 1 && XmlChar.IsFirstNameChar (c)) {
+			if (context.CurrentStateLength > 0 && XmlChar.IsFirstNameChar (c)) {
 				rollback = string.Empty;
 				return AttributeState;
 			}
@@ -144,20 +148,13 @@ namespace MonoDevelop.Xml.Parser
 			return null;
 		}
 		
-		protected virtual void Close (XElement element, IXmlParserContext context, TextLocation location)
+		protected virtual void Close (XElement element, IXmlParserContext context, DocumentLocation location)
 		{
 			//have already checked that element is not null, i.e. top of stack is our element
 			if (element.IsClosed)
 				context.Nodes.Pop ();
 
 			element.End (location);
-			if (context.BuildTree) {
-				XContainer container = element.IsClosed? 
-					  (XContainer) context.Nodes.Peek ()
-					: (XContainer) context.Nodes.Peek (1);
-										
-				container.AddChildNode (element);
-			}
 		}
 	}
 }

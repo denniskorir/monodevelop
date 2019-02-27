@@ -37,6 +37,7 @@ namespace MonoDevelop.Components.PropertyGrid.PropertyEditors
 		Gtk.ListStore store;
 		Gtk.Window parent;
 		ulong flags;
+		Array values;
 		
 		public FlagsSelectorDialog (Gtk.Window parent, Type enumDesc, ulong flags, string title)
 		{
@@ -53,6 +54,7 @@ namespace MonoDevelop.Components.PropertyGrid.PropertyEditors
 			sc.Add (treeView);
 			
 			dialog = new Gtk.Dialog ();
+			IdeTheme.ApplyTheme (dialog);
 			dialog.VBox.Add (sc);
 			dialog.AddButton (Gtk.Stock.Cancel, Gtk.ResponseType.Cancel);
 			dialog.AddButton (Gtk.Stock.Ok, Gtk.ResponseType.Ok);
@@ -73,10 +75,11 @@ namespace MonoDevelop.Components.PropertyGrid.PropertyEditors
 			col.AddAttribute (crt, "text", 1);
 			
 			treeView.AppendColumn (col);
-			
-			foreach (object value in System.Enum.GetValues (enumDesc)) {
+
+			values = System.Enum.GetValues (enumDesc);
+			foreach (object value in values) {
 				ulong val = Convert.ToUInt64 (value);
-				store.AppendValues (((flags & val) != 0), value.ToString (), val);
+				store.AppendValues ((flags == 0 && val == 0) || ((flags & val) != 0), value.ToString (), val);
 			}
 		}
 		
@@ -85,12 +88,12 @@ namespace MonoDevelop.Components.PropertyGrid.PropertyEditors
 			dialog.DefaultWidth = 500;
 			dialog.DefaultHeight = 400;
 			dialog.ShowAll ();
-			return MonoDevelop.Ide.MessageService.RunCustomDialog (dialog, parent);
+			return MonoDevelop.Ide.MessageService.ShowCustomDialog (dialog, parent);
 		}
 		
 		public void Dispose ()
 		{
-			dialog.Destroy ();
+			dialog.Dispose ();
 		}
 		
 		void OnToggled (object s, Gtk.ToggledArgs args)
@@ -101,12 +104,22 @@ namespace MonoDevelop.Components.PropertyGrid.PropertyEditors
 			
 			bool oldValue = (bool) store.GetValue (iter, 0);
 			ulong flag = (ulong) store.GetValue (iter, 2);
-			store.SetValue (iter, 0, !oldValue);
-			
+
 			if (oldValue)
 				flags &= ~flag;
-			else
-				flags |= flag;
+			else {
+				if (flag == 0)
+					flags = 0;
+				else
+					flags |= flag;
+			}
+			
+			store.GetIterFirst (out iter);
+			foreach (object value in values) {
+				ulong val = Convert.ToUInt64 (value);
+				store.SetValue (iter, 0, (flags == 0 && val == 0) || ((flags & val) != 0));
+				store.IterNext (ref iter);
+			}
 		}
 
 		public ulong Value {

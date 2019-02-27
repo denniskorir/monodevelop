@@ -1,45 +1,15 @@
-<?xml version="1.0" encoding="utf-8"?>
 <Project DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003" ToolsVersion="4.0">
+  <Import Project="..\..\..\..\MonoDevelop.props" />
   <PropertyGroup>
     <Configuration Condition=" '$(Configuration)' == '' ">Debug</Configuration>
     <Platform Condition=" '$(Platform)' == '' ">AnyCPU</Platform>
-    <ProductVersion>8.0.30703</ProductVersion>
-    <SchemaVersion>2.0</SchemaVersion>
     <ProjectGuid>{F79A67A1-4BA2-48F8-A7DD-A72E316EF6CD}</ProjectGuid>
-    <OutputType>Library</OutputType>
     <AssemblyName>MonoDevelop.CSharpBinding.Autotools</AssemblyName>
-    <RootNamespace>Autotools</RootNamespace>
-    <TargetFrameworkVersion>v4.5</TargetFrameworkVersion>
+    <TargetFrameworkVersion>$(MDFrameworkVersion)</TargetFrameworkVersion>
+    <OutputPath>..\..\..\..\build\AddIns\CSharpBinding</OutputPath>
   </PropertyGroup>
-  <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Debug|AnyCPU' ">
-    <DebugSymbols>True</DebugSymbols>
-    <DebugType>full</DebugType>
-    <Optimize>false</Optimize>
-    <OutputPath>..\..\..\..\build\AddIns\BackendBindings\</OutputPath>
-    <ErrorReport>prompt</ErrorReport>
-    <WarningLevel>4</WarningLevel>
-    <ConsolePause>False</ConsolePause>
-    <Execution>
-      <Execution clr-version="Net_2_0" />
-    </Execution>
-    <DefineConstants>DEBUG</DefineConstants>
-    <NoWarn>1591;1573</NoWarn>
-    <DocumentationFile>..\..\..\..\build\AddIns\BackendBindings\MonoDevelop.CSharpBinding.Autotools.xml</DocumentationFile>
-  </PropertyGroup>
-  <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Release|AnyCPU' ">
-    <DebugType>pdbonly</DebugType>
-    <Optimize>True</Optimize>
-    <OutputPath>..\..\..\..\build\AddIns\BackendBindings\</OutputPath>
-    <ErrorReport>prompt</ErrorReport>
-    <WarningLevel>4</WarningLevel>
-    <ConsolePause>False</ConsolePause>
-    <Execution>
-      <Execution clr-version="Net_2_0" />
-    </Execution>
-    <DebugSymbols>true</DebugSymbols>
-    <DefineConstants>1591</DefineConstants>
-    <DocumentationFile>..\..\..\..\build\AddIns\BackendBindings\MonoDevelop.CSharpBinding.Autotools.xml</DocumentationFile>
-  </PropertyGroup>
+  <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Debug|AnyCPU' " />
+  <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Release|AnyCPU' " />
   <ItemGroup>
     <ProjectReference Include="..\..\MonoDevelop.Autotools\MonoDevelop.Autotools.csproj">
       <Project>{CFC02FEC-BDF4-40B9-94D6-35E73F76A92E}</Project>
@@ -59,11 +29,6 @@
     <ProjectReference Include="..\CSharpBinding.csproj">
       <Project>{07CC7654-27D6-421D-A64C-0FFA40456FA2}</Project>
       <Name>CSharpBinding</Name>
-      <Private>False</Private>
-    </ProjectReference>
-    <ProjectReference Include="..\..\..\core\Mono.Texteditor\Mono.TextEditor.csproj">
-      <Project>{A2329308-3751-4DBD-9A75-5F7B8B024625}</Project>
-      <Name>Mono.TextEditor</Name>
       <Private>False</Private>
     </ProjectReference>
     <ProjectReference Include="..\..\MonoDevelop.Refactoring\MonoDevelop.Refactoring.csproj">
@@ -89,11 +54,8 @@
     <Compile Include="CSharpAutotoolsSetup.cs" />
     <Compile Include="AddinInfo.cs" />
   </ItemGroup>
-  <Import Project="$(MSBuildBinPath)\Microsoft.CSharp.targets" />
-  <Import Project="..\..\..\..\md.targets" />
   <ItemGroup>
-    <EmbeddedResource Include="ExtensionModel.addin.xml">
-      <LogicalName>ExtensionModel.addin.xml</LogicalName>
-    </EmbeddedResource>
+    <EmbeddedResource Include="ExtensionModel.addin.xml" />
   </ItemGroup>
+  <Import Project="$(MSBuildBinPath)\Microsoft.CSharp.targets" />
 </Project>

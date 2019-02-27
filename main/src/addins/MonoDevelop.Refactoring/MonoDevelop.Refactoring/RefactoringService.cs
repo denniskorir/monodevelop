@@ -33,106 +33,70 @@ using MonoDevelop.Core;
 using MonoDevelop.Ide.Gui;
 using System.Linq;
 using MonoDevelop.AnalysisCore;
-using ICSharpCode.NRefactory;
 using System.Threading.Tasks;
 using System.Threading;
 using MonoDevelop.CodeActions;
 using MonoDevelop.CodeIssues;
-using Mono.TextEditor;
 using MonoDevelop.Ide.TypeSystem;
 using System.Diagnostics;
 using MonoDevelop.Core.Instrumentation;
+using MonoDevelop.Ide.Editor;
+using Microsoft.CodeAnalysis.Options;
+using MonoDevelop.Ide;
+using MonoDevelop.Projects;
+using Microsoft.CodeAnalysis;
+using System.Collections.Immutable;
+using MonoDevelop.Ide.CodeCompletion;
 
 namespace MonoDevelop.Refactoring
-{
+{ 
 	public static class RefactoringService
 	{
-		static readonly List<RefactoringOperation> refactorings = new List<RefactoringOperation>();
-		static readonly List<CodeActionProvider> contextActions = new List<CodeActionProvider> ();
-		static readonly List<CodeIssueProvider> inspectors = new List<CodeIssueProvider> ();
-		
-		public static IEnumerable<CodeActionProvider> ContextAddinNodes {
-			get {
-				return contextActions;
-			}
-		} 
-
-		public static void AddProvider (CodeActionProvider provider)
-		{
-			contextActions.Add (provider);
-		}
-		
-		public static void AddProvider (CodeIssueProvider provider)
-		{
-			inspectors.Add (provider);
-		}
-
-		public static List<CodeIssueProvider> Inspectors {
-			get {
-				return inspectors;
-			}
-		}
+		internal static Func<TextEditor, DocumentContext, OptionSet> OptionSetCreation;
+		static ImmutableList<FindReferencesProvider> findReferencesProvider = ImmutableList<FindReferencesProvider>.Empty;
+		static ImmutableList<FindReferenceUsagesProvider> findReferenceUsagesProviders = ImmutableList<FindReferenceUsagesProvider>.Empty;
+		static List<JumpToDeclarationHandler> jumpToDeclarationHandler = new List<JumpToDeclarationHandler> ();
 
 		static RefactoringService ()
 		{
-			AddinManager.AddExtensionNodeHandler ("/MonoDevelop/Refactoring/Refactorings", delegate(object sender, ExtensionNodeEventArgs args) {
+			AddinManager.AddExtensionNodeHandler ("/MonoDevelop/Refactoring/FindReferencesProvider", delegate(object sender, ExtensionNodeEventArgs args) {
+				var provider  = (FindReferencesProvider) args.ExtensionObject;
 				switch (args.Change) {
-				case ExtensionChange.Add:
-					refactorings.Add ((RefactoringOperation)args.ExtensionObject);
+					case ExtensionChange.Add:
+					findReferencesProvider = findReferencesProvider.Add (provider);
 					break;
-				case ExtensionChange.Remove:
-					refactorings.Remove ((RefactoringOperation)args.ExtensionObject);
+					case ExtensionChange.Remove:
+					findReferencesProvider = findReferencesProvider.Remove (provider);
 					break;
 				}
 			});
 
-			
-			AddinManager.AddExtensionNodeHandler ("/MonoDevelop/Refactoring/CodeActions", delegate(object sender, ExtensionNodeEventArgs args) {
+			AddinManager.AddExtensionNodeHandler ("/MonoDevelop/Refactoring/FindReferenceUsagesProvider", delegate(object sender, ExtensionNodeEventArgs args) {
+				var provider  = (FindReferenceUsagesProvider) args.ExtensionObject;
 				switch (args.Change) {
 				case ExtensionChange.Add:
-					contextActions.Add (((CodeActionAddinNode)args.ExtensionNode).Action);
+					findReferenceUsagesProviders = findReferenceUsagesProviders.Add (provider);
 					break;
 				case ExtensionChange.Remove:
-					contextActions.Remove (((CodeActionAddinNode)args.ExtensionNode).Action);
+					findReferenceUsagesProviders = findReferenceUsagesProviders.Remove (provider);
 					break;
 				}
 			});
-			
-			AddinManager.AddExtensionNodeHandler ("/MonoDevelop/Refactoring/CodeActionSource", delegate(object sender, ExtensionNodeEventArgs args) {
+
+			AddinManager.AddExtensionNodeHandler ("/MonoDevelop/Refactoring/JumpToDeclarationHandler", delegate(object sender, ExtensionNodeEventArgs args) {
+				var provider  = (JumpToDeclarationHandler) args.ExtensionObject;
 				switch (args.Change) {
-				case ExtensionChange.Add:
-					contextActions.AddRange (((ICodeActionProviderSource)args.ExtensionObject).GetProviders ());
+					case ExtensionChange.Add:
+					jumpToDeclarationHandler.Add (provider);
+					break;
+					case ExtensionChange.Remove:
+					jumpToDeclarationHandler.Remove (provider);
 					break;
 				}
 			});
-			
-			AddinManager.AddExtensionNodeHandler ("/MonoDevelop/Refactoring/CodeIssues", delegate(object sender, ExtensionNodeEventArgs args) {
-				switch (args.Change) {
-				case ExtensionChange.Add:
-					inspectors.Add (((CodeIssueAddinNode)args.ExtensionNode).Inspector);
-					break;
-				case ExtensionChange.Remove:
-					inspectors.Remove (((CodeIssueAddinNode)args.ExtensionNode).Inspector);
-					break;
-				}
-			});
-			
-			AddinManager.AddExtensionNodeHandler ("/MonoDevelop/Refactoring/CodeIssueSource", delegate(object sender, ExtensionNodeEventArgs args) {
-				switch (args.Change) {
-				case ExtensionChange.Add:
-					var source = (ICodeIssueProviderSource)args.ExtensionObject;
-					var providers = source.GetProviders ();
-					inspectors.AddRange (providers);
-					break;
-				}
-			});
-			
-		}
-		
-		public static IEnumerable<RefactoringOperation> Refactorings {
-			get {
-				return refactorings;
-			}
+
+			//legacy option, no longer used
+			PropertyService.Set ("CodeActionUsages", null);
 		}
 		
 		class RenameHandler 
@@ -144,7 +108,7 @@ namespace MonoDevelop.Refactoring
 			}
 			public void FileRename (object sender, FileCopyEventArgs e)
 			{
-				foreach (FileCopyEventInfo args in e) {
+				foreach (FileEventInfo args in e) {
 					foreach (Change change in changes) {
 						var replaceChange = change as TextReplaceChange;
 						if (replaceChange == null)
@@ -156,195 +120,279 @@ namespace MonoDevelop.Refactoring
 			}
 		}
 		
-		public static void AcceptChanges (IProgressMonitor monitor, List<Change> changes)
+		public static void AcceptChanges (ProgressMonitor monitor, IList<Change> changes)
 		{
 			AcceptChanges (monitor, changes, MonoDevelop.Ide.TextFileProvider.Instance);
 		}
-		
-		public static void AcceptChanges (IProgressMonitor monitor, List<Change> changes, MonoDevelop.Projects.Text.ITextFileProvider fileProvider)
+
+		public static async Task RoslynJumpToDeclaration (ISymbol symbol, Projects.Project hintProject = null, CancellationToken token = default(CancellationToken))
 		{
-			var rctx = new RefactoringOptions (null);
+			var result = await TryJumpToDeclarationAsync (symbol.GetDocumentationCommentId (), hintProject, token).ConfigureAwait (false);
+			if (!result) {
+				await Runtime.RunInMainThread (delegate {
+					IdeApp.ProjectOperations.JumpToDeclaration (symbol, hintProject);
+				});
+			}
+		}
+
+		public static void AcceptChanges (ProgressMonitor monitor, IList<Change> changes, MonoDevelop.Ide.ITextFileProvider fileProvider)
+		{
+			var rctx = new RefactoringOptions (null, null);
 			var handler = new RenameHandler (changes);
 			FileService.FileRenamed += handler.FileRename;
-			var fileNames = new HashSet<FilePath> ();
-			for (int i = 0; i < changes.Count; i++) {
-				changes[i].PerformChange (monitor, rctx);
-				var replaceChange = changes[i] as TextReplaceChange;
-				if (replaceChange == null)
-					continue;
-				for (int j = i + 1; j < changes.Count; j++) {
-					var change = changes[j] as TextReplaceChange;
+			var ws = TypeSystemService.Workspace as MonoDevelopWorkspace;
+			string originalName;
+			int originalOffset;
+			try {
+				for (int i = 0; i < changes.Count; i++) {
+					var change = changes [i] as TextReplaceChange;
 					if (change == null)
 						continue;
-					fileNames.Add (change.FileName);
-					if (replaceChange.Offset >= 0 && change.Offset >= 0 && replaceChange.FileName == change.FileName) {
-						if (replaceChange.Offset < change.Offset) {
-							change.Offset -= replaceChange.RemovedChars;
-							if (!string.IsNullOrEmpty (replaceChange.InsertedText))
-								change.Offset += replaceChange.InsertedText.Length;
-						} else if (replaceChange.Offset < change.Offset + change.RemovedChars) {
-							change.RemovedChars = Math.Max (0, change.RemovedChars - replaceChange.RemovedChars);
-							change.Offset = replaceChange.Offset + (!string.IsNullOrEmpty (replaceChange.InsertedText) ? replaceChange.InsertedText.Length : 0);
-						}
+
+					if (ws.TryGetOriginalFileFromProjection (change.FileName, change.Offset, out originalName, out originalOffset)) {
+						change.FileName = originalName;
+						change.Offset = originalOffset;
 					}
 				}
-			}
-			FileService.NotifyFilesChanged (fileNames);
-			FileService.FileRenamed -= handler.FileRename;
-			TextReplaceChange.FinishRefactoringOperation ();
-		}
-		
-		public static IEnumerable<CodeIssueProvider> GetInspectors (string mimeType)
-		{
-			return inspectors.Where (i => i.MimeType == mimeType);
-		}
+				if (changes.All (x => x is TextReplaceChange)) {
+					List<Change> newChanges = new List<Change> (changes);
+					newChanges.Sort ((Change x, Change y) => ((TextReplaceChange)x).Offset.CompareTo (((TextReplaceChange)y).Offset));
+					changes = newChanges;
+				}
 
-		static Stopwatch validActionsWatch = new Stopwatch ();
-		static Stopwatch actionWatch = new Stopwatch ();
 
-		public static IEnumerable<CodeAction> GetValidActions (Document doc, TextLocation loc, CancellationToken cancellationToken = default (CancellationToken))
-		{
-			var editor = doc.Editor;
-			string disabledNodes = editor != null ? PropertyService.Get ("ContextActions." + editor.MimeType, "") ?? "" : "";
-			var result = new List<CodeAction> ();
-			var timer = InstrumentationService.CreateTimerCounter ("Source analysis background task", "Source analysis");
-			timer.BeginTiming ();
-			validActionsWatch.Restart ();
-			var timeTable = new Dictionary<CodeActionProvider, long> ();
-			try {
-				var parsedDocument = doc.ParsedDocument;
-				if (editor != null && parsedDocument != null && parsedDocument.CreateRefactoringContext != null) {
-					var ctx = parsedDocument.CreateRefactoringContext (doc, cancellationToken);
-					if (ctx != null) {
-						foreach (var provider in contextActions.Where (fix =>
-							fix.MimeType == editor.MimeType &&
-							disabledNodes.IndexOf (fix.IdString, StringComparison.Ordinal) < 0))
-						{
-							try {
-								actionWatch.Restart ();
-								result.AddRange (provider.GetActions (doc, ctx, loc, cancellationToken));
-								actionWatch.Stop ();
-								timeTable[provider] = actionWatch.ElapsedMilliseconds;
-							} catch (Exception ex) {
-								LoggingService.LogError ("Error in context action provider " + provider.Title, ex);
+				for (int i = 0; i < changes.Count; i++) {
+					changes [i].PerformChange (monitor, rctx);
+					var replaceChange = changes [i] as TextReplaceChange;
+					if (replaceChange == null)
+						continue;
+
+					for (int j = i + 1; j < changes.Count; j++) {
+						var change = changes [j] as TextReplaceChange;
+						if (change == null)
+							continue;
+
+						if (replaceChange.Offset >= 0 && change.Offset >= 0 && replaceChange.FileName == change.FileName) {
+							if (replaceChange.Offset < change.Offset) {
+								change.Offset -= replaceChange.RemovedChars;
+								if (!string.IsNullOrEmpty (replaceChange.InsertedText))
+									change.Offset += replaceChange.InsertedText.Length;
+							} else if (replaceChange.Offset < change.Offset + change.RemovedChars) {
+								change.RemovedChars = Math.Max (0, change.RemovedChars - replaceChange.RemovedChars);
+								change.Offset = replaceChange.Offset + (!string.IsNullOrEmpty (replaceChange.InsertedText) ? replaceChange.InsertedText.Length : 0);
 							}
 						}
 					}
 				}
-			} catch (Exception ex) {
-				LoggingService.LogError ("Error in analysis service", ex);
+			} catch (Exception e) {
+				LoggingService.LogError ("Error while applying refactoring changes", e);
 			} finally {
-				timer.EndTiming ();
-				validActionsWatch.Stop ();
-				if (validActionsWatch.ElapsedMilliseconds > 1000) {
-					LoggingService.LogWarning ("Warning slow edit action update."); 
-					foreach (var pair in timeTable) {
-						if (pair.Value > 50)
-							LoggingService.LogInfo ("ACTION '" + pair.Key.Title + "' took " + pair.Value +"ms"); 
-					}
-				}
-			}
-			return (IEnumerable<CodeAction>)result;
-		}
-
-		public static void QueueQuickFixAnalysis (Document doc, TextLocation loc, CancellationToken token, Action<List<CodeAction>> callback)
-		{
-			var ext = doc.GetContent<MonoDevelop.AnalysisCore.Gui.ResultsEditorExtension> ();
-			var issues = ext != null ? ext.GetResultsAtOffset (doc.Editor.LocationToOffset (loc), token).OrderBy (r => r.Level).ToList () : new List<Result> ();
-
-			ThreadPool.QueueUserWorkItem (delegate {
-				try {
-					var result = new List<CodeAction> ();
-					foreach (var r in issues) {
-						if (token.IsCancellationRequested)
-							return;
-						var fresult = r as FixableResult;
-						if (fresult == null)
-							continue;
-						foreach (var action in FixOperationsHandler.GetActions (doc, fresult)) {
-							result.Add (new AnalysisContextActionProvider.AnalysisCodeAction (action, r) {
-								DocumentRegion = action.DocumentRegion
-							});
-						}
-					}
-					result.AddRange (GetValidActions (doc, loc));
-					callback (result);
-				} catch (Exception ex) {
-					LoggingService.LogError ("Error in analysis service", ex);
-				}
-			});
-		}	
-
-		public static IList<CodeAction> ApplyFixes (IEnumerable<CodeAction> fixes, IRefactoringContext refactoringContext)
-		{
-			if (fixes == null)
-				throw new ArgumentNullException ("fixes");
-			if (refactoringContext == null)
-				throw new ArgumentNullException ("refactoringContext");
-			var allFixes = fixes as IList<CodeAction> ?? fixes.ToArray ();
-			if (allFixes.Count == 0)
-				return new List<CodeAction> ();
-				
-			var scriptProvider = refactoringContext as IRefactoringContext;
-			if (scriptProvider == null) {
-				return RunAll (allFixes, refactoringContext, null);
-			}
-			using (var script = scriptProvider.CreateScript ()) {
-				return RunAll (allFixes, refactoringContext, script);
-			}
-		}
-		
-		public static void ApplyFix (CodeAction action, IRefactoringContext context)
-		{
-			using(var script = context.CreateScript ()) {
-				action.Run (context, script);
+				FileService.FileRenamed -= handler.FileRename;
+				TextReplaceChange.FinishRefactoringOperation ();
 			}
 		}
 
-		static List<CodeAction> RunAll (IEnumerable<CodeAction> allFixes, IRefactoringContext refactoringContext, object script)
-		{
-			var appliedFixes = new List<CodeAction> ();
-			foreach (var fix in allFixes) {
-				fix.Run (refactoringContext, script);
-				appliedFixes.Add (fix);
-			}
-			return appliedFixes;
-		}
+		//		public static void QueueQuickFixAnalysis (Document doc, TextLocation loc, CancellationToken token, Action<List<CodeAction>> callback)
+		//		{
+		//			var ext = doc.GetContent<MonoDevelop.AnalysisCore.Gui.ResultsEditorExtension> ();
+		//			var issues = ext != null ? ext.GetResultsAtOffset (doc.Editor.LocationToOffset (loc), token).OrderBy (r => r.Level).ToList () : new List<Result> ();
+		//
+		//			ThreadPool.QueueUserWorkItem (delegate {
+		//				try {
+		//					var result = new List<CodeAction> ();
+		//					foreach (var r in issues) {
+		//						if (token.IsCancellationRequested)
+		//							return;
+		//						var fresult = r as FixableResult;
+		//						if (fresult == null)
+		//							continue;
+		////						foreach (var action in FixOperationsHandler.GetActions (doc, fresult)) {
+		////							result.Add (new AnalysisContextActionProvider.AnalysisCodeAction (action, r) {
+		////								DocumentRegion = action.DocumentRegion
+		////							});
+		////						}
+		//					}
+		//					result.AddRange (GetValidActions (doc, loc).Result);
+		//					callback (result);
+		//				} catch (Exception ex) {
+		//					LoggingService.LogError ("Error in analysis service", ex);
+		//				}
+		//			});
+		//		}	
 
-		public static DocumentLocation GetCorrectResolveLocation (Document doc, DocumentLocation location)
+		public static MonoDevelop.Ide.Editor.DocumentLocation GetCorrectResolveLocation (IReadonlyTextDocument editor, MonoDevelop.Ide.Editor.DocumentLocation location)
 		{
-			if (doc == null)
-				return location;
-			var editor = doc.Editor;
 			if (editor == null || location.Column == 1)
 				return location;
 
-			if (editor.IsSomethingSelected)
-				return editor.MainSelection.Start;
-
+			/*if (editor is TextEditor) {
+				if (((TextEditor)editor).IsSomethingSelected)
+					return ((TextEditor)editor).SelectionRegion.Begin;
+			}*/
 			var line = editor.GetLine (location.Line);
 			if (line == null || location.Column > line.LengthIncludingDelimiter)
 				return location;
 			int offset = editor.LocationToOffset (location);
-			if (offset > 0 && !char.IsLetterOrDigit (doc.Editor.GetCharAt (offset)) && char.IsLetterOrDigit (doc.Editor.GetCharAt (offset - 1)))
-				return new DocumentLocation (location.Line, location.Column - 1);
+			if (offset > 0 && !char.IsLetterOrDigit (editor.GetCharAt (offset)) && char.IsLetterOrDigit (editor.GetCharAt (offset - 1)))
+				return new MonoDevelop.Ide.Editor.DocumentLocation (location.Line, location.Column - 1);
 			return location;
 		}
 
-		static readonly CodeAnalysisBatchRunner runner = new CodeAnalysisBatchRunner();
-
-		/// <summary>
-		/// Queues a code analysis job.
-		/// </summary>
-		/// <param name="job">The job to queue.</param>
-		/// <param name="progressMessage">
-		/// The message used for a progress monitor, or null if no progress monitor should be used.
-		/// </param>
-		public static IJobContext QueueCodeIssueAnalysis(IAnalysisJob job, string progressMessage = null)
+		public static async Task FindReferencesAsync (string documentIdString, Projects.Project hintProject = null)
 		{
-			if (progressMessage != null)
-				job = new ProgressMonitorWrapperJob (job, progressMessage);
-			return runner.QueueJob (job);
+			if (hintProject == null)
+				hintProject = IdeApp.Workbench.ActiveDocument?.Project;
+			ITimeTracker timer = null;
+			var monitor = IdeApp.Workbench.ProgressMonitors.GetSearchProgressMonitor (true, true);
+			try {
+				var metadata = Counters.CreateFindReferencesMetadata ();
+				timer = Counters.FindReferences.BeginTiming (metadata);
+				var tasks = new List<(Task task, FindReferencesProvider provider)> (findReferencesProvider.Count);
+				foreach (var provider in findReferencesProvider) {
+					try {
+						tasks.Add ((provider.FindReferences (documentIdString, hintProject, monitor), provider));
+					} catch (OperationCanceledException) {
+						metadata.SetUserCancel ();
+						return;
+					} catch (Exception ex) {
+						metadata.SetFailure ();
+						if (monitor != null)
+							monitor.ReportError ("Error finding references", ex);
+						LoggingService.LogError ("Error finding references", ex);
+						findReferencesProvider = findReferencesProvider.Remove (provider);
+					}
+				}
+				foreach (var task in tasks) {
+					try {
+						await task.task;
+					} catch (OperationCanceledException) {
+						metadata.SetUserCancel ();
+						return;
+					} catch (Exception ex) {
+						metadata.SetFailure ();
+						if (monitor != null)
+							monitor.ReportError ("Error finding references", ex);
+						LoggingService.LogError ("Error finding references", ex);
+						findReferencesProvider = findReferencesProvider.Remove (task.provider);
+					}
+				}
+			} finally {
+				if (monitor != null)
+					monitor.Dispose ();
+				if (timer != null)
+					timer.Dispose ();
+			}
+		}
+
+		public static async Task FindReferenceUsagesAsync(Projects.ProjectReference projectReference)
+		{
+			using (var monitor = IdeApp.Workbench.ProgressMonitors.GetSearchProgressMonitor (true, true)) {
+				try {
+					foreach (var provider in findReferenceUsagesProviders) {
+						await provider.FindReferences(projectReference, monitor);
+					}
+				} catch (Exception ex) {
+					LoggingService.LogError ("Error finding reference usages", ex);
+				}
+			}
+		}
+
+		public static async Task FindAllReferencesAsync (string documentIdString, Projects.Project hintProject = null)
+		{
+			if (hintProject == null)
+				hintProject = IdeApp.Workbench.ActiveDocument?.Project;
+			ITimeTracker timer = null;
+			var monitor = IdeApp.Workbench.ProgressMonitors.GetSearchProgressMonitor (true, true);
+			try {
+				var metadata = Counters.CreateFindReferencesMetadata ();
+				timer = Counters.FindReferences.BeginTiming (metadata);
+				var tasks = new List<(Task task, FindReferencesProvider provider)> (findReferencesProvider.Count);
+				foreach (var provider in findReferencesProvider) {
+					try {
+						tasks.Add ((provider.FindAllReferences (documentIdString, hintProject, monitor), provider));
+					} catch (OperationCanceledException) {
+						metadata.SetUserCancel ();
+						return;
+					} catch (Exception ex) {
+						metadata.SetFailure ();
+						if (monitor != null)
+							monitor.ReportError ("Error finding references", ex);
+						LoggingService.LogError ("Error finding references", ex);
+						findReferencesProvider = findReferencesProvider.Remove (provider);
+					}
+				}
+				foreach (var task in tasks) {
+					try {
+						await task.task;
+					} catch (OperationCanceledException) {
+						metadata.SetUserCancel ();
+						return;
+					} catch (Exception ex) {
+						metadata.SetFailure ();
+						if (monitor != null)
+							monitor.ReportError ("Error finding references", ex);
+						LoggingService.LogError ("Error finding references", ex);
+						findReferencesProvider = findReferencesProvider.Remove (task.provider);
+					}
+				}
+			} finally {
+				if (monitor != null)
+					monitor.Dispose ();
+				if (timer != null)
+					timer.Dispose ();
+			}
+		}
+
+		public static async Task<bool> TryJumpToDeclarationAsync (string documentIdString, Projects.Project hintProject = null, CancellationToken token = default(CancellationToken))
+		{
+				if (hintProject == null)
+					hintProject = IdeApp.Workbench.ActiveDocument?.Project;
+			for (int i = 0; i < jumpToDeclarationHandler.Count; i++) {
+				var handler = jumpToDeclarationHandler [i];
+				try {
+					if (await handler.TryJumpToDeclarationAsync (documentIdString, hintProject, token))
+						return true;
+				} catch (OperationCanceledException) {
+				} catch (Exception ex) {
+					LoggingService.LogError ("Error jumping to declaration", ex);
+				}
+			}
+
+			return false;
+		}
+	}
+
+	internal static class Counters
+	{
+		public static TimerCounter<FindReferencesMetadata> FindReferences = InstrumentationService.CreateTimerCounter<FindReferencesMetadata> ("Find references", "Code Navigation", id: "CodeNavigation.FindReferences");
+		public static TimerCounter<FixesMenuMetadata> FixesMenu = InstrumentationService.CreateTimerCounter<FixesMenuMetadata> ("Show fixes", "Code Actions", id: "CodeActions.ShowFixes");
+
+		public static FindReferencesMetadata CreateFindReferencesMetadata ()
+		{
+			var metadata = new FindReferencesMetadata {
+				ResultString = "Success"
+			};
+			return metadata;
+		}
+
+		public class FindReferencesMetadata : CounterMetadata
+		{
+			public string ResultString {
+				get => (string)Properties["Result"];
+				set => Properties["Result"] = value;
+			}
+		}
+
+		public class FixesMenuMetadata : CounterMetadata
+		{
+			public FixesMenuMetadata ()
+			{
+			}
+
+			public bool TriggeredBySmartTag {
+				get => GetProperty<bool> ();
+				set => SetProperty (value);
+			}
 		}
 	}
 }

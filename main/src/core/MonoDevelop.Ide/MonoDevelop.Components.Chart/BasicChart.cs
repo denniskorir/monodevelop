@@ -28,14 +28,132 @@
 
 using System;
 using System.Collections;
-using System.Collections.Generic;
 using Gtk;
 using Gdk;
-using Mono.TextEditor;
+using MonoDevelop.Ide.Fonts;
 
 namespace MonoDevelop.Components.Chart
 {
-	public class BasicChart: DrawingArea
+	public class BasicChart: Control
+	{
+		ChartWidget widget;
+
+		public BasicChart ()
+		{
+			widget = new ChartWidget ();
+		}
+
+		protected override object CreateNativeWidget<T> ()
+		{
+			return widget;
+		}
+
+		protected internal virtual void OnSelectionChanged ()
+		{
+			if (SelectionChanged != null)
+				SelectionChanged (this, EventArgs.Empty);
+		}
+
+		public event EventHandler SelectionChanged;
+
+		public bool AllowSelection {
+			get { return widget.AllowSelection; }
+			set { widget.AllowSelection = value; }
+		}
+
+		public ChartCursor SelectionStart {
+			get { return widget.SelectionStart; }
+		}
+
+		public ChartCursor SelectionEnd {
+			get { return widget.SelectionEnd; }
+		}
+
+		public ChartCursor ActiveCursor {
+			get { return widget.ActiveCursor; }
+		}
+		public bool ReverseXAxis {
+			get { return widget.ReverseXAxis; }
+			set { widget.ReverseXAxis = value; }
+		}
+
+		public bool ReverseYAxis {
+			get { return widget.ReverseYAxis; }
+			set { widget.ReverseYAxis = value; }
+		}
+
+		public double OriginX {
+			get { return widget.OriginX; }
+			set { widget.OriginX = value; }
+		}
+
+		public double OriginY {
+			get { return widget.OriginY; }
+			set { widget.OriginY = value; }
+		}
+
+		public double StartX {
+			get { return widget.StartX; }
+			set { widget.StartX = value; }
+		}
+
+		public double EndX {
+			get { return widget.EndX; }
+			set { widget.EndX = value; }
+		}
+
+		public double StartY {
+			get { return widget.StartY; }
+			set { widget.StartY = value; }
+		}
+
+		public double EndY {
+			get { return widget.EndY; }
+			set { widget.EndY = value; }
+		}
+
+		public void Reset ()
+		{
+			widget.Reset ();
+		}
+
+		public void AddAxis (Axis ax, AxisPosition position)
+		{
+			widget.AddAxis (ax, position);
+		}
+
+		public void AddSerie (Serie serie)
+		{
+			widget.AddSerie (serie);
+		}
+
+		public void RemoveSerie (Serie serie)
+		{
+			widget.RemoveSerie (serie);
+		}
+
+		public void AddCursor (ChartCursor cursor, AxisDimension dimension)
+		{
+			widget.AddCursor (cursor, dimension);
+		}
+
+		public void RemoveCursor (ChartCursor cursor)
+		{
+			widget.RemoveCursor (cursor);
+		}
+
+		public void SetAutoScale (AxisDimension ad, bool autoStart, bool autoEnd)
+		{
+			widget.SetAutoScale (ad, autoStart, autoEnd);
+		}
+
+		public void Clear ()
+		{
+			widget.Clear ();
+		}
+	}
+
+	class ChartWidget : DrawingArea
 	{
 		double startX, endX;
 		double startY, endY;
@@ -69,8 +187,9 @@ namespace MonoDevelop.Components.Chart
 		
 		ChartCursor selectionStart;
 		ChartCursor selectionEnd;
-		
-		public BasicChart ()
+		BasicChart chart;
+
+		public ChartWidget ()
 		{
 			this.Events = EventMask.ButtonPressMask | EventMask.ButtonReleaseMask | EventMask.PointerMotionMask; 
 			selectionStart = new ChartCursor ();
@@ -82,9 +201,12 @@ namespace MonoDevelop.Components.Chart
 			selectionStart.ValueChanged += new EventHandler (OnSelectionCursorChanged);
 			selectionEnd.ValueChanged += new EventHandler (OnSelectionCursorChanged);
 		}
-		
-		public event EventHandler SelectionChanged;
-		
+
+		internal void Initialize (BasicChart owner)
+		{
+			chart = owner;
+		}
+
 		public bool AllowSelection {
 			get {
 				return enableSelection;
@@ -409,6 +531,8 @@ namespace MonoDevelop.Components.Chart
 
 			if (backgroundDisplay == BackgroundDisplay.Gradient) {
 				ctx.Rectangle (left - 1, top - 1, width + 2, height + 2);
+
+				// FIXME: VV: Remove gradient features
 				using (var pat = new Cairo.LinearGradient (left - 1, top - 1, left - 1, height + 2)) {
 					pat.AddColorStop (0, backroundColor);
 					Cairo.Color endc = new Cairo.Color (1,1,1);
@@ -433,9 +557,10 @@ namespace MonoDevelop.Components.Chart
 				if (sx > ex) {
 					int tmp = sx; sx = ex; ex = tmp;
 				}
-				Gdk.GC sgc = new Gdk.GC (GdkWindow);
-		   		sgc.RgbFgColor = new Color (225, 225, 225);
-				win.DrawRectangle (sgc, true, sx, top, ex - sx, height + 1);
+				using (Gdk.GC sgc = new Gdk.GC (GdkWindow)) {
+					sgc.RgbFgColor = new Color (225, 225, 225);
+					win.DrawRectangle (sgc, true, sx, top, ex - sx, height + 1);
+				}
 			}
 			
 			// Draw axes
@@ -506,7 +631,7 @@ namespace MonoDevelop.Components.Chart
 			
 			if (showLabels) {
 				layout = new Pango.Layout (this.PangoContext);
-				layout.FontDescription = Pango.FontDescription.FromString ("Tahoma 8");
+				layout.FontDescription = FontService.SansFont.CopyModified (Ide.Gui.Styles.FontScale11);
 			}
 			
 			bool isX = pos == AxisPosition.Top || pos == AxisPosition.Bottom;
@@ -609,6 +734,7 @@ namespace MonoDevelop.Components.Chart
 					}
 				}
 			}
+			layout?.Dispose ();
 		}
 		
 		int MeasureAxisSize (AxisPosition pos)
@@ -642,7 +768,7 @@ namespace MonoDevelop.Components.Chart
 		{
 			int max = 0;
 			Pango.Layout layout = new Pango.Layout (this.PangoContext);
-			layout.FontDescription = Pango.FontDescription.FromString ("Tahoma 8");
+			layout.FontDescription = FontService.SansFont.CopyModified (Ide.Gui.Styles.FontScale11);
 			
 			double start = GetStart (ad);
 			double end = GetEnd (ad);
@@ -667,6 +793,7 @@ namespace MonoDevelop.Components.Chart
 						max = tw;
 				}
 			}
+			layout.Dispose ();
 			return max;
 		}
 		
@@ -708,66 +835,69 @@ namespace MonoDevelop.Components.Chart
 		
 		void DrawCursor (ChartCursor cursor)
 		{
-			Gdk.GC gc = new Gdk.GC (GdkWindow);
-	   		gc.RgbFgColor = cursor.Color;
-			
-			int x, y;
-			GetPoint (cursor.Value, cursor.Value, out x, out y);
-				
-			if (cursor.Dimension == AxisDimension.X) {
-				int cy = top - AreaBorderWidth - 1;
-				Point[] ps = new Point [4];
-				ps [0] = new Point (x, cy);
-				ps [1] = new Point (x + (cursor.HandleSize/2), cy - cursor.HandleSize + 1);
-				ps [2] = new Point (x - (cursor.HandleSize/2), cy - cursor.HandleSize + 1);
-				ps [3] = ps [0];
-				GdkWindow.DrawPolygon (gc, false, ps);
-				if (activeCursor == cursor)
-					GdkWindow.DrawPolygon (gc, true, ps);
-				GdkWindow.DrawLine (gc, x, top, x, top + height);
-			} else {
-				throw new NotSupportedException ();
+			using (Gdk.GC gc = new Gdk.GC (GdkWindow)) {
+				gc.RgbFgColor = cursor.Color;
+
+				int x, y;
+				GetPoint (cursor.Value, cursor.Value, out x, out y);
+
+				if (cursor.Dimension == AxisDimension.X) {
+					int cy = top - AreaBorderWidth - 1;
+					Point [] ps = new Point [4];
+					ps [0] = new Point (x, cy);
+					ps [1] = new Point (x + (cursor.HandleSize / 2), cy - cursor.HandleSize + 1);
+					ps [2] = new Point (x - (cursor.HandleSize / 2), cy - cursor.HandleSize + 1);
+					ps [3] = ps [0];
+					GdkWindow.DrawPolygon (gc, false, ps);
+					if (activeCursor == cursor)
+						GdkWindow.DrawPolygon (gc, true, ps);
+					GdkWindow.DrawLine (gc, x, top, x, top + height);
+				} else {
+					throw new NotSupportedException ();
+				}
 			}
 		}
 		
 		void DrawCursorLabel (ChartCursor cursor)
 		{
-			Gdk.GC gc = new Gdk.GC (GdkWindow);
-	   		gc.RgbFgColor = cursor.Color;
-			
-			int x, y;
-			GetPoint (cursor.Value, cursor.Value, out x, out y);
+			using (Gdk.GC gc = new Gdk.GC (GdkWindow)) {
+				gc.RgbFgColor = cursor.Color;
 
-			if (cursor.Dimension == AxisDimension.X) {
-			
-				string text;
-				
-				if (cursor.LabelAxis != null) {
-					double minStep = GetMinTickStep (cursor.Dimension);
-					TickEnumerator tenum = cursor.LabelAxis.GetTickEnumerator (minStep);
-					tenum.Init (cursor.Value);
-					text = tenum.CurrentLabel;
+				int x, y;
+				GetPoint (cursor.Value, cursor.Value, out x, out y);
+
+				if (cursor.Dimension == AxisDimension.X) {
+
+					string text;
+
+					if (cursor.LabelAxis != null) {
+						double minStep = GetMinTickStep (cursor.Dimension);
+						TickEnumerator tenum = cursor.LabelAxis.GetTickEnumerator (minStep);
+						tenum.Init (cursor.Value);
+						text = tenum.CurrentLabel;
+					} else {
+						text = GetValueLabel (cursor.Dimension, cursor.Value);
+					}
+
+					if (text != null && text.Length > 0) {
+						Pango.Layout layout = new Pango.Layout (this.PangoContext);
+						layout.FontDescription = FontService.SansFont.CopyModified (Ide.Gui.Styles.FontScale11);
+						layout.SetMarkup (text);
+
+						int tw, th;
+						layout.GetPixelSize (out tw, out th);
+						int tl = x - tw / 2;
+						int tt = top + 4;
+						if (tl + tw + 2 >= left + width) tl = left + width - tw - 1;
+						if (tl < left + 1) tl = left + 1;
+						GdkWindow.DrawRectangle (Style.WhiteGC, true, tl - 1, tt - 1, tw + 2, th + 2);
+						GdkWindow.DrawRectangle (Style.BlackGC, false, tl - 2, tt - 2, tw + 3, th + 3);
+						GdkWindow.DrawLayout (gc, tl, tt, layout);
+						layout.Dispose ();
+					}
 				} else {
-					text = GetValueLabel (cursor.Dimension, cursor.Value);
+					throw new NotSupportedException ();
 				}
-				
-				if (text != null && text.Length > 0) {
-					Pango.Layout layout = new Pango.Layout (this.PangoContext);
-					layout.FontDescription = Pango.FontDescription.FromString ("Tahoma 8");
-					layout.SetMarkup (text);
-					
-					int tw, th;
-					layout.GetPixelSize (out tw, out th);
-					int tl = x - tw/2;
-					int tt = top + 4;
-					if (tl + tw + 2 >= left + width) tl = left + width - tw - 1;
-					if (tl < left + 1) tl = left + 1;
-					GdkWindow.DrawRectangle (Style.WhiteGC, true, tl - 1, tt - 1, tw + 2, th + 2);
-					GdkWindow.DrawRectangle (Style.BlackGC, false, tl - 2, tt - 2, tw + 3, th + 3);
-					GdkWindow.DrawLayout (gc, tl, tt, layout);
-				}
-			} else {
-				throw new NotSupportedException ();
 			}
 		}
 		
@@ -832,7 +962,10 @@ namespace MonoDevelop.Components.Chart
 					selectionStart = selectionEnd;
 					selectionEnd = tmp;
 				}
-				OnSelectionChanged ();
+
+				if (chart != null) {
+					chart.OnSelectionChanged ();
+				}
 			}
 		}
 		
@@ -913,12 +1046,6 @@ namespace MonoDevelop.Components.Chart
 			xrangeChanged = true;
 			yrangeChanged = true;
 			base.OnSizeAllocated (rect);
-		}
-		
-		protected virtual void OnSelectionChanged ()
-		{
-			if (SelectionChanged != null)
-				SelectionChanged (this, EventArgs.Empty);
 		}
 	}
 	

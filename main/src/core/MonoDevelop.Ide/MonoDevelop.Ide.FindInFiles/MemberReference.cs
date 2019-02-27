@@ -25,16 +25,21 @@
 // THE SOFTWARE.
 using System;
 using ICSharpCode.NRefactory.TypeSystem;
-using Mono.TextEditor.Highlighting;
+using MonoDevelop.Ide.Editor;
+using MonoDevelop.Ide.Editor.Highlighting;
 
 namespace MonoDevelop.Ide.FindInFiles
 {
 	[Flags]
 	public enum ReferenceUsageType {
-		Unknown = 0,
-		Read    = 1,
-		Write   = 2,
-		ReadWrite = Read | Write
+		Unknown    = 0,
+		Read       = 1,
+		Write      = 2,
+		[Obsolete("Please use Declaration")]
+		Declariton = 4,
+		Declaration = 4,
+		Keyword    = 8,
+		ReadWrite  = Read | Write
 	}
 
 	public class MemberReference : SearchResult
@@ -44,23 +49,24 @@ namespace MonoDevelop.Ide.FindInFiles
 				return new MonoDevelop.Ide.FindInFiles.FileProvider (FileName);
 			}
 		}
-		
-		public override  string FileName {
+		readonly string fileName;
+		public override string FileName {
 			get {
-				return Region.FileName;
+				return fileName;
 			}
 		}
 
 		public ReferenceUsageType ReferenceUsageType { get; set; }
 		public object EntityOrVariable { get; private set;}
-		public DomRegion Region { get; private set;}
 		
-		public MemberReference (object entity, DomRegion region, int offset, int length) : base (offset, length)
+		public MemberReference (object entity, string fileName, int offset, int length) : base (offset, length)
 		{
 			if (entity == null)
 				throw new System.ArgumentNullException ("entity");
+			if (fileName == null)
+				throw new ArgumentNullException ("fileName");
 			EntityOrVariable = entity;
-			Region = region;
+			this.fileName = fileName;
 		}
 
 		public string GetName ()
@@ -77,11 +83,13 @@ namespace MonoDevelop.Ide.FindInFiles
 			return ((IVariable)EntityOrVariable).Name;
 		}
 
-		public override AmbientColor GetBackgroundMarkerColor (ColorScheme style)
+		public override Components.HslColor GetBackgroundMarkerColor (EditorTheme style)
 		{
-			return (ReferenceUsageType & ReferenceUsageType.Write) != 0 ?
-				style.ChangingUsagesRectangle :
-				style.UsagesRectangle;
+			var key = (ReferenceUsageType & ReferenceUsageType.Write) != 0 ||
+				(ReferenceUsageType & ReferenceUsageType.Declaration) != 0 ?
+				EditorThemeColors.ChangingUsagesRectangle : EditorThemeColors.UsagesRectangle;
+
+			return SyntaxHighlightingService.GetColor (style, key);
 		}
 	}
 }

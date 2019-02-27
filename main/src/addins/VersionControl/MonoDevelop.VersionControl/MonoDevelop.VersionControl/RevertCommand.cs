@@ -43,7 +43,7 @@ namespace MonoDevelop.VersionControl
 			}
 		}
 
-		private class RevertWorker : Task {
+		private class RevertWorker : VersionControlTask {
 			VersionControlItemList items;
 						
 			public RevertWorker (VersionControlItemList items) {
@@ -59,11 +59,9 @@ namespace MonoDevelop.VersionControl
 				foreach (VersionControlItemList list in items.SplitByRepository ())
 					list[0].Repository.Revert (list.Paths, true, Monitor);
 				
-				Monitor.ReportSuccess (GettextCatalog.GetString ("Revert operation completed."));
-				Gtk.Application.Invoke (delegate {
+				Gtk.Application.Invoke ((o, args) => {
 					foreach (VersionControlItem item in items) {
 						if (!item.IsDirectory) {
-							FileService.NotifyFileChanged (item.Path);
 							// Reload reverted files
 							Document doc = IdeApp.Workbench.GetDocument (item.Path);
 							if (doc != null && System.IO.File.Exists (item.Path))
@@ -72,6 +70,7 @@ namespace MonoDevelop.VersionControl
 					}
 					VersionControlService.NotifyFileStatusChanged (items);
 				});
+				Monitor.ReportSuccess (GettextCatalog.GetString ("Revert operation completed."));
 			}
 		}
 		

@@ -35,26 +35,51 @@ using MonoDevelop.Core;
 using MonoDevelop.Ide;
 using MonoDevelop.Ide.Commands;
 using MonoDevelop.Components.Commands;
+using MonoDevelop.Components;
+using MonoDevelop.Core.Text;
+using MonoDevelop.Ide.Editor;
 
 namespace MonoDevelop.SourceEditor
 {
-	public partial class SearchAndReplaceWidget : Bin
+	partial class SearchAndReplaceWidget : Bin
 	{
 		const char historySeparator = '\n';
 		const int  historyLimit = 20;
 		const string seachHistoryProperty = "MonoDevelop.FindReplaceDialogs.FindHistory";
 		const string replaceHistoryProperty = "MonoDevelop.FindReplaceDialogs.ReplaceHistory";
-		public TextSegment SelectionSegment {
+		static Xwt.Drawing.Image SearchEntryFilterImage = Xwt.Drawing.Image.FromResource ("find-options-22x32.png");
+		public ISegment SelectionSegment {
 			get;
 			set;
 		}
+		bool isInSelectionSearchMode;
+		TextSegmentMarker selectionMarker;
 
 		public bool IsInSelectionSearchMode {
-			get;
-			set;
+			get {
+				return isInSelectionSearchMode;
+			}
+
+			set {
+				if (value) {
+					selectionMarker = new SearchInSelectionMarker (SelectionSegment);
+					this.textEditor.Document.AddMarker (selectionMarker);
+				} else {
+					RemoveSelectionMarker ();
+				}
+				isInSelectionSearchMode = value;
+			}
 		}
 
-		readonly TextEditor textEditor;
+		void RemoveSelectionMarker ()
+		{
+			if (selectionMarker == null)
+				return;
+			this.textEditor.Document.RemoveMarker (selectionMarker);
+			selectionMarker = null;
+		}
+
+		readonly MonoTextEditor textEditor;
 		readonly Widget frame;
 		bool isReplaceMode = true;
 		Widget[] replaceWidgets;
@@ -101,7 +126,7 @@ namespace MonoDevelop.SourceEditor
 			if (frame == null || textEditor == null)
 				return;
 			int newX = textEditor.Allocation.Width - Allocation.Width - 8;
-			TextEditor.EditorContainerChild containerChild = ((TextEditor.EditorContainerChild)textEditor [frame]);
+			MonoTextEditor.EditorContainerChild containerChild = ((MonoTextEditor.EditorContainerChild)textEditor [frame]);
 			if (newX != containerChild.X) {
 				searchEntry.WidthRequest = textEditor.Allocation.Width / 3;
 				containerChild.X = newX;
@@ -118,7 +143,7 @@ namespace MonoDevelop.SourceEditor
 			return "(" + nextShortcut + ")";
 		}
 		
-		public SearchAndReplaceWidget (TextEditor textEditor, Widget frame)
+		internal SearchAndReplaceWidget (MonoTextEditor textEditor, Widget frame)
 		{
 			if (textEditor == null)
 				throw new ArgumentNullException ("textEditor");
@@ -157,13 +182,6 @@ namespace MonoDevelop.SourceEditor
 			};
 			FilterHistory (seachHistoryProperty);
 			FilterHistory (replaceHistoryProperty);
-			//HACK: GTK rendering issue on Mac, images don't repaint unless we put them in visible eventboxes
-			if (Platform.IsMac) {
-				foreach (var eb in new [] { eventbox2, eventbox3, eventbox4, eventbox5, eventbox6 }) {
-					eb.VisibleWindow = true;
-					eb.ModifyBg (StateType.Normal, new Gdk.Color (245, 245, 245));
-				}
-			}
 
 			if (String.IsNullOrEmpty (textEditor.SearchPattern)) {
 				textEditor.SearchPattern = SearchAndReplaceOptions.SearchPattern;
@@ -190,8 +208,17 @@ namespace MonoDevelop.SourceEditor
 				if (oldPattern != SearchAndReplaceOptions.SearchPattern)
 					UpdateSearchEntry ();
 				var history = GetHistory (seachHistoryProperty);
+
+				// Don't do anything to the history if we have a blank search
+				if (string.IsNullOrWhiteSpace (SearchPattern)) {
+					return;
+				}
+
 				if (history.Count > 0 && history [0] == oldPattern) {
-					ChangeHistory (seachHistoryProperty, SearchAndReplaceOptions.SearchPattern);
+					// Only update the current history item if we're adding to the search string
+					if (!oldPattern.StartsWith (SearchPattern)) {
+						ChangeHistory (seachHistoryProperty, SearchAndReplaceOptions.SearchPattern);
+					}
 				} else {
 					UpdateSearchHistory (SearchAndReplaceOptions.SearchPattern);
 				}
@@ -281,27 +308,32 @@ namespace MonoDevelop.SourceEditor
 			resultInformLabelEventBox.BorderWidth = 2;
 			resultInformLabel.Xpad = 2;
 			resultInformLabel.Show ();
-			searchEntry.FilterButtonPixbuf = Xwt.Drawing.Image.FromResource ("searchoptions.png");
+			searchEntry.FilterButtonPixbuf = SearchEntryFilterImage;
 
 			if (textEditor.IsSomethingSelected) {
-				if (textEditor.MainSelection.MinLine == textEditor.MainSelection.MaxLine) {
+				if (textEditor.MainSelection.MinLine == textEditor.MainSelection.MaxLine || ClipboardContainsSelection()) {
 					SetSearchPattern ();
 				} else {
-					IsInSelectionSearchMode = true;
 					SelectionSegment = textEditor.SelectionRange;
+					IsInSelectionSearchMode = true;
 					SetSearchOptions ();
 				}
 			}
 			SetSearchPattern (SearchAndReplaceOptions.SearchPattern);
 			textEditor.HighlightSearchPattern = true;
 			textEditor.TextViewMargin.RefreshSearchMarker ();
-			if (textEditor.Document.ReadOnly) {
+			if (textEditor.Document.IsReadOnly) {
 				buttonSearchMode.Visible = false;
 				IsReplaceMode = false;
 			}
 
 			SearchAndReplaceOptions.SearchPatternChanged += HandleSearchPatternChanged;
 			SearchAndReplaceOptions.ReplacePatternChanged += HandleReplacePatternChanged;
+		}
+
+		bool ClipboardContainsSelection ()
+		{
+			return textEditor.SelectedText == ClipboardActions.GetClipboardContent ();
 		}
 
 		void HandleReplacePatternChanged (object sender, EventArgs e)
@@ -475,6 +507,10 @@ But I leave it in in the case I've missed something. Mike
 						if (!((Button)o).HasFocus)
 							((Button)o).Click ();
 					}*/
+				if (o == searchEntry.Entry && (args.Event.State & Gdk.ModifierType.ShiftMask) == Gdk.ModifierType.ShiftMask) {
+					UpdateSearchHistory (SearchPattern);
+					FindPrevious (textEditor);
+				}
 				break;
 			case Gdk.Key.Down:
 			case Gdk.Key.Up:
@@ -593,28 +629,17 @@ But I leave it in in the case I've missed something. Mike
 				foreach (Widget widget in replaceWidgets) {
 					widget.Visible = isReplaceMode;
 				}
-				if (textEditor.Document.ReadOnly)
+				if (textEditor.Document.IsReadOnly)
 					buttonSearchMode.Visible = false;
 			}
-		}
-
-		protected override void OnFocusChildSet (Widget widget)
-		{
-			base.OnFocusChildSet (widget);
-			var mainResult = textEditor.TextViewMargin.MainSearchResult;
-			textEditor.TextViewMargin.HideSelection = widget == table && !mainResult.IsInvalid &&
-				textEditor.IsSomethingSelected && textEditor.SelectionRange.Offset == mainResult.Offset && textEditor.SelectionRange.EndOffset == mainResult.EndOffset;
-			
-			if (textEditor.TextViewMargin.HideSelection)
-				textEditor.QueueDraw ();
 		}
 		
 		protected override void OnDestroyed ()
 		{
+			RemoveSelectionMarker ();
 			SearchAndReplaceOptions.SearchPatternChanged -= HandleSearchPatternChanged;
 			SearchAndReplaceOptions.ReplacePatternChanged -= HandleReplacePatternChanged;
 
-			textEditor.TextViewMargin.HideSelection = false;
 			textEditor.Caret.PositionChanged -= HandleWidgetTextEditorCaretPositionChanged;
 			textEditor.TextViewMargin.SearchRegionsUpdated -= HandleWidgetTextEditorTextViewMarginSearchRegionsUpdated;
 			SizeAllocated -= HandleViewTextEditorhandleSizeAllocated;
@@ -752,51 +777,58 @@ But I leave it in in the case I've missed something. Mike
 		
 		void UpdateResultInformLabel ()
 		{
-			if (string.IsNullOrEmpty (SearchPattern)) {
-				resultInformLabel.Text = "";
-				resultInformLabelEventBox.ModifyBg (StateType.Normal, searchEntry.Entry.Style.Base (searchEntry.Entry.State));
-				resultInformLabel.ModifyFg (StateType.Normal, searchEntry.Entry.Style.Foreground (StateType.Insensitive));
-				return;
-			}
-			
-			//	bool error = result == null && !String.IsNullOrEmpty (SearchPattern);
-			string errorMsg;
-			bool valid = textEditor.SearchEngine.IsValidPattern (SearchAndReplaceOptions.SearchPattern, out errorMsg);
-			//	error |= !valid;
-			
-			if (!valid) {
-				IdeApp.Workbench.StatusBar.ShowError (errorMsg);
-			} else {
-				IdeApp.Workbench.StatusBar.ShowReady ();
-			}
-			
-			if (!valid || textEditor.TextViewMargin.SearchResultMatchCount == 0) {
-				//resultInformLabel.Markup = "<span foreground=\"#000000\" background=\"" + MonoDevelop.Components.PangoCairoHelper.GetColorString (GotoLineNumberWidget.errorColor) + "\">" + GettextCatalog.GetString ("Not found") + "</span>";
-				resultInformLabel.Text = GettextCatalog.GetString ("Not found");
-				resultInformLabelEventBox.ModifyBg (StateType.Normal, GotoLineNumberWidget.errorColor);
-				resultInformLabel.ModifyFg (StateType.Normal, searchEntry.Entry.Style.Foreground (StateType.Normal));
-			} else {
-				int resultIndex = 0;
-				int foundIndex = -1;
-				int caretOffset = textEditor.Caret.Offset;
-				TextSegment foundSegment = TextSegment.Invalid;
-				foreach (var searchResult in textEditor.TextViewMargin.SearchResults) {
-					if (searchResult.Offset <= caretOffset && caretOffset <= searchResult.EndOffset) {
-						foundIndex = resultIndex + 1;
-						foundSegment = searchResult;
-						break;
-					}
-					resultIndex++;
+			try {
+				var entry = searchEntry.Entry;
+				if (entry == null) {
+					LoggingService.LogError ("SearchAndReplaceWidget.UpdateResultInformLabel called with null entry.");
+					return;
 				}
-				if (foundIndex != -1) {
-					resultInformLabel.Text = String.Format (GettextCatalog.GetString ("{0} of {1}"), foundIndex, textEditor.TextViewMargin.SearchResultMatchCount);
+				if (string.IsNullOrEmpty (SearchPattern)) {
+					resultInformLabel.Text = "";
+					resultInformLabelEventBox.ModifyBg (StateType.Normal, entry.Style.Base (entry.State));
+					resultInformLabel.ModifyFg (StateType.Normal, entry.Style.Foreground (StateType.Insensitive));
+					return;
+				}
+
+				//	bool error = result == null && !String.IsNullOrEmpty (SearchPattern);
+				string errorMsg;
+				bool valid = textEditor.SearchEngine.IsValidPattern (SearchAndReplaceOptions.SearchPattern, out errorMsg);
+				//	error |= !valid;
+
+				if (!valid) {
+					IdeApp.Workbench.StatusBar.ShowError (errorMsg);
 				} else {
-					resultInformLabel.Text = String.Format (GettextCatalog.GetPluralString ("{0} match", "{0} matches", textEditor.TextViewMargin.SearchResultMatchCount), textEditor.TextViewMargin.SearchResultMatchCount);
+					IdeApp.Workbench.StatusBar.ShowReady ();
 				}
-				resultInformLabelEventBox.ModifyBg (StateType.Normal, searchEntry.Entry.Style.Base (searchEntry.Entry.State));
-				resultInformLabel.ModifyFg (StateType.Normal, searchEntry.Entry.Style.Foreground (StateType.Insensitive));
-				textEditor.TextViewMargin.HideSelection = FocusChild == table;
-				textEditor.TextViewMargin.MainSearchResult = foundSegment;
+
+				if (!valid || textEditor.TextViewMargin.SearchResultMatchCount == 0) {
+					//resultInformLabel.Markup = "<span foreground=\"#000000\" background=\"" + MonoDevelop.Components.PangoCairoHelper.GetColorString (GotoLineNumberWidget.errorColor) + "\">" + GettextCatalog.GetString ("Not found") + "</span>";
+					resultInformLabel.Text = GettextCatalog.GetString ("Not found");
+					resultInformLabel.ModifyFg (StateType.Normal, Ide.Gui.Styles.Editor.SearchErrorForegroundColor.ToGdkColor ());
+				} else {
+					int resultIndex = 0;
+					int foundIndex = -1;
+					int caretOffset = textEditor.Caret.Offset;
+					ISegment foundSegment = TextSegment.Invalid;
+					foreach (var searchResult in textEditor.TextViewMargin.SearchResults) {
+						if (searchResult.Offset <= caretOffset && caretOffset <= searchResult.EndOffset) {
+							foundIndex = resultIndex + 1;
+							foundSegment = searchResult;
+							break;
+						}
+						resultIndex++;
+					}
+					if (foundIndex != -1) {
+						resultInformLabel.Text = String.Format (GettextCatalog.GetString ("{0} of {1}"), foundIndex, textEditor.TextViewMargin.SearchResultMatchCount);
+					} else {
+						resultInformLabel.Text = String.Format (GettextCatalog.GetPluralString ("{0} match", "{0} matches", textEditor.TextViewMargin.SearchResultMatchCount), textEditor.TextViewMargin.SearchResultMatchCount);
+					}
+					resultInformLabelEventBox.ModifyBg (StateType.Normal, entry.Style.Base (entry.State));
+					resultInformLabel.ModifyFg (StateType.Normal, entry.Style.Foreground (StateType.Insensitive));
+					textEditor.TextViewMargin.MainSearchResult = foundSegment;
+				}
+			} catch (Exception ex) {
+				LoggingService.LogError ("Exception while updating result inform label.", ex);
 			}
 		}
 		
@@ -827,7 +859,7 @@ But I leave it in in the case I've missed something. Mike
 			textEditor.SearchPattern = searchPattern;
 		}
 
-		public static SearchResult FindNext (TextEditor textEditor)
+		internal static SearchResult FindNext (MonoTextEditor textEditor)
 		{
 			textEditor.SearchPattern = SearchAndReplaceOptions.SearchPattern;
 			SearchResult result = textEditor.FindNext (true);
@@ -835,9 +867,7 @@ But I leave it in in the case I've missed something. Mike
 				return null;
 			textEditor.CenterToCaret ();
 
-			if (result == null) {
-				IdeApp.Workbench.StatusBar.ShowError (GettextCatalog.GetString ("Search pattern not found"));
-			} else if (result.SearchWrapped) {
+			if (result.SearchWrapped) {
 				IdeApp.Workbench.StatusBar.ShowMessage (
 					Stock.Find,
 					GettextCatalog.GetString ("Reached bottom, continued from top")
@@ -848,16 +878,14 @@ But I leave it in in the case I've missed something. Mike
 			return result;
 		}
 
-		public static SearchResult FindPrevious (TextEditor textEditor)
+		public static SearchResult FindPrevious (MonoTextEditor textEditor)
 		{
 			textEditor.SearchPattern = SearchAndReplaceOptions.SearchPattern;
 			SearchResult result = textEditor.FindPrevious (true);
 			if (result == null)
 				return null;
 			textEditor.CenterToCaret ();
-			if (result == null) {
-				IdeApp.Workbench.StatusBar.ShowError (GettextCatalog.GetString ("Search pattern not found"));
-			} else if (result.SearchWrapped) {
+			if (result.SearchWrapped) {
 				IdeApp.Workbench.StatusBar.ShowMessage (
 					Stock.Find,
 					GettextCatalog.GetString ("Reached top, continued from bottom")

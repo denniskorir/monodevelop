@@ -25,49 +25,34 @@
 // THE SOFTWARE.
 
 using System;
-using System.Collections.Generic;
-using ICSharpCode.PackageManagement;
+using System.Threading.Tasks;
 using MonoDevelop.Core;
-using MonoDevelop.Ide;
-using NuGet;
 
 namespace MonoDevelop.PackageManagement
 {
-	public class PackageCompatibilityRunner
+	internal class PackageCompatibilityRunner
 	{
 		IDotNetProject project;
-		IPackageManagementSolution solution;
-		IRegisteredPackageRepositories registeredRepositories;
 		IPackageManagementProgressMonitorFactory progressMonitorFactory;
 		ProgressMonitorStatusMessage progressMessage;
-		IProgressMonitor progressMonitor;
+		ProgressMonitor progressMonitor;
 		IPackageManagementEvents packageManagementEvents;
-		IProgressProvider progressProvider;
 
 		public PackageCompatibilityRunner (
 			IDotNetProject project,
-			IPackageManagementSolution solution,
-			IRegisteredPackageRepositories registeredRepositories,
 			IPackageManagementProgressMonitorFactory progressMonitorFactory,
-			IPackageManagementEvents packageManagementEvents,
-			IProgressProvider progressProvider)
+			IPackageManagementEvents packageManagementEvents)
 		{
 			this.project = project;
-			this.solution = solution;
-			this.registeredRepositories = registeredRepositories;
 			this.progressMonitorFactory = progressMonitorFactory;
 			this.packageManagementEvents = packageManagementEvents;
-			this.progressProvider = progressProvider;
 		}
 
 		public PackageCompatibilityRunner (IDotNetProject project)
 			: this (
 				project,
-				PackageManagementServices.Solution,
-				PackageManagementServices.RegisteredPackageRepositories,
 				PackageManagementServices.ProgressMonitorFactory,
-				PackageManagementServices.PackageManagementEvents,
-				PackageManagementServices.ProgressProvider)
+				PackageManagementServices.PackageManagementEvents)
 		{
 		}
 
@@ -76,9 +61,9 @@ namespace MonoDevelop.PackageManagement
 			BackgroundDispatch (() => RunInternal ());
 		}
 
-		protected virtual void BackgroundDispatch (MessageHandler handler)
+		protected virtual void BackgroundDispatch (Action action)
 		{
-			DispatchService.BackgroundDispatch (() => RunInternal ());
+			PackageManagementBackgroundDispatcher.Dispatch (action);
 		}
 
 		void RunInternal ()
@@ -88,7 +73,7 @@ namespace MonoDevelop.PackageManagement
 			using (progressMonitor = CreateProgressMonitor ()) {
 				using (PackageManagementEventsMonitor eventMonitor = CreateEventMonitor (progressMonitor)) {
 					try {
-						CheckCompatibility ();
+						CheckCompatibility ().Wait ();
 					} catch (Exception ex) {
 						eventMonitor.ReportError (progressMessage, ex);
 					}
@@ -101,28 +86,27 @@ namespace MonoDevelop.PackageManagement
 			return ProgressMonitorStatusMessageFactory.CreateCheckingPackageCompatibilityMessage ();
 		}
 
-		IProgressMonitor CreateProgressMonitor ()
+		ProgressMonitor CreateProgressMonitor ()
 		{
 			return progressMonitorFactory.CreateProgressMonitor (progressMessage.Status);
 		}
 
-		PackageManagementEventsMonitor CreateEventMonitor (IProgressMonitor monitor)
+		PackageManagementEventsMonitor CreateEventMonitor (ProgressMonitor monitor)
 		{
-			return CreateEventMonitor (monitor, packageManagementEvents, progressProvider);
+			return CreateEventMonitor (monitor, packageManagementEvents);
 		}
 
 		protected virtual PackageManagementEventsMonitor CreateEventMonitor (
-			IProgressMonitor monitor,
-			IPackageManagementEvents packageManagementEvents,
-			IProgressProvider progressProvider)
+			ProgressMonitor monitor,
+			IPackageManagementEvents packageManagementEvents)
 		{
-			return new PackageManagementEventsMonitor (monitor, packageManagementEvents, progressProvider);
+			return new PackageManagementEventsMonitor (monitor, packageManagementEvents);
 		}
 
-		void CheckCompatibility ()
+		async Task CheckCompatibility ()
 		{
-			PackageCompatibilityChecker checker = CreatePackageCompatibilityChecker (solution, registeredRepositories);
-			checker.CheckProjectPackages (project);
+			PackageCompatibilityChecker checker = CreatePackageCompatibilityChecker ();
+			await checker.CheckProjectPackages (project);
 
 			if (checker.AnyPackagesRequireReinstallation ()) {
 				MarkPackagesForReinstallation (checker);
@@ -135,15 +119,14 @@ namespace MonoDevelop.PackageManagement
 			}
 		}
 
-		protected virtual PackageCompatibilityChecker CreatePackageCompatibilityChecker (IPackageManagementSolution solution, IRegisteredPackageRepositories registeredRepositories)
+		protected virtual PackageCompatibilityChecker CreatePackageCompatibilityChecker ()
 		{
-			return new PackageCompatibilityChecker (solution, registeredRepositories);
+			return new PackageCompatibilityChecker ();
 		}
 
 		void MarkPackagesForReinstallation (PackageCompatibilityChecker checker)
 		{
 			checker.MarkPackagesForReinstallation ();
-			packageManagementEvents.OnFileChanged (checker.PackageReferenceFileName);
 		}
 
 		void ReportPackageReinstallationWarning (PackageCompatibilityChecker checker)
@@ -157,7 +140,7 @@ namespace MonoDevelop.PackageManagement
 			ShowPackageConsole (progressMonitor);
 		}
 
-		protected virtual void ShowPackageConsole (IProgressMonitor progressMonitor)
+		protected virtual void ShowPackageConsole (ProgressMonitor progressMonitor)
 		{
 			progressMonitor.ShowPackageConsole ();
 		}

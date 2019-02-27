@@ -53,25 +53,23 @@ namespace MonoDevelop.AssemblyBrowser
 		{
 			if (viewContent == null || viewContent.IsDisposed) {
 				viewContent = new AssemblyBrowserViewContent ();
-				viewContent.Control.Destroyed += HandleDestroyed;
+				viewContent.Disposed += HandleDestroyed;
 			}
 			return viewContent;
 		}
 
 		void HandleDestroyed (object sender, EventArgs e)
 		{
-			((Gtk.Widget)sender).Destroyed -= HandleDestroyed;
+			((AssemblyBrowserViewContent)sender).Disposed -= HandleDestroyed;
 			this.viewContent = null;
 		}
 		
 		public bool CanHandle (FilePath fileName, string mimeType, Project ownerProject)
 		{
-			return mimeType == "application/x-ms-dos-executable"
-				|| mimeType == "application/x-executable"
-				|| mimeType == "application/x-msdownload";
+			return fileName.HasExtension (".dll") || fileName.HasExtension (".exe");
 		}
 		
-		public IViewContent CreateContent (FilePath fileName, string mimeType, Project ownerProject)
+		public ViewContent CreateContent (FilePath fileName, string mimeType, Project ownerProject)
 		{
 			return GetViewContent ();
 		}

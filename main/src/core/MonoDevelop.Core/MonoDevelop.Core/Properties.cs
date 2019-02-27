@@ -28,57 +28,45 @@
 
 using System;
 using System.Collections.Generic;
+using System.Collections.Immutable;
 using System.ComponentModel;
-using System.Diagnostics;
 using System.IO;
-using System.Reflection;
+using System.Linq;
 using System.Text;
 using System.Xml;
 using System.Xml.Serialization;
-
-using MonoDevelop.Core;
 
 namespace MonoDevelop.Core
 {
 	public class Properties : ICustomXmlSerializer
 	{
-		Dictionary<string, object> properties    = new Dictionary<string, object> ();
-		Dictionary<string, object> defaultValues = new Dictionary<string, object> ();
-		Dictionary<Type, TypeConverter> cachedConverters = new Dictionary<Type, TypeConverter> ();
+		ImmutableDictionary<string, object> properties    = ImmutableDictionary<string, object>.Empty;
+		ImmutableDictionary<string, object> defaultValues = ImmutableDictionary<string, object>.Empty;
+		ImmutableDictionary<Type, TypeConverter> cachedConverters = ImmutableDictionary<Type, TypeConverter>.Empty;
 		Dictionary<string,EventHandler<PropertyChangedEventArgs>> propertyListeners;
 		
-		public ICollection<string> Keys {
+		public IEnumerable<string> Keys {
 			get {
 				return properties.Keys;
 			}
 		}
 
-		public Properties ()
+		object Convert (object o, Type converterType)
 		{
-		}
-		
-		T Convert<T> (object o)
-		{
-			if (o is T) 
-				return (T)o;
-			
-			if ((object)o == null)
-				return (T) o;
-			
-			TypeConverter converter = GetConverter (typeof(T));
-			
+			TypeConverter converter = GetConverter (converterType);
+
 			if (o is string) {
 				try {
-					return (T)converter.ConvertFromInvariantString (o.ToString ());
+					return converter.ConvertFromInvariantString (o.ToString ());
 				} catch (Exception) {
-					return default(T);
+					return null;
 				}
 			}
-			
+
 			try {
-				return (T)converter.ConvertFrom (o);
+				return converter.ConvertFrom (o);
 			} catch (Exception) {
-				return default(T);
+				return null;
 			}
 		}
 		
@@ -95,70 +83,113 @@ namespace MonoDevelop.Core
 			TypeConverter converter;
 			if (!cachedConverters.TryGetValue (type, out converter)) {
 				converter = TypeDescriptor.GetConverter (type);
-				cachedConverters [type] = converter;
+				cachedConverters = cachedConverters.SetItem (type, converter);
 			}
 			return converter;
 		}
-		
+
+		public object Get (string property, object defaultValue, Type type)
+		{
+			if (!defaultValues.ContainsKey (property) && IsSupportedDefaultValueType (type))
+				defaultValues = defaultValues.SetItem (property, defaultValue);
+
+			if (GetPropertyValue (property, out object value, type))
+				return value;
+			properties = properties.SetItem (property, defaultValue);
+			return defaultValue;
+		}
+
+		/// <summary>
+		/// Only value types, strings and Properties are supported when checking for default values.
+		/// Other reference types are not supported because on saving they will match the default value,
+		/// since it is the same instance, and not be written to the properties file.
+		/// </summary>
+		static bool IsSupportedDefaultValueType (Type type)
+		{
+			return type.IsValueType || type == typeof (string) || type == typeof (Properties);
+		}
+
 		public T Get<T> (string property, T defaultValue)
 		{
-			defaultValues[property] = defaultValue;
-			object val;
-			if (GetPropertyValue<T> (property, out val))
-				return Convert<T> (val);
-			properties[property] = defaultValue;
-			return defaultValue;
+			var result = Get (property, defaultValue, typeof (T));
+			return result != null ? (T)result : default (T);
 		}
 		
 		public T Get<T> (string property)
 		{
-			object val;
-			if (GetPropertyValue<T> (property, out val))
-				return Convert<T> (val);
-			if (defaultValues.TryGetValue (property, out val))
-				return Convert<T> (val);
-			return default(T);
+			if (GetPropertyValue (property, out object value, typeof(T)))
+				return (T)value;
+			if (defaultValues.TryGetValue (property, out object defaultValue))
+				return (T) defaultValue;
+			return default (T);
 		}
-		
-		bool GetPropertyValue<T> (string property, out object val)
+
+		object Get (string property, Type type)
 		{
-			if (properties.TryGetValue (property, out val)) {
-				if (val is LazyXmlDeserializer) {
-					// Deserialize the data and store it in the dictionary, so
-					// following calls return the same object
-					val = ((LazyXmlDeserializer)val).Deserialize<T> ();
-					properties[property] = val;
-				}
-				return true;
-			} else {
+			return GetPropertyValue (property, out object value, type) ? value : null;
+		}
+
+		bool GetPropertyValue (string property, out object val, Type type)
+		{
+			if (!properties.TryGetValue (property, out object o)) {
 				val = null;
 				return false;
 			}
+
+			if (o == null) {
+				val = null;
+				return true;
+			}
+
+			if (type.IsInstanceOfType (o)) {
+				val = o;
+				return true;
+			}
+
+			if (o is LazyXmlDeserializer ser) {
+				// Deserialize the data and store it in the dictionary, so
+				// following calls return the same object
+				val = ser.Deserialize (type);
+				properties = properties.SetItem (property, val);
+				return true;
+			}
+
+			val = Convert (o, type);
+			properties = properties.SetItem (property, val);
+			return true;
 		}
 		
 		public bool HasValue (string key)
 		{
 			return properties.ContainsKey (key);
 		}
-		
+
+		//used for deserialization
+		void SetFast (string key, object val)
+		{
+			if (val != null) {
+				properties = properties.SetItem (key, val);
+			}
+		}
+
 		public void Set (string key, object val)
 		{
-			object old = Get<object> (key);
+			object old = Get (key, val?.GetType () ?? typeof(object));
 			if (val == null) {
 				//avoid emitting the event if not necessary
 				if (old == null)
 					return;
 				if (properties.ContainsKey (key)) 
-					properties.Remove (key);
+					properties = properties.Remove (key);
 			} else {
 				//avoid emitting the event if not necessary
 				if (val.Equals (old))
 					return;
-				properties[key] = val;
+				properties = properties.SetItem (key, val);
 				if (!val.GetType ().IsClass ||(val is string)) {
 					if (defaultValues.ContainsKey (key)) {
 						if (defaultValues[key] == val)
-							properties.Remove (key);
+							properties = properties.Remove (key);
 					}
 				}
 			}
@@ -191,27 +222,38 @@ namespace MonoDevelop.Core
 		{
 			Write (writer, true);
 		}
-		
+
+		class StringKeyComparer : IComparer<KeyValuePair<string,object>>
+		{
+			public int Compare (KeyValuePair<string, object> a, KeyValuePair<string, object> b)
+			{
+				return string.CompareOrdinal (a.Key, b.Key);
+			}
+		}
+
 		public void Write (XmlWriter writer, bool createPropertyParent)
 		{
 			if (createPropertyParent)
 				writer.WriteStartElement (Node);
 
-			foreach (KeyValuePair<string, object> property in this.properties) {
-				//don't know how the value could be null but at least we can skip it to avoid breaking completely
-				if (property.Value == null)
-					continue;
+			var toSerialize = new List<KeyValuePair<string, object>> ();
+			toSerialize.AddRange (GetNonDefaultValueProperties ());
+			toSerialize.Sort (new StringKeyComparer ());
+
+			foreach (var property in toSerialize) {
 				writer.WriteStartElement (PropertyNode);
 				writer.WriteAttributeString (KeyAttribute, property.Key);
-				
-				if (property.Value is LazyXmlDeserializer) {
-					writer.WriteRaw (((LazyXmlDeserializer)property.Value).Xml);
-				} else if (property.Value is ICustomXmlSerializer) {
-					((ICustomXmlSerializer)property.Value).WriteTo (writer);
+
+				if (property.Value is LazyXmlDeserializer deserializer) {
+					writer.WriteRaw (deserializer.Xml);
+				} else if (property.Value is ICustomXmlSerializer customXmlSerializer) {
+					customXmlSerializer.WriteTo (writer);
 				} else {
 					if (!(property.Value is string) && property.Value.GetType ().IsClass) {
-						XmlSerializer serializer = new XmlSerializer (property.Value.GetType ());
-						serializer.Serialize (writer, property.Value);
+						if (!(property.Value is ICollection<string> collection && collection.Count == 0)) {
+							XmlSerializer serializer = new XmlSerializer (property.Value.GetType ());
+							serializer.Serialize (writer, property.Value);
+						}
 					} else {
 						writer.WriteAttributeString (ValueAttribute, ConvertToString (property.Value));
 					}
@@ -226,16 +268,25 @@ namespace MonoDevelop.Core
 		public void Save (string fileName)
 		{
 			string backupFileName = fileName + ".previous";
-			string tempFileName = Path.GetDirectoryName (fileName) + 
-				Path.DirectorySeparatorChar + ".#" + Path.GetFileName (fileName);
-			
-			//make a copy of the current file
-			try {
-				if (File.Exists (fileName)) {
-					File.Copy (fileName, backupFileName, true);
+			string dirName = Path.GetDirectoryName (fileName);
+			string tempFileName = dirName + Path.DirectorySeparatorChar + ".#" + Path.GetFileName (fileName);
+
+			if (Directory.Exists (dirName)) {
+				//make a copy of the current file
+				try {
+					if (File.Exists (fileName)) {
+						File.Copy (fileName, backupFileName, true);
+					}
+				} catch (Exception ex) {
+					LoggingService.LogError ("Error copying properties file '{0}' to backup\n{1}", fileName, ex);
 				}
-			} catch (Exception ex) {
-				LoggingService.LogError ("Error copying properties file '{0}' to backup\n{1}", fileName, ex);
+			} else {
+				try {
+					Directory.CreateDirectory (dirName);
+				} catch (Exception ex) {
+					LoggingService.LogError ("Error creating directory '{0}'\n{1}", dirName, ex);
+					return;
+				}
 			}
 			
 			//write out the new state to a temp file
@@ -258,6 +309,29 @@ namespace MonoDevelop.Core
 				LoggingService.LogError ("Error writing properties file '{0}'\n{1}", tempFileName, ex);
 			}
 		}
+
+		IEnumerable<KeyValuePair<string, object>> GetNonDefaultValueProperties ()
+		{
+			foreach (KeyValuePair<string, object> property in this.properties) {
+				//don't know how the value could be null but at least we can skip it to avoid breaking completely
+				if (property.Value == null)
+					continue;
+				if (property.Value is Properties p) {
+					// Do not serialize Properties if it only has default values.
+					if (!p.GetNonDefaultValueProperties ().Any ()) {
+						continue;
+					}
+				} else {
+					//don't serialize default values
+					if (defaultValues.TryGetValue (property.Key, out object defaultValue)) {
+						if (property.Value.Equals (defaultValue)) {
+							continue;
+						}
+					}
+				}
+				yield return property;
+			}
+		}
 		
 		class LazyXmlDeserializer
 		{
@@ -274,38 +348,38 @@ namespace MonoDevelop.Core
 				this.xml  = xml;
 			}
 			
-			public T Deserialize<T> ()
+			public object Deserialize (Type type)
 			{
 				try {
-					if (typeof(ICustomXmlSerializer).IsAssignableFrom (typeof(T))) {
+					if (typeof(ICustomXmlSerializer).IsAssignableFrom (type)) {
 						using (XmlReader reader = new XmlTextReader (new MemoryStream (System.Text.Encoding.UTF8.GetBytes ("<" + Properties.SerializedNode + ">" + xml + "</" + Properties.SerializedNode + ">" )))) {
-							return (T)((ICustomXmlSerializer)typeof(T).Assembly.CreateInstance (typeof(T).FullName)).ReadFrom (reader);
+							return ((ICustomXmlSerializer)type.Assembly.CreateInstance (type.FullName)).ReadFrom (reader);
 						}
 					}
 					
-					XmlSerializer serializer = new XmlSerializer (typeof(T));
+					XmlSerializer serializer = new XmlSerializer (type);
 					using (StreamReader sr = new StreamReader (new MemoryStream (System.Text.Encoding.UTF8.GetBytes (xml)))) {
-						return (T)serializer.Deserialize (sr);
+						return serializer.Deserialize (sr);
 					}
-					
+
 				} catch (Exception e) {
-					LoggingService.LogWarning ("Caught exception while deserializing:" + typeof(T), e);
-					return default(T);
+					LoggingService.LogWarning ("Caught exception while deserializing:" + type, e);
+					return null;
 				}
 			}
 		}
 		
 		public static Properties Read (XmlReader reader)
 		{
-			Properties result = new Properties ();
+			var result = new Properties ();
 			XmlReadHelper.ReadList (reader, new string [] { Node, SerializedNode, PropertiesRootNode }, delegate() {
 				switch (reader.LocalName) {
 				case PropertyNode:
 					string key = reader.GetAttribute (KeyAttribute);
 					if (!reader.IsEmptyElement) {
-						result.Set (key, new LazyXmlDeserializer (reader.ReadInnerXml ()));
+						result.SetFast (key, new LazyXmlDeserializer (reader.ReadInnerXml ()));
 					} else {
-						result.Set (key, reader.GetAttribute (ValueAttribute));
+						result.SetFast (key, reader.GetAttribute (ValueAttribute));
 					}
 					return true;
 				}			
@@ -318,8 +392,7 @@ namespace MonoDevelop.Core
 		{
 			if (!File.Exists (fileName))
 				return null;
-			XmlReader reader = XmlTextReader.Create (fileName);
-			try {	
+			using (var reader = XmlReader.Create (fileName)) {
 				while (reader.Read ()) {
 					if (reader.IsStartElement ()) {
 						switch (reader.LocalName) {
@@ -330,9 +403,6 @@ namespace MonoDevelop.Core
 						}
 					}
 				}
-				
-			} finally {
-				reader.Close ();
 			}
 			return null;
 		}
@@ -340,7 +410,7 @@ namespace MonoDevelop.Core
 
 		public override string ToString ()
 		{
-			StringBuilder result = new StringBuilder ();
+			StringBuilder result = StringBuilderCache.Allocate ();
 			result.Append ("[Properties:");
 			foreach (KeyValuePair<string, object> property in this.properties) {
 				result.Append (property.Key);
@@ -349,14 +419,12 @@ namespace MonoDevelop.Core
 				result.Append (",");
 			}
 			result.Append ("]");
-			return result.ToString ();
+			return StringBuilderCache.ReturnAndFree (result);
 		}
 			
 		public Properties Clone ()
 		{
-			Properties result = new Properties ();
-			result.properties = new Dictionary<string, object> (properties);
-			return result;
+			return new Properties { properties = this.properties };
 		}
 		
 		public void AddPropertyHandler (string propertyName, EventHandler<PropertyChangedEventArgs> handler)
@@ -385,14 +453,12 @@ namespace MonoDevelop.Core
 		
 		protected virtual void OnPropertyChanged (PropertyChangedEventArgs args)
 		{
-			if (PropertyChanged != null)
-				PropertyChanged (this, args);
+			PropertyChanged?.Invoke (this, args);
 			
 			if (propertyListeners != null) {
 				EventHandler<PropertyChangedEventArgs> handlers = null;
 				propertyListeners.TryGetValue (args.Key, out handlers);
-				if (handlers != null)
-					handlers (this, args);
+				handlers?.Invoke (this, args);
 			}
 		}
 		

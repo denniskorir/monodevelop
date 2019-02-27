@@ -244,7 +244,17 @@ namespace MonoDevelop.Core.Instrumentation
 			return CreateCounter (name, category, logMessages, id, false);
 		}
 
+		public static Counter<T> CreateCounter<T> (string name, string category = null, bool logMessages = false, string id = null) where T : CounterMetadata, new()
+		{
+			return (Counter<T>) CreateCounter<T> (name, category, logMessages, id, false);
+		}
+
 		static Counter CreateCounter (string name, string category, bool logMessages, string id, bool isTimer)
+		{
+			return CreateCounter<CounterMetadata> (name, category, logMessages, id, isTimer);
+		}
+
+		static Counter CreateCounter<T> (string name, string category, bool logMessages, string id, bool isTimer) where T:CounterMetadata, new()
 		{
 			if (name == null)
 				throw new ArgumentNullException ("name", "Counters must have a Name");
@@ -261,7 +271,7 @@ namespace MonoDevelop.Core.Instrumentation
 					categories.Add (cat);
 				}
 				
-				Counter c = isTimer ? new TimerCounter (name, cat) : new Counter (name, cat);
+				var c = isTimer ? new TimerCounter<T> (name, cat) : (Counter) new Counter<T> (name, cat);
 				c.Id = id;
 				c.LogMessages = logMessages;
 				cat.AddCounter (c);
@@ -320,6 +330,15 @@ namespace MonoDevelop.Core.Instrumentation
 		public static TimerCounter CreateTimerCounter (string name, string category = null, double minSeconds = 0, bool logMessages = false, string id = null)
 		{
 			TimerCounter c = (TimerCounter) CreateCounter (name, category, logMessages, id, true);
+			c.DisplayMode = CounterDisplayMode.Line;
+			c.LogMessages = logMessages;
+			c.MinSeconds = minSeconds;
+			return c;
+		}
+		
+		public static TimerCounter<T> CreateTimerCounter<T> (string name, string category = null, double minSeconds = 0, bool logMessages = false, string id = null) where T:CounterMetadata, new()
+		{
+			var c = (TimerCounter<T>) CreateCounter<T> (name, category, logMessages, id, true);
 			c.DisplayMode = CounterDisplayMode.Line;
 			c.LogMessages = logMessages;
 			c.MinSeconds = minSeconds;
@@ -394,72 +413,50 @@ namespace MonoDevelop.Core.Instrumentation
 			}
 		}
 		
-		public static IProgressMonitor GetInstrumentedMonitor (IProgressMonitor monitor, TimerCounter counter)
+		public static ProgressMonitor GetInstrumentedMonitor (ProgressMonitor monitor, TimerCounter counter)
 		{
 			if (enabled) {
 				AggregatedProgressMonitor mon = new AggregatedProgressMonitor (monitor);
-				mon.AddSlaveMonitor (new IntrumentationMonitor (counter), MonitorAction.Tasks | MonitorAction.WriteLog);
+				mon.AddFollowerMonitor (new IntrumentationMonitor (counter), MonitorAction.Tasks | MonitorAction.WriteLog);
 				return mon;
 			} else
 				return monitor;
 		}
 	}
 	
-	class IntrumentationMonitor: NullProgressMonitor
+	class IntrumentationMonitor: ProgressMonitor
 	{
 		TimerCounter counter;
 		Stack<ITimeTracker> timers = new Stack<ITimeTracker> ();
-		LogTextWriter logger = new LogTextWriter ();
-		
+
 		public IntrumentationMonitor (TimerCounter counter)
 		{
 			this.counter = counter;
-			logger.TextWritten += HandleLoggerTextWritten;
 		}
 
-		void HandleLoggerTextWritten (string writtenText)
+		protected override void OnWriteLog (string message)
 		{
 			if (timers.Count > 0)
-				timers.Peek ().Trace (writtenText);
-		}
-		
-		public override void BeginTask (string name, int totalWork)
-		{
-			if (!string.IsNullOrEmpty (name)) {
-				ITimeTracker c = counter.BeginTiming (name);
-				c.Trace (name);
-				timers.Push (c);
-			} else {
-				timers.Push (null);
-			}
-			base.BeginTask (name, totalWork);
-		}
-		
-		public override void BeginStepTask (string name, int totalWork, int stepSize)
-		{
-			if (!string.IsNullOrEmpty (name)) {
-				ITimeTracker c = counter.BeginTiming (name);
-				c.Trace (name);
-				timers.Push (c);
-			} else {
-				timers.Push (null);
-			}
-			base.BeginStepTask (name, totalWork, stepSize);
+				timers.Peek ().Trace (message);
 		}
 
-		public override void EndTask ()
+		protected override void OnBeginTask (string name, int totalWork, int stepWork)
+		{
+			if (!string.IsNullOrEmpty (name)) {
+				ITimeTracker c = counter.BeginTiming (name);
+				c.Trace (name);
+				timers.Push (c);
+			} else {
+				timers.Push (null);
+			}
+		}
+
+		protected override void OnEndTask (string name, int totalWork, int stepWork)
 		{
 			if (timers.Count > 0) {
 				ITimeTracker c = timers.Pop ();
 				if (c != null)
 					c.End ();
-			}
-			base.EndTask ();
-		}
-		
-		public override System.IO.TextWriter Log {
-			get {
-				return logger;
 			}
 		}
 	}

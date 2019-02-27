@@ -133,7 +133,7 @@ namespace MonoDevelop.Components.Mac
 				state |= Gdk.ModifierType.Mod1Mask;
 
 			var w = GetGtkWindow (ev.Window);
-			return GtkUtil.CreateKeyEventFromKeyCode (ev.KeyCode, state, Gdk.EventType.KeyPress, w != null ? w.GdkWindow : null);
+			return GtkUtil.CreateKeyEventFromKeyCode (ev.KeyCode, state, Gdk.EventType.KeyPress, w != null ? w.GdkWindow : null, (uint)(ev.Timestamp * 1000));
 		}
 
 
@@ -145,6 +145,24 @@ namespace MonoDevelop.Components.Mac
 
 		[DllImport (LibGtk, CallingConvention = CallingConvention.Cdecl)]
 		static extern bool gdk_window_supports_nsview_embedding ();
+
+		/// <summary>
+		/// Render a GTK widget to an AppKit NSImage
+		/// </summary>
+		public static NSImage RenderGtkWidget (Gtk.Widget widget)
+		{
+			var nativeView = GetNSView (widget);
+
+			widget.TranslateCoordinates (widget.Toplevel, widget.Allocation.X, widget.Allocation.Y, out int transX, out int transY);
+			var rect = new CoreGraphics.CGRect (transX, transY, widget.Allocation.Width, widget.Allocation.Height);
+
+			var imageRep = nativeView.BitmapImageRepForCachingDisplayInRect (rect);
+			nativeView.CacheDisplay (rect, imageRep);
+
+			var image  = new NSImage (rect.Size);
+			image.AddRepresentation (imageRep);
+			return image;
+		}
 	}
 }
 

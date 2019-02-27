@@ -27,52 +27,19 @@
 //
 
 using System;
-using MonoDevelop.Core;
 using Gtk;
-using MonoDevelop.Ide.CodeCompletion;
 using MonoDevelop.Ide.Gui;
-using System.Collections.Generic;
 using MonoDevelop.Components.Docking;
-using MonoDevelop.Ide.Gui.Dialogs;
 using MonoDevelop.Components;
-using MonoDevelop.Components.MainToolbar;
-
-using StockIcons = MonoDevelop.Ide.Gui.Stock;
+using MonoDevelop.Components.AtkCocoaHelper;
 
 namespace MonoDevelop.Ide
 {
 	class MonoDevelopStatusBar : Gtk.HBox
 	{
-		Label modeLabel;
-		Label cursorLabel;
-		MiniButton feedbackButton;
 		Gtk.EventBox resizeGrip = new Gtk.EventBox ();
 
 		const int ResizeGripWidth = 14;
-
-		HBox statusBox;
-
-		readonly Label statusLabel = new Label ();
-		public readonly static HBox messageBox = new HBox ();
-
-		/// <summary>
-		/// For small size changes the caret label is grow only. That ensures that normal caret movement doesn't
-		/// update the whole status bar all the time. But for big jumps in size a resize is done.
-		/// </summary>
-		class CaretStatusLabel : Gtk.Label
-		{
-			public CaretStatusLabel (string label): base (label)
-			{
-			}
-
-			protected override void OnSizeRequested (ref Requisition requisition)
-			{
-				base.OnSizeRequested (ref requisition);
-				const int upperBound = 20;
-				if (Allocation.Width > 0 && Math.Abs (Allocation.Width - requisition.Width) < upperBound)
-					requisition.Width = Math.Max (Allocation.Width, requisition.Width);
-			}
-		}
 
 		internal MonoDevelopStatusBar ()
 		{
@@ -80,50 +47,30 @@ namespace MonoDevelop.Ide
 			Spacing = 0;
 			HasResizeGrip = true;
 
+			Accessible.Role = Atk.Role.Filler;
+
 			HeaderBox hb = new HeaderBox (1, 0, 0, 0);
-			hb.BorderColor = Styles.DockSeparatorColor;
+			hb.Accessible.Role = Atk.Role.Filler;
+			hb.StyleSet += (o, args) => {
+				hb.BorderColor = Styles.DockSeparatorColor.ToGdkColor ();
+				hb.BackgroundColor = Styles.DockBarBackground.ToGdkColor ();
+			};
 			var mainBox = new HBox ();
-			mainBox.PackStart (new Label (""), true, true, 0);
+			mainBox.Accessible.Role = Atk.Role.Filler;
+			var alignment = new Alignment (0f, 0f, 0f, 0f);
+			alignment.Accessible.Role = Atk.Role.Filler;
+			mainBox.PackStart (alignment, true, true, 0);
 			hb.Add (mainBox);
 			hb.ShowAll ();
 			PackStart (hb, true, true, 0);
 			
-			// Feedback button
-			
-			if (FeedbackService.Enabled) {
-				CustomFrame fr = new CustomFrame (0, 0, 1, 0);
-				var px = Xwt.Drawing.Image.FromResource ("feedback-16.png");
-				HBox b = new HBox (false, 3);
-				b.PackStart (new Xwt.ImageView (px).ToGtkWidget ());
-				b.PackStart (new Gtk.Label ("Feedback"));
-				Gtk.Alignment al = new Gtk.Alignment (0f, 0f, 1f, 1f);
-				al.RightPadding = 5;
-				al.LeftPadding = 3;
-				al.Add (b);
-				feedbackButton = new MiniButton (al);
-				//feedbackButton.BackroundColor = new Gdk.Color (200, 200, 255);
-				fr.Add (feedbackButton);
-				mainBox.PackStart (fr, false, false, 0);
-				feedbackButton.Clicked += HandleFeedbackButtonClicked;
-				feedbackButton.ButtonPressEvent += HandleFeedbackButtonButtonPressEvent;
-				;
-				feedbackButton.ClickOnRelease = true;
-				FeedbackService.FeedbackPositionGetter = delegate {
-					int x, y;
-					if (feedbackButton.GdkWindow != null) {
-						feedbackButton.GdkWindow.GetOrigin (out x, out y);
-						x += feedbackButton.Allocation.Width;
-						y -= 6;
-					} else {
-						x = y = -1;
-					}
-					return new Gdk.Point (x, y);
-				};
-			}
-			
 			// Dock area
 			
 			CustomFrame dfr = new CustomFrame (0, 0, 1, 0);
+			dfr.Accessible.Role = Atk.Role.Filler;
+			dfr.StyleSet += (o, args) => {
+				dfr.BorderColor = Styles.DockSeparatorColor.ToGdkColor ();
+			};
 			dfr.ShowAll ();
 			DefaultWorkbench wb = (DefaultWorkbench)IdeApp.Workbench.RootWindow;
 			var dockBar = wb.DockFrame.ExtractDockBar (PositionType.Bottom);
@@ -135,6 +82,7 @@ namespace MonoDevelop.Ide
 
 			// Resize grip
 
+			resizeGrip.Accessible.SetRole (AtkCocoa.Roles.AXGrowArea);
 			resizeGrip.WidthRequest = ResizeGripWidth;
 			resizeGrip.HeightRequest = 0;
 			resizeGrip.VisibleWindow = false;
@@ -146,35 +94,6 @@ namespace MonoDevelop.Ide
 				}
 			};
 
-			// Status panels
-
-			statusBox = new HBox (false, 0);
-			statusBox.BorderWidth = 0;
-			
-			statusLabel.SetAlignment (0, 0.5f);
-			statusLabel.Wrap = false;
-			int w, h;
-			Gtk.Icon.SizeLookup (IconSize.Menu, out w, out h);
-			statusLabel.HeightRequest = h;
-			statusLabel.SetPadding (0, 0);
-			statusLabel.ShowAll ();
-			
-			messageBox.PackStart (statusLabel, true, true, 0);
-
-			var eventCaretBox = new EventBox ();
-			var caretStatusBox = new HBox ();
-			modeLabel = new Label (" ");
-			caretStatusBox.PackEnd (modeLabel, false, false, 8);
-			
-			cursorLabel = new CaretStatusLabel (" ");
-			caretStatusBox.PackEnd (cursorLabel, false, false, 0);
-			
-			caretStatusBox.GetSizeRequest (out w, out h);
-			caretStatusBox.WidthRequest = w;
-			caretStatusBox.HeightRequest = h;
-			eventCaretBox.Add (caretStatusBox);
-			statusBox.PackEnd (eventCaretBox, false, false, 0);
-			
 			this.ShowAll ();
 
 //			// todo: Move this to the CompletionWindowManager when it's possible.
@@ -188,58 +107,15 @@ namespace MonoDevelop.Ide
 //				}
 //			};
 		}
-		
-		[System.Runtime.InteropServices.DllImport ("libc")]
-		static extern void abort ();
-		
-		static readonly bool FeedbackButtonThrowsException = Environment.GetEnvironmentVariable ("MONODEVELOP_TEST_CRASH_REPORTING") != null;
-		void HandleFeedbackButtonButtonPressEvent (object o, ButtonPressEventArgs args)
-		{
-			if (FeedbackService.IsFeedbackWindowVisible)
-				ignoreFeedbackButtonClick = true;
 
-			if (FeedbackButtonThrowsException) {
-				// Control == hard crash
-				if ((args.Event.State & Gdk.ModifierType.ControlMask) != 0) {
-					abort ();
-				}
-				//Alt = terminating exception
-				var ex = new Exception ("Feedback Button is throwing an exception", new Exception (Environment.StackTrace));
-				if ((args.Event.State & Gdk.ModifierType.Mod1Mask) != 0) {
-					throw ex;
-				}
-				// None: Nonterminating exception
-				GLib.ExceptionManager.RaiseUnhandledException (new Exception ("Feedback Button is throwing an exception", new Exception (Environment.StackTrace)), false);
-				ignoreFeedbackButtonClick = true;
-			}
-		}
-
-		bool ignoreFeedbackButtonClick;
-		void HandleFeedbackButtonClicked (object sender, EventArgs e)
-		{
-			if (!ignoreFeedbackButtonClick)
-				FeedbackService.ShowFeedbackWindow ();
-			ignoreFeedbackButtonClick = false;
-		}
-
+		[Obsolete]
 		public void ShowCaretState (int line, int column, int selectedChars, bool isInInsertMode)
 		{
-			DispatchService.AssertGuiThread ();
-			string cursorText = selectedChars > 0 ? String.Format ("{0,3} : {1,-3} - {2}", line, column, selectedChars) : String.Format ("{0,3} : {1,-3}", line, column);
-			if (cursorLabel.Text != cursorText)
-				cursorLabel.Text = cursorText;
-			
-			string modeStatusText = isInInsertMode ? GettextCatalog.GetString ("INS") : GettextCatalog.GetString ("OVR");
-			if (modeLabel.Text != modeStatusText)
-				modeLabel.Text = modeStatusText;
 		}
-		
+
+		[Obsolete]
 		public void ClearCaretState ()
 		{
-			if (cursorLabel.Text != "")
-				cursorLabel.Text = "";
-			if (modeLabel.Text != "")
-				modeLabel.Text = "";
 		}
 
 		bool hasResizeGrip;

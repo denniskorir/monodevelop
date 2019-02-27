@@ -34,30 +34,31 @@ using MonoDevelop.Core.ProgressMonitoring;
 using System.Collections.Generic;
 using Mono.Cecil.Mdb;
 using Mono.Cecil.Cil;
+using System.Threading.Tasks;
+using MonoDevelop.Core.Serialization;
+using MonoDevelop.Projects.MSBuild;
 
 namespace MonoDevelop.Projects
 {
+	[ExportProjectType ("{8BC9CEB9-8B4A-11D0-8D11-00A0C91BC942}")]
 	public class CompiledAssemblyProject: Project, IAssemblyProject
 	{
 		TargetFramework targetFramework;
 		
 		public CompiledAssemblyProject ()
 		{
+			Initialize (this);
 			AddNewConfiguration ("Default");
+			StockIcon = "md-assembly-project";
 		}
 
-		public override IEnumerable<string> GetProjectTypes ()
+		protected override void OnGetTypeTags (HashSet<string> types)
 		{
-			yield return "CompiledAssembly";
-		}
-		
-		public override IconId StockIcon {
-			get {
-				return "md-assembly-project";
-			}
+			base.OnGetTypeTags (types);
+			types.Add ("CompiledAssembly");
 		}
 
-		public override SolutionItemConfiguration CreateConfiguration (string name)
+		protected override SolutionItemConfiguration OnCreateConfiguration (string name, ConfigurationKind kind)
 		{
 			return new ProjectConfiguration (name);
 		}
@@ -81,38 +82,39 @@ namespace MonoDevelop.Projects
 			var tid = Runtime.SystemAssemblyService.GetTargetFrameworkForAssembly (Runtime.SystemAssemblyService.DefaultRuntime, assemblyPath);
 			if (tid != null)
 				targetFramework = Runtime.SystemAssemblyService.GetTargetFramework (tid);
-			
-			AssemblyDefinition adef = AssemblyDefinition.ReadAssembly (assemblyPath);
-			MdbReaderProvider mdbProvider = new MdbReaderProvider ();
-			try {
-				ISymbolReader reader = mdbProvider.GetSymbolReader (adef.MainModule, assemblyPath);
-				adef.MainModule.ReadSymbols (reader);
-			} catch {
-				// Ignore
-			}
-			var files = new HashSet<FilePath> ();
-			
-			foreach (TypeDefinition type in adef.MainModule.Types) {
-				foreach (MethodDefinition met in type.Methods) {
-					if (met.HasBody && met.Body.Instructions != null && met.Body.Instructions.Count > 0) {
-						SequencePoint sp = met.Body.Instructions[0].SequencePoint;
-						if (sp != null)
-							files.Add (sp.Document.Url);
+
+			using (AssemblyDefinition adef = AssemblyDefinition.ReadAssembly (assemblyPath)) {
+				MdbReaderProvider mdbProvider = new MdbReaderProvider ();
+				try {
+					ISymbolReader reader = mdbProvider.GetSymbolReader (adef.MainModule, assemblyPath);
+					adef.MainModule.ReadSymbols (reader);
+				} catch {
+					// Ignore
+				}
+				var files = new HashSet<FilePath> ();
+
+				foreach (TypeDefinition type in adef.MainModule.Types) {
+					foreach (MethodDefinition met in type.Methods) {
+						if (met.HasBody && met.Body.Instructions != null && met.Body.Instructions.Count > 0) {
+							SequencePoint sp = met.DebugInformation.GetSequencePoint (met.Body.Instructions [0]);
+							if (sp != null)
+								files.Add (sp.Document.Url);
+						}
 					}
 				}
-			}
 			
-			FilePath rootPath = FilePath.Empty;
-			foreach (FilePath file in files) {
-				AddFile (file, BuildAction.Compile);
-				if (rootPath.IsNullOrEmpty)
-					rootPath = file.ParentDirectory;
-				else if (!file.IsChildPathOf (rootPath))
-					rootPath = FindCommonRoot (rootPath, file);
+				FilePath rootPath = FilePath.Empty;
+				foreach (FilePath file in files) {
+					AddFile (file, BuildAction.Compile);
+					if (rootPath.IsNullOrEmpty)
+						rootPath = file.ParentDirectory;
+					else if (!file.IsChildPathOf (rootPath))
+						rootPath = FindCommonRoot (rootPath, file);
+				}
+				
+				if (!rootPath.IsNullOrEmpty)
+					BaseDirectory = rootPath;
 			}
-			
-			if (!rootPath.IsNullOrEmpty)
-				BaseDirectory = rootPath;
 /*
 			foreach (AssemblyNameReference aref in adef.MainModule.AssemblyReferences) {
 				if (aref.Name == "mscorlib")
@@ -137,27 +139,21 @@ namespace MonoDevelop.Projects
 			return string.Join (Path.DirectorySeparatorChar.ToString (), s1, 0, n);
 		}
 		
-		protected override BuildResult OnBuild (IProgressMonitor monitor, ConfigurationSelector configuration)
+		protected override Task<BuildResult> OnBuild (ProgressMonitor monitor, ConfigurationSelector configuration, OperationContext operationContext)
 		{
-			return new BuildResult ();
+			return Task.FromResult (BuildResult.CreateSuccess ());
 		}
 		
-		internal protected override bool OnGetNeedsBuilding (ConfigurationSelector configuration)
-		{
-			return false;
-		}
-		
-		internal protected override void OnExecute (IProgressMonitor monitor, ExecutionContext context, ConfigurationSelector configuration)
+		protected async override Task OnExecute (ProgressMonitor monitor, ExecutionContext context, ConfigurationSelector configuration, SolutionItemRunConfiguration runConfiguration)
 		{
 			ProjectConfiguration conf = (ProjectConfiguration) GetConfiguration (configuration);
 			monitor.Log.WriteLine (GettextCatalog.GetString ("Running {0} ...", FileName));
 
-			IConsole console = conf.ExternalConsole
-				? context.ExternalConsoleFactory.CreateConsole (!conf.PauseConsoleOutput)
-				: context.ConsoleFactory.CreateConsole (!conf.PauseConsoleOutput);
+			OperationConsole console = conf.ExternalConsole
+				? context.ExternalConsoleFactory.CreateConsole (!conf.PauseConsoleOutput, monitor.CancellationToken)
+										   : context.ConsoleFactory.CreateConsole (
+											   OperationConsoleFactory.CreateConsoleOptions.Default.WithTitle (Path.GetFileName (FileName)), monitor.CancellationToken);
 			
-			AggregatedOperationMonitor aggregatedOperationMonitor = new AggregatedOperationMonitor (monitor);
-
 			try {
 				try {
 					ExecutionCommand executionCommand = CreateExecutionCommand (configuration, conf);
@@ -167,14 +163,16 @@ namespace MonoDevelop.Projects
 						return;
 					}
 
-					IProcessAsyncOperation asyncOp = context.ExecutionHandler.Execute (executionCommand, console);
-					aggregatedOperationMonitor.AddOperation (asyncOp);
-					asyncOp.WaitForCompleted ();
+					ProcessAsyncOperation asyncOp = context.ExecutionHandler.Execute (executionCommand, console);
+					var stopper = monitor.CancellationToken.Register (asyncOp.Cancel);
+
+					await asyncOp.Task;
+
+					stopper.Dispose ();
 
 					monitor.Log.WriteLine (GettextCatalog.GetString ("The application exited with code: {0}", asyncOp.ExitCode));
 				} finally {
 					console.Dispose ();
-					aggregatedOperationMonitor.Dispose ();
 				}
 			} catch (Exception ex) {
 				LoggingService.LogError (string.Format ("Cannot execute \"{0}\"", FileName), ex);
@@ -182,12 +180,12 @@ namespace MonoDevelop.Projects
 			}
 		}
 
-		internal protected override bool OnGetCanExecute (ExecutionContext context, ConfigurationSelector configuration)
+		protected override bool OnGetCanExecute (ExecutionContext context, ConfigurationSelector configuration, SolutionItemRunConfiguration runConfiguration)
 		{
 			ProjectConfiguration config = (ProjectConfiguration) GetConfiguration (configuration);
 			if (config == null)
 				return false;
-			if (FileName.Extension.ToLower () != ".exe")
+			if (!string.Equals (FileName.Extension, ".exe", StringComparison.OrdinalIgnoreCase))
 				return false;
 			ExecutionCommand cmd = CreateExecutionCommand (configuration, config);
 			return context.ExecutionHandler.CanExecute (cmd);
@@ -201,32 +199,29 @@ namespace MonoDevelop.Projects
 			cmd.EnvironmentVariables = new Dictionary<string, string> (configuration.EnvironmentVariables);
 			return cmd;
 		}
+
+		internal protected override Task OnSave (ProgressMonitor monitor)
+		{
+			// Compiled assemblies can't be saved
+			return Task.FromResult (0);
+		}
 	}
 	
-	public class CompiledAssemblyExtension: ProjectServiceExtension
+	public class CompiledAssemblyExtension: WorkspaceObjectReader
 	{
-		public override bool IsSolutionItemFile (string fileName)
+		public override bool CanRead (FilePath file, Type expectedType)
 		{
-			if (fileName.ToLower().EndsWith (".exe") || fileName.ToLower().EndsWith (".dll"))
-				return true;
-			return base.IsSolutionItemFile (fileName);
+			return expectedType.IsAssignableFrom (typeof(SolutionItem)) &&
+				               (string.Equals (file.Extension, ".exe", StringComparison.OrdinalIgnoreCase) || string.Equals (file.Extension, ".dll", StringComparison.OrdinalIgnoreCase));
 		}
-		
-		protected override SolutionEntityItem LoadSolutionItem (IProgressMonitor monitor, string fileName)
+
+		public override Task<SolutionItem> LoadSolutionItem (ProgressMonitor monitor, SolutionLoadContext ctx, string fileName, MSBuildFileFormat expectedFormat, string typeGuid, string itemGuid)
 		{
-			if (fileName.ToLower().EndsWith (".exe") || fileName.ToLower().EndsWith (".dll")) {
+			return Task<SolutionItem>.Factory.StartNew (delegate {
 				CompiledAssemblyProject p = new CompiledAssemblyProject ();
 				p.LoadFrom (fileName);
 				return p;
-			}
-			return base.LoadSolutionItem (monitor, fileName);
-		}
-		
-		public override void Save (IProgressMonitor monitor, SolutionEntityItem item)
-		{
-//			if (item is CompiledAssemblyProject)
-//				return;
-			base.Save (monitor, item);
+			});
 		}
 	}
 }

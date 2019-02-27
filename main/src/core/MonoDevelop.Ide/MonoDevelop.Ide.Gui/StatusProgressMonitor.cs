@@ -34,26 +34,31 @@ using MonoDevelop.Core;
 
 namespace MonoDevelop.Ide.Gui
 {
-	internal class StatusProgressMonitor: BaseProgressMonitor
+	internal class StatusProgressMonitor: ProgressMonitor
 	{
 		string icon;
 		bool showErrorDialogs;
 		bool showTaskTitles;
 		bool lockGui;
+		bool showCancelButton;
 		string title;
 		StatusBarContext statusBar;
 		Pad statusSourcePad;
 		
-		public StatusProgressMonitor (string title, string iconName, bool showErrorDialogs, bool showTaskTitles, bool lockGui, Pad statusSourcePad)
+		public StatusProgressMonitor (string title, string iconName, bool showErrorDialogs, bool showTaskTitles, bool lockGui, Pad statusSourcePad, bool showCancelButton): base (Runtime.MainSynchronizationContext)
 		{
+
 			this.lockGui = lockGui;
 			this.showErrorDialogs = showErrorDialogs;
 			this.showTaskTitles = showTaskTitles;
 			this.title = title;
 			this.statusSourcePad = statusSourcePad;
+			this.showCancelButton = showCancelButton;
 			icon = iconName;
 			statusBar = IdeApp.Workbench.StatusBar.CreateContext ();
 			statusBar.StatusSourcePad = statusSourcePad;
+			if (showCancelButton)
+				statusBar.CancellationTokenSource = CancellationTokenSource;
 			statusBar.BeginProgress (iconName, title);
 			if (lockGui)
 				IdeApp.Workbench.LockGui ();
@@ -62,23 +67,22 @@ namespace MonoDevelop.Ide.Gui
 		protected override void OnProgressChanged ()
 		{
 			if (showTaskTitles)
-				statusBar.ShowMessage (icon, CurrentTask);
-			if (!UnknownWork) {
-				statusBar.SetProgressFraction (GlobalWork);
-				DesktopService.SetGlobalProgress (GlobalWork);
+				statusBar.ShowMessage (icon, CurrentTaskName);
+			if (!ProgressIsUnknown) {
+				statusBar.SetProgressFraction (Progress);
+				DesktopService.SetGlobalProgress (Progress);
 			} else
 				DesktopService.ShowGlobalProgressIndeterminate ();
-			RunPendingEvents ();
 		}
 		
 		public void UpdateStatusBar ()
 		{
 			if (showTaskTitles)
-				statusBar.ShowMessage (icon, CurrentTask);
+				statusBar.ShowMessage (icon, CurrentTaskName);
 			else
 				statusBar.ShowMessage (icon, title);
-			if (!UnknownWork)
-				statusBar.SetProgressFraction (GlobalWork);
+			if (!ProgressIsUnknown)
+				statusBar.SetProgressFraction (Progress);
 			else
 				statusBar.SetProgressFraction (0);
 		}
@@ -90,36 +94,32 @@ namespace MonoDevelop.Ide.Gui
 
 			statusBar.EndProgress ();
 
-			if (!IsCancelRequested) {
-				try {
-					if (Errors.Count > 0 || Warnings.Count > 0) {
-						if (Errors.Count > 0) {
-							statusBar.ShowError (Errors [Errors.Count - 1]);
-						} else if (SuccessMessages.Count == 0) {
-							statusBar.ShowWarning (Warnings [Warnings.Count - 1]);
-						}
-
-						DesktopService.ShowGlobalProgressError ();
-
-						base.OnCompleted ();
-					
-						if (showErrorDialogs)
-							ShowResultDialog ();
-						return;
+			try {
+				if (Errors.Length > 0 || Warnings.Length > 0) {
+					if (Errors.Length > 0) {
+						statusBar.ShowError (Errors [Errors.Length - 1].DisplayMessage);
+					} else if (SuccessMessages.Length == 0) {
+						statusBar.ShowWarning (Warnings [Warnings.Length - 1]);
 					}
-				
-					if (SuccessMessages.Count > 0)
-						statusBar.ShowMessage (MonoDevelop.Ide.Gui.Stock.StatusSuccess, SuccessMessages [SuccessMessages.Count - 1]);
-				
-				} finally {
-					statusBar.StatusSourcePad = statusSourcePad;
-					statusBar.Dispose ();
+
+					DesktopService.ShowGlobalProgressError ();
+
+					base.OnCompleted ();
+
+					if (!CancellationToken.IsCancellationRequested && showErrorDialogs)
+						this.ShowResultDialog ();
+					return;
 				}
-			} else {
+
+				if (SuccessMessages.Length > 0)
+					statusBar.ShowMessage (MonoDevelop.Ide.Gui.Stock.StatusSuccess, SuccessMessages [SuccessMessages.Length - 1]);
+
+			} finally {
+				statusBar.StatusSourcePad = statusSourcePad;
 				statusBar.Dispose ();
 			}
 
-			DesktopService.SetGlobalProgress (GlobalWork);
+			DesktopService.SetGlobalProgress (Progress);
 
 			base.OnCompleted ();
 		}

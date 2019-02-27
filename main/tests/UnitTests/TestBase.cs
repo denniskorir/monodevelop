@@ -29,9 +29,7 @@ using System;
 using System.IO;
 using NUnit.Framework;
 using MonoDevelop.Core;
-using MonoDevelop.Ide;
 using MonoDevelop.Core.Assemblies;
-using MonoDevelop.Ide.TypeSystem;
 
 namespace UnitTests
 {
@@ -39,9 +37,29 @@ namespace UnitTests
 	{
 		static bool firstRun = true;
 		
-		
+		static TestBase ()
+		{
+			var topPath = LocateTopLevel ();
+			LoggingService.AddLogger (new MonoDevelop.Core.Logging.FileLogger (Path.Combine (topPath, "TestResult_LoggingService.log")));
+		}
+
+		static string LocateTopLevel ()
+		{
+			var initialCwd = Path.GetDirectoryName (typeof (TestBase).Assembly.Location);
+			if (initialCwd != Util.TestsRootDir) {
+				var cwd = initialCwd;
+				while (!string.IsNullOrEmpty (cwd)) {
+					if (File.Exists (Path.Combine (cwd, "top_level_monodevelop")))
+						return cwd;
+					cwd = Path.GetDirectoryName (cwd);
+				}
+			}
+
+			return initialCwd;
+		}
+
 		[TestFixtureSetUp]
-		public virtual void Setup ()
+		public void Simulate ()
 		{
 			if (firstRun) {
 				string rootDir = Path.Combine (Util.TestsRootDir, "config");
@@ -61,15 +79,11 @@ namespace UnitTests
 			}
 		}
 
-		static void InternalSetup (string rootDir)
+		protected virtual void InternalSetup (string rootDir)
 		{
 			Util.ClearTmpDir ();
 			Environment.SetEnvironmentVariable ("MONO_ADDINS_REGISTRY", rootDir);
 			Environment.SetEnvironmentVariable ("XDG_CONFIG_HOME", rootDir);
-			Runtime.Initialize (true);
-			Gtk.Application.Init ();
-			TypeSystemService.TrackFileChanges = true;
-			DesktopService.Initialize ();
 			global::MonoDevelop.Projects.Services.ProjectService.DefaultTargetFramework
 				= Runtime.SystemAssemblyService.GetTargetFramework (TargetFrameworkMoniker.NET_4_0);
 		}
@@ -86,14 +100,6 @@ namespace UnitTests
 		public static string GetTempFile (string extension)
 		{
 			return Path.Combine (Path.GetTempPath (), "test-file-" + (pcount++) + extension);
-		}
-		
-		public static string GetMdb (string file)
-		{
-			if (Runtime.SystemAssemblyService.DefaultRuntime is MonoTargetRuntime)
-				return file + ".mdb";
-			else
-				return Path.ChangeExtension (file, ".pdb");
 		}
 	}
 }

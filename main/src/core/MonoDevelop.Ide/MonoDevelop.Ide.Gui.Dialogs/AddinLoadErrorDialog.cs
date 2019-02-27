@@ -33,10 +33,11 @@ using System.Reflection;
 
 using Mono.Addins;
 using MonoDevelop.Core;
+using MonoDevelop.Components;
 
 namespace MonoDevelop.Ide.Gui.Dialogs
 {
-	internal partial class AddinLoadErrorDialog: Gtk.Dialog
+	internal partial class AddinLoadErrorDialog: IdeDialog
 	{
 		public AddinLoadErrorDialog (AddinError[] errors, bool warning)
 		{
@@ -44,7 +45,7 @@ namespace MonoDevelop.Ide.Gui.Dialogs
 			Title = BrandingService.ApplicationName;
 			
 			TreeStore store = new TreeStore (typeof(string));
-			errorTree.AppendColumn ("Addin", new CellRendererText (), "text", 0);
+			errorTree.AppendColumn ("Extension", new CellRendererText (), "text", 0);
 			errorTree.Model = store;
 			
 			bool fatal = false;
@@ -78,12 +79,12 @@ namespace MonoDevelop.Ide.Gui.Dialogs
 				yesButton.Hide ();
 				closeButton.Show ();
 				messageLabel.Text = GettextCatalog.GetString (
-					"{0} can run without these add-ins, but the functionality they provide will be missing.",
+					"{0} can run without these extensions but the functionality they provide will be missing.",
 					BrandingService.ApplicationName
 				);
 			} else {
 				messageLabel.Text = GettextCatalog.GetString (
-					"You can start {0} without these add-ins, but the functionality they " +
+					"You can start {0} without these extensions, but the functionality they " +
 					"provide will be missing. Do you wish to continue?",
 					BrandingService.ApplicationName
 				);

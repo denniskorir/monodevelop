@@ -1,21 +1,21 @@
-// 
+//
 // WelcomePageLinkButton.cs
-//  
+//
 // Author:
 //       Michael Hutchinson <mhutch@xamarin.com>
-// 
+//
 // Copyright (c) 2011 Xamarin Inc.
-// 
+//
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal
 // in the Software without restriction, including without limitation the rights
 // to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
 // copies of the Software, and to permit persons to whom the Software is
 // furnished to do so, subject to the following conditions:
-// 
+//
 // The above copyright notice and this permission notice shall be included in
 // all copies or substantial portions of the Software.
-// 
+//
 // THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
 // IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
 // FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
@@ -30,22 +30,26 @@ using MonoDevelop.Core;
 using System.Xml.Linq;
 using System.Text.RegularExpressions;
 using MonoDevelop.Components;
+using MonoDevelop.Components.AtkCocoaHelper;
+using System.Text;
+
+using System.Runtime.InteropServices;
 
 namespace MonoDevelop.Ide.WelcomePage
 {
 	class WelcomePageFeedItem : Gtk.EventBox
 	{
-		static readonly string linkUnderlinedFormat;
-		static readonly string linkFormat;
-		static readonly string descFormat;
-		static readonly string subtitleFormat;
+		static string linkUnderlinedFormat;
+		static string linkFormat;
+		static string descFormat;
+		static string subtitleFormat;
 
 		Label titleLabel;
 		Label subtitleLabel;
 		Label summaryLabel;
 
 		ImageView image;
-		string text, desc, icon, subtitle;
+		string text, desc, icon, subtitle, linkUrl;
 		Gtk.IconSize iconSize = IconSize.Menu;
 		VBox box;
 
@@ -55,9 +59,15 @@ namespace MonoDevelop.Ide.WelcomePage
 
 		static WelcomePageFeedItem ()
 		{
+			UpdateStyle ();
+			Gui.Styles.Changed += (sender, e) => UpdateStyle();
+		}
+
+		static void UpdateStyle ()
+		{
 			var face = Platform.IsMac ? Styles.WelcomeScreen.Pad.TitleFontFamilyMac : Styles.WelcomeScreen.Pad.TitleFontFamilyWindows;
-			linkUnderlinedFormat = Styles.GetFormatString (face, Styles.WelcomeScreen.Pad.MediumTitleFontSize, Styles.WelcomeScreen.Pad.News.Item.TitleHoverColor);
-			linkFormat = Styles.GetFormatString (face, Styles.WelcomeScreen.Pad.MediumTitleFontSize, Styles.WelcomeScreen.Pad.MediumTitleColor);
+			linkUnderlinedFormat = Styles.GetFormatString (face, Styles.WelcomeScreen.Pad.MediumTitleFontSize, Styles.WelcomeScreen.Pad.News.Item.TitleHoverColor, Pango.Weight.Bold);
+			linkFormat = Styles.GetFormatString (face, Styles.WelcomeScreen.Pad.MediumTitleFontSize, Styles.WelcomeScreen.Pad.MediumTitleColor, Pango.Weight.Bold);
 			descFormat = Styles.GetFormatString (Styles.WelcomeScreen.Pad.SummaryFontFamily, Styles.WelcomeScreen.Pad.SummaryFontSize, Styles.WelcomeScreen.Pad.TextColor);
 			subtitleFormat = Styles.GetFormatString (face, Styles.WelcomeScreen.Pad.SmallTitleFontSize, Styles.WelcomeScreen.Pad.SmallTitleColor);
 		}
@@ -100,8 +110,6 @@ namespace MonoDevelop.Ide.WelcomePage
 
 				this.desc = desc;
 			}
-
-
 			
 			string tooltip = (string) (el.Attribute ("tooltip") ?? el.Attribute ("_tooltip"));
 			if (!string.IsNullOrEmpty (tooltip))
@@ -140,28 +148,39 @@ namespace MonoDevelop.Ide.WelcomePage
 			SetDate (date);
 			UpdateLabel (false);
 		}
-		
+
 		public WelcomePageFeedItem ()
 		{
+			var actionHandler = new ActionDelegate (this);
+			actionHandler.PerformPress += PerformPress;
+
+			Accessible.Description = "A news item that opens the full story in a browser when clicked";
+			Accessible.Role = Atk.Role.Link;
+
 			VisibleWindow = false;
 
 			box = new VBox ();
+			box.Accessible.SetShouldIgnore (true);
 
 			titleLabel = new Label () { Xalign = 0 };
+			titleLabel.Accessible.SetShouldIgnore (true);
 			titleLabel.Wrap = false;
 			titleLabel.Ellipsize = Pango.EllipsizeMode.End;
 			titleLabel.LineWrapMode = Pango.WrapMode.Word;
 			box.PackStart (titleLabel, false, false, 0);
 
 			subtitleLabel = new Label () { Xalign = 0 };
+			subtitleLabel.Accessible.SetShouldIgnore (true);
 			var align = new Gtk.Alignment (0, 0, 1f, 1f) { 
 				TopPadding = Styles.WelcomeScreen.Pad.MediumTitleMarginBottom,
 				BottomPadding = Styles.WelcomeScreen.Pad.SummaryParagraphMarginTop
 			};
 			align.Add (subtitleLabel);
+			align.Accessible.SetShouldIgnore (true);
 			box.PackStart (align, false, false, 0);
 
 			summaryLabel = new Label () { Xalign = 0 };
+			summaryLabel.Accessible.SetShouldIgnore (true);
 			summaryLabel.Wrap = true;
 			box.PackStart (summaryLabel, true, true, 0);
 
@@ -170,6 +189,13 @@ namespace MonoDevelop.Ide.WelcomePage
 			summaryLabel.Attributes.Insert (rise);
 
 			Add (box);
+
+			Gui.Styles.Changed += UpdateStyle;
+		}
+
+		void UpdateStyle (object sender, EventArgs args)
+		{
+			UpdateLabel (false);
 		}
 
 		int allocWidth;
@@ -196,7 +222,7 @@ namespace MonoDevelop.Ide.WelcomePage
 						subtitle = GettextCatalog.GetString ("Yesterday");
 					}
 					else if (days < 7) {
-						subtitle = GettextCatalog.GetString ("{0} days ago", days);
+						subtitle = GettextCatalog.GetPluralString ("{0} day ago", "{0} days ago", days, days);
 					}
 					else if (weeks < 4) {
 						subtitle = GettextCatalog.GetPluralString ("{0} week ago", "{0} weeks ago", weeks, weeks);
@@ -219,7 +245,15 @@ namespace MonoDevelop.Ide.WelcomePage
 			base.OnSizeAllocated (allocation);
 		}
 		
-		public string LinkUrl { get; private set; }
+		public string LinkUrl {
+			get {
+				return linkUrl;
+			}
+			private set {
+				linkUrl = value;
+				Accessible.SetUrl (value);
+			}
+		}
 		
 		public new string Title {
 			get {
@@ -265,7 +299,42 @@ namespace MonoDevelop.Ide.WelcomePage
 		{
 			titleLabel.Markup = string.Format (underlined? linkUnderlinedFormat : linkFormat, GLib.Markup.EscapeText (text));
 			subtitleLabel.Markup = string.Format (subtitleFormat, GLib.Markup.EscapeText (subtitle ?? ""));
-			summaryLabel.Markup = string.Format (descFormat, (desc ?? "").Replace ("\n"," "));
+			summaryLabel.Markup = string.Format (descFormat, SummaryHtmlToPango(desc ?? ""));
+
+			Accessible.SetTitle (text);
+			Accessible.SetValue (subtitle + " " + desc);
+		}
+
+		public static string SummaryHtmlToPango(string summaryHtml)
+		{
+			var result = new StringBuilder ();
+			bool inTag =  false;
+			for (int i = 0; i < summaryHtml.Length; i++) {
+				char ch = summaryHtml [i];
+				if (inTag) {
+					if (ch == '>')
+						inTag = false;
+					continue;
+				}
+				switch (ch) {
+				case '\n':
+					result.Append (" ");
+					break;
+				case '<':
+					inTag = true;
+					break;
+				case '\'':
+					result.Append ("&apos;");
+					break;
+				case '"':
+					result.Append ("&quot;");
+					break;
+				default:
+					result.Append (ch);
+					break;
+				}
+			}
+			return result.ToString ();
 		}
 		
 		void UpdateImage ()
@@ -314,6 +383,11 @@ namespace MonoDevelop.Ide.WelcomePage
 			return base.OnButtonReleaseEvent (evnt);
 		}
 
+		void PerformPress (object sender, EventArgs e)
+		{
+			WelcomePageSection.DispatchLink (LinkUrl);
+		}
+
 		string GetLinkTooltip (string link)
 		{
 			if (link == null)
@@ -331,6 +405,12 @@ namespace MonoDevelop.Ide.WelcomePage
 			} else {
 				return GettextCatalog.GetString ("Open {0}", link);
 			}
+		}
+
+		protected override void OnDestroyed ()
+		{
+			Gui.Styles.Changed -= UpdateStyle;
+			base.OnDestroyed ();
 		}
 	}
 }

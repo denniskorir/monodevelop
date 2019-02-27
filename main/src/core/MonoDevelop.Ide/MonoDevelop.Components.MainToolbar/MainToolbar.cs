@@ -30,7 +30,6 @@ using MonoDevelop.Ide;
 using MonoDevelop.Ide.Commands;
 using MonoDevelop.Core;
 using System.Linq;
-using MonoDevelop.Core.Assemblies;
 using MonoDevelop.Components;
 using Cairo;
 using MonoDevelop.Projects;
@@ -38,14 +37,12 @@ using System.Collections.Generic;
 using Mono.Addins;
 using MonoDevelop.Components.Commands.ExtensionNodes;
 using MonoDevelop.Ide.Gui;
-using MonoDevelop.Ide.Execution;
 using MonoDevelop.Core.Execution;
 using MonoDevelop.Ide.TypeSystem;
 using System.Threading;
-using ICSharpCode.NRefactory.TypeSystem;
-using Mono.TextEditor;
+using MonoDevelop.Ide.Editor;
 using System.Text;
-
+using MonoDevelop.Components.AtkCocoaHelper;
 
 namespace MonoDevelop.Components.MainToolbar
 {
@@ -58,6 +55,9 @@ namespace MonoDevelop.Components.MainToolbar
 		ComboBox configurationCombo;
 		TreeStore configurationStore = new TreeStore (typeof(string), typeof(IConfigurationModel));
 
+		ComboBox runConfigurationCombo;
+		TreeStore runConfigurationStore = new TreeStore (typeof (string), typeof (IRunConfigurationModel));
+	
 		ComboBox runtimeCombo;
 		TreeStore runtimeStore = new TreeStore (typeof(IRuntimeModel));
 
@@ -110,19 +110,22 @@ namespace MonoDevelop.Components.MainToolbar
 				return;
 			}
 
-			renderer.Visible = runtime.Visible;
-			renderer.Sensitive = runtime.Enabled;
-			renderer.Xpad = (uint)(runtime.IsIndented ? 18 : 3);
+			using (var mutableModel = runtime.GetMutableModel ()) {
+				renderer.Visible = mutableModel.Visible;
+				renderer.Sensitive = mutableModel.Enabled;
+				renderer.Xpad = (uint)(runtime.IsIndented ? 18 : 3);
 
-			if (!runtimeCombo.PopupShown) {
-				// no need to ident text when the combo dropdown is not showing
-				if (Platform.IsWindows)
-					renderer.Xpad = 3;
-				renderer.Text = runtime.FullDisplayString;
-				renderer.Attributes = normalAttributes;
-			} else {
-				renderer.Text = runtime.DisplayString;
-				renderer.Attributes = runtime.Notable ? boldAttributes : normalAttributes;
+				if (!runtimeCombo.PopupShown) {
+					// no need to ident text when the combo dropdown is not showing
+					if (Platform.IsWindows)
+						renderer.Xpad = 3;
+					renderer.Text = mutableModel.FullDisplayString;
+					renderer.Attributes = normalAttributes;
+				} else {
+					renderer.Text = mutableModel.DisplayString;
+					renderer.Attributes = runtime.Notable ? boldAttributes : normalAttributes;
+				}
+
 			}
 		}
 
@@ -134,13 +137,25 @@ namespace MonoDevelop.Components.MainToolbar
 			AddWidget (button);
 			AddSpace (8);
 
+			configurationCombosBox = new HBox (false, 8);
+
+			var ctx = new Gtk.CellRendererText ();
+
+			runConfigurationCombo = new Gtk.ComboBox ();
+			runConfigurationCombo.Model = runConfigurationStore;
+			runConfigurationCombo.PackStart (ctx, true);
+			runConfigurationCombo.AddAttribute (ctx, "text", 0);
+			runConfigurationCombo.TooltipText = GettextCatalog.GetString ("A project or named set of projects and execution options that should be launched when running or debugging the solution.");
+
+			var runConfigurationComboVBox = new VBox ();
+			runConfigurationComboVBox.PackStart (runConfigurationCombo, true, false, 0);
+			configurationCombosBox.PackStart (runConfigurationComboVBox, false, false, 0);
+		
 			configurationCombo = new Gtk.ComboBox ();
 			configurationCombo.Model = configurationStore;
-			var ctx = new Gtk.CellRendererText ();
 			configurationCombo.PackStart (ctx, true);
 			configurationCombo.AddAttribute (ctx, "text", 0);
-
-			configurationCombosBox = new HBox (false, 8);
+			configurationCombo.TooltipText = GettextCatalog.GetString ("A named set of projects and their configurations to be built when building the solution.");
 
 			var configurationComboVBox = new VBox ();
 			configurationComboVBox.PackStart (configurationCombo, true, false, 0);
@@ -157,6 +172,7 @@ namespace MonoDevelop.Components.MainToolbar
 			runtimeCombo.PackStart (ctx, true);
 			runtimeCombo.SetCellDataFunc (ctx, RuntimeRenderCell);
 			runtimeCombo.RowSeparatorFunc = RuntimeIsSeparator;
+			runtimeCombo.TooltipText = GettextCatalog.GetString ("The device on which to deploy and launch the projects when running or debugging.");
 
 			var runtimeComboVBox = new VBox ();
 			runtimeComboVBox.PackStart (runtimeCombo, true, false, 0);
@@ -183,12 +199,10 @@ namespace MonoDevelop.Components.MainToolbar
 				if (toplevel == null)
 					return;
 
-				var pixel_scale = GtkWorkarounds.GetPixelScale ();
-
 				int windowWidth = toplevel.Allocation.Width;
 				int center = windowWidth / 2;
-				int left = Math.Max (center - (int)(300 * pixel_scale), args.Allocation.Left);
-				int right = Math.Min (left + (int)(600 * pixel_scale), args.Allocation.Right);
+				int left = Math.Max (center - 300, args.Allocation.Left);
+				int right = Math.Min (left + 600, args.Allocation.Right);
 				uint left_padding = (uint) (left - args.Allocation.Left);
 				uint right_padding = (uint) (args.Allocation.Right - right);
 
@@ -207,7 +221,6 @@ namespace MonoDevelop.Components.MainToolbar
 			matchEntry.Ready = true;
 			matchEntry.Visible = true;
 			matchEntry.IsCheckMenu = true;
-			matchEntry.Entry.ModifyBase (StateType.Normal, Style.White);
 			matchEntry.WidthRequest = 240;
 			if (!Platform.IsMac && !Platform.IsWindows)
 				matchEntry.Entry.ModifyFont (Pango.FontDescription.FromString ("Sans 9")); // TODO: VV: "Segoe UI 9"
@@ -231,11 +244,15 @@ namespace MonoDevelop.Components.MainToolbar
 			align.Add (contentBox);
 
 			Add (align);
-			SetDefaultSizes (-1, (int)(21 * GtkWorkarounds.GetPixelScale ()));
+			SetDefaultSizes (-1, 21);
 
 			configurationCombo.Changed += (o, e) => {
 				if (ConfigurationChanged != null)
 					ConfigurationChanged (o, e);
+			};
+			runConfigurationCombo.Changed += (o, e) => {
+				if (RunConfigurationChanged != null)
+					RunConfigurationChanged (o, e);
 			};
 			runtimeCombo.Changed += (o, e) => {
 				var ea = new HandledEventArgs ();
@@ -265,7 +282,7 @@ namespace MonoDevelop.Components.MainToolbar
 		protected override bool OnButtonPressEvent (Gdk.EventButton evnt)
 		{
 			if (evnt.Button == 1 && evnt.Window == GdkWindow) {
-				var window = (Window)Toplevel;
+				var window = (Gtk.Window)Toplevel;
 				if (!DesktopService.GetIsFullscreen (window)) {
 					window.BeginMoveDrag (1, (int)evnt.XRoot, (int)evnt.YRoot, evnt.Time);
 					return true;
@@ -277,6 +294,7 @@ namespace MonoDevelop.Components.MainToolbar
 		void SetDefaultSizes (int comboHeight, int height)
 		{
 			configurationCombo.SetSizeRequest (150, comboHeight);
+			runConfigurationCombo.SetSizeRequest (150, comboHeight);
 			// make the windows runtime slightly wider to accomodate select devices text
 			runtimeCombo.SetSizeRequest (Platform.IsWindows ? 175 : 150, comboHeight);
 			statusArea.SetSizeRequest (32, 32);
@@ -294,8 +312,7 @@ namespace MonoDevelop.Components.MainToolbar
 
 		void HandleSearchEntryChanged (object sender, EventArgs e)
 		{
-			if (SearchEntryActivated != null)
-				SearchEntryChanged (sender, e);
+			SearchEntryChanged?.Invoke (sender, e);
 		}
 
 		void HandleSearchEntryActivated (object sender, EventArgs e)
@@ -357,14 +374,8 @@ namespace MonoDevelop.Components.MainToolbar
 				}
 				context.MoveTo (0, Allocation.Height - 0.5);
 				context.RelLineTo (Allocation.Width, 0);
-				context.SetSourceColor (Styles.ToolbarBottomBorderColor);
+				context.SetSourceColor (Styles.ToolbarBottomBorderColor.ToCairoColor ());
 				context.Stroke ();
-
-				context.MoveTo (0, Allocation.Height - 1.5);
-				context.RelLineTo (Allocation.Width, 0);
-				context.SetSourceColor (Styles.ToolbarBottomGlowColor);
-				context.Stroke ();
-
 			}
 			return base.OnExposeEvent (evnt);
 		}
@@ -397,12 +408,39 @@ namespace MonoDevelop.Components.MainToolbar
 		}
 
 		public OperationIcon RunButtonIcon {
-			set { button.Icon = value; }
+			set {
+				button.Icon = value;
+				switch (value) {
+				case OperationIcon.Stop:
+					button.TooltipText = GettextCatalog.GetString ("Stop the executing solution");
+					break;
+				case OperationIcon.Run:
+					button.TooltipText = GettextCatalog.GetString ("Run the project or projects in the active run configuration. Builds the projects in the active solution build configuration if necessary.");
+					break;
+				case OperationIcon.Build:
+					button.TooltipText = GettextCatalog.GetString ("Build the projects in the active solution build configuration.");
+					break;
+				default:
+					button.TooltipText = string.Empty;
+					break;
+				}
+			}
 		}
 
 		public bool ConfigurationPlatformSensitivity {
 			get { return configurationCombosBox.Sensitive; }
 			set { configurationCombosBox.Sensitive = value; }
+		}
+
+		static bool FindIter<T> (TreeStore store, Func<T, bool> match, out TreeIter iter)
+		{
+			if (store.GetIterFirst (out iter)) {
+				do {
+					if (match((T)store.GetValue (iter, 1)))
+						return true;
+				} while (store.IterNext (ref iter));
+			}
+			return false;
 		}
 
 		public IConfigurationModel ActiveConfiguration {
@@ -415,19 +453,27 @@ namespace MonoDevelop.Components.MainToolbar
 			}
 			set {
 				TreeIter iter;
-				bool found = false;
-				if (configurationStore.GetIterFirst (out iter)) {
-					do {
-						if (value.OriginalId == ((IConfigurationModel)configurationStore.GetValue (iter, 1)).OriginalId) {
-							found = true;
-							break;
-						}
-					} while (configurationStore.IterNext (ref iter));
-				}
-				if (found)
+				if (FindIter<IConfigurationModel> (configurationStore, it => value.OriginalId == it.OriginalId, out iter))
 					configurationCombo.SetActiveIter (iter);
 				else
 					configurationCombo.Active = 0;
+			}
+		}
+
+		public IRunConfigurationModel ActiveRunConfiguration {
+			get {
+				TreeIter iter;
+				if (!runConfigurationCombo.GetActiveIter (out iter))
+					return null;
+
+				return (IRunConfigurationModel)runConfigurationStore.GetValue (iter, 1);
+			}
+			set {
+				TreeIter iter;
+				if (FindIter<IRunConfigurationModel> (runConfigurationStore, it => value.OriginalId == it.OriginalId, out iter))
+					runConfigurationCombo.SetActiveIter (iter);
+				else
+					runConfigurationCombo.Active = 0;
 			}
 		}
 
@@ -473,6 +519,18 @@ namespace MonoDevelop.Components.MainToolbar
 			}
 		}
 
+		IEnumerable<IRunConfigurationModel> runConfigurationModel;
+		public IEnumerable<IRunConfigurationModel> RunConfigurationModel {
+			get { return runConfigurationModel; }
+			set {
+				runConfigurationModel = value;
+				runConfigurationStore.Clear ();
+				foreach (var item in value) {
+					runConfigurationStore.AppendValues (item.DisplayString, item);
+				}
+			}
+		}
+
 		IEnumerable<IRuntimeModel> runtimeModel;
 		public IEnumerable<IRuntimeModel> RuntimeModel {
 			get { return runtimeModel; }
@@ -480,14 +538,16 @@ namespace MonoDevelop.Components.MainToolbar
 				runtimeModel = value;
 				runtimeStore.Clear ();
 				foreach (var item in value) {
-					if (item.HasParent)
-						continue;
-
 					var iter = runtimeStore.AppendValues (item);
 					foreach (var subitem in item.Children)
 						runtimeStore.AppendValues (iter, subitem);
 				}
 			}
+		}
+
+		public bool RunConfigurationVisible {
+			get { return runConfigurationCombo.Visible; }
+			set { runConfigurationCombo.Visible = value; }
 		}
 
 		public bool SearchSensivitity {
@@ -538,25 +598,32 @@ namespace MonoDevelop.Components.MainToolbar
 			set { matchEntry.EmptyMessage = value; }
 		}
 
-		public void RebuildToolbar (IEnumerable<IButtonBarButton> buttons)
+		public void RebuildToolbar (IEnumerable<ButtonBarGroup> groups)
 		{
-			if (!buttons.Any ()) {
+			if (!groups.Any ()) {
 				buttonBarBox.Hide ();
 				return;
 			}
 
 			buttonBarBox.Show ();
 			buttonBar.ShowAll ();
-			buttonBar.Buttons = buttons;
+			buttonBar.Groups = groups;
 		}
+
+		public void Focus (DirectionType direction, Action<DirectionType> exitAction) {}
 
 		public bool ButtonBarSensitivity {
 			set { buttonBar.Sensitive = value; }
 		}
 
 		public event EventHandler ConfigurationChanged;
+		public event EventHandler RunConfigurationChanged;
 		public event EventHandler<HandledEventArgs> RuntimeChanged;
 
+		public void ShowAccessibilityAnnouncement (string message)
+		{
+			this.Accessible.MakeAccessibilityAnnouncement (message);
+		}
 		#endregion
 	}
 }

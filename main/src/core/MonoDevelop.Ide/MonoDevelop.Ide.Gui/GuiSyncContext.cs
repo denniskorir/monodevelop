@@ -35,18 +35,25 @@ namespace MonoDevelop.Ide.Gui
 	{
 		public override void Dispatch (StatefulMessageHandler cb, object ob)
 		{
-			if (DispatchService.IsGuiThread)
+			if (Runtime.IsMainThread)
 				cb (ob);
-			else
-				DispatchService.GuiSyncDispatch (cb, ob);
+			else {
+				Runtime.MainSynchronizationContext.Send (state => RunCallback (state), (cb, ob));
+			}
 		}
 		
 		public override void AsyncDispatch (StatefulMessageHandler cb, object ob)
 		{
-			if (DispatchService.IsGuiThread)
+			if (Runtime.IsMainThread)
 				cb (ob);
 			else
-				DispatchService.GuiDispatch (cb, ob);
+				Runtime.MainSynchronizationContext.Post (state => RunCallback (state), (cb, ob));
+		}
+
+		static void RunCallback (object state)
+		{
+			var (cb, ob) = (ValueTuple<StatefulMessageHandler, object>)state;
+			cb (ob);
 		}
 	}
 }

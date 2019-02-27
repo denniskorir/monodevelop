@@ -24,13 +24,16 @@
 // THE SOFTWARE.
 
 using System;
+using MonoDevelop.Components;
+using MonoDevelop.Components.AtkCocoaHelper;
 using MonoDevelop.Core;
 using MonoDevelop.Ide.Gui.Dialogs;
 using Mono.TextEditor;
+using MonoDevelop.Ide.Editor;
 
 namespace MonoDevelop.SourceEditor.OptionPanels
 {
-	public partial class BehaviorPanel : Gtk.Bin, IOptionsPanel
+	partial class BehaviorPanel : Gtk.Bin, IOptionsPanel
 	{
 		public BehaviorPanel ()
 		{
@@ -44,24 +47,51 @@ namespace MonoDevelop.SourceEditor.OptionPanels
 			controlLeftRightCombobox.InsertText (1, GettextCatalog.GetString ("Windows"));
 			
 			autoInsertBraceCheckbutton.Toggled += HandleAutoInsertBraceCheckbuttonToggled;
+
+			SetupAccessibility ();
 		}
-		
-		public virtual Gtk.Widget CreatePanelWidget ()
+
+		void SetupAccessibility ()
+		{
+			tabAsReindentCheckbutton.SetCommonAccessibilityAttributes ("BehaviorPanel.tabsAsReindent", "",
+			                                                           GettextCatalog.GetString ("Check to use the Tab key as a reindent command"));
+			smartBackspaceCheckbutton.SetCommonAccessibilityAttributes ("BehaviorPanel.smartBackspace", "",
+			                                                            GettextCatalog.GetString ("Check to make Backspace remove indentation"));
+			autoInsertBraceCheckbutton.SetCommonAccessibilityAttributes ("BehaviorPanel.autoInsertBrace", "",
+			                                                             GettextCatalog.GetString ("Check to automatically insert braces"));
+			smartSemicolonPlaceCheckbutton.SetCommonAccessibilityAttributes ("BehaviorPanel.smartSemicolon", "",
+			                                                                 GettextCatalog.GetString ("Check to use smart semicolon placement"));
+			checkbuttonFormatOnSave.SetCommonAccessibilityAttributes ("BehaviorPanel.formatOnSave", "",
+			                                                          GettextCatalog.GetString ("Check to reformat the document when saving"));
+			checkbuttonAutoSetSearchPatternCasing.SetCommonAccessibilityAttributes ("BehaviorPanel.autoSearchPattern", "",
+			                                                                        GettextCatalog.GetString ("Check to automatically set the search pattern case sensitivity"));
+			checkbuttonEnableSelectionSurrounding.SetCommonAccessibilityAttributes ("BehaviorPanel.enableSelectionSurrounding", "",
+			                                                                        GettextCatalog.GetString ("Check to enable selection surrounding keys"));
+			checkbuttonGenerateFormattingUndoStep.SetCommonAccessibilityAttributes ("BehaviorPanel.generateFormattingUndo", "",
+			                                                                        GettextCatalog.GetString ("Check to add undo step for formatting changes"));
+			indentationCombobox.SetCommonAccessibilityAttributes ("BehaviorPanel.indentation", label1,
+			                                                      GettextCatalog.GetString ("Select the indentation mode"));
+			controlLeftRightCombobox.SetCommonAccessibilityAttributes ("BehaviorPanel.wordBreakMode", label2,
+			                                                           GettextCatalog.GetString ("Select the word break mode"));
+		}
+
+		public virtual Control CreatePanelWidget ()
 		{
 			//			this.autoInsertTemplateCheckbutton.Active  = DefaultSourceEditorOptions.Options.AutoInsertTemplates;
 			autoInsertBraceCheckbutton.Active = DefaultSourceEditorOptions.Instance.AutoInsertMatchingBracket;
 			smartSemicolonPlaceCheckbutton.Active = DefaultSourceEditorOptions.Instance.SmartSemicolonPlacement;
 			
 			tabAsReindentCheckbutton.Active = DefaultSourceEditorOptions.Instance.TabIsReindent;
-			indentationCombobox.Active = (int)DefaultSourceEditorOptions.Instance.IndentStyle;
+			indentationCombobox.Active = Math.Min (2, (int)DefaultSourceEditorOptions.Instance.IndentStyle);
 			controlLeftRightCombobox.Active = (int)DefaultSourceEditorOptions.Instance.WordNavigationStyle;
-			useViModesCheck.Active = DefaultSourceEditorOptions.Instance.UseViModes;
-			checkbuttonOnTheFlyFormatting.Active = DefaultSourceEditorOptions.Instance.OnTheFlyFormatting;
 			checkbuttonGenerateFormattingUndoStep.Active = DefaultSourceEditorOptions.Instance.GenerateFormattingUndoStep;
 
 
 			checkbuttonFormatOnSave.Active = PropertyService.Get ("AutoFormatDocumentOnSave", false);
 			checkbuttonAutoSetSearchPatternCasing.Active = PropertyService.Get ("AutoSetPatternCasing", false);
+			checkbuttonEnableSelectionSurrounding.Active = DefaultSourceEditorOptions.Instance.EnableSelectionWrappingKeys;
+			smartBackspaceCheckbutton.Active = DefaultSourceEditorOptions.Instance.SmartBackspace;
+			
 			HandleAutoInsertBraceCheckbuttonToggled (null, null);
 			return this;
 		}
@@ -76,14 +106,14 @@ namespace MonoDevelop.SourceEditor.OptionPanels
 			//DefaultSourceEditorOptions.Options.AutoInsertTemplates = this.autoInsertTemplateCheckbutton.Active;
 			DefaultSourceEditorOptions.Instance.AutoInsertMatchingBracket = autoInsertBraceCheckbutton.Active;
 			DefaultSourceEditorOptions.Instance.SmartSemicolonPlacement = smartSemicolonPlaceCheckbutton.Active;
-			DefaultSourceEditorOptions.Instance.IndentStyle = (IndentStyle)indentationCombobox.Active;
+			DefaultSourceEditorOptions.Instance.IndentStyle = (MonoDevelop.Ide.Editor.IndentStyle)indentationCombobox.Active;
 			DefaultSourceEditorOptions.Instance.TabIsReindent = tabAsReindentCheckbutton.Active;
 			DefaultSourceEditorOptions.Instance.WordNavigationStyle = (WordNavigationStyle)controlLeftRightCombobox.Active;
-			DefaultSourceEditorOptions.Instance.UseViModes = useViModesCheck.Active;
-			DefaultSourceEditorOptions.Instance.OnTheFlyFormatting = checkbuttonOnTheFlyFormatting.Active;
 			DefaultSourceEditorOptions.Instance.GenerateFormattingUndoStep = checkbuttonGenerateFormattingUndoStep.Active;
 			PropertyService.Set ("AutoSetPatternCasing", checkbuttonAutoSetSearchPatternCasing.Active);
 			PropertyService.Set ("AutoFormatDocumentOnSave", checkbuttonFormatOnSave.Active);
+			DefaultSourceEditorOptions.Instance.EnableSelectionWrappingKeys = checkbuttonEnableSelectionSurrounding.Active;
+			DefaultSourceEditorOptions.Instance.SmartBackspace = smartBackspaceCheckbutton.Active;
 		}
 
 		public void Initialize (OptionsDialog dialog, object dataObject)

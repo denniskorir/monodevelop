@@ -25,13 +25,14 @@
 //
 //
 
-
+using MonoDevelop.Components.AutoTest;
 using MonoDevelop.Components.Commands;
 using MonoDevelop.Core;
 using MonoDevelop.Core.Execution;
-using MonoDevelop.Ide.Gui;
+using MonoDevelop.Ide.Gui.Dialogs;
 using System;
 using MonoDevelop.Ide.Updater;
+using System.Threading.Tasks;
 
 namespace MonoDevelop.Ide.Commands
 {
@@ -39,7 +40,10 @@ namespace MonoDevelop.Ide.Commands
 	{
 		AddinManager,
 		ToolList,
-		InstrumentationViewer
+		InstrumentationViewer,
+		ToggleSessionRecorder,
+		ReplaySession,
+		EditCustomTools,
 	}
 
 	internal class AddinManagerHandler : CommandHandler
@@ -47,6 +51,21 @@ namespace MonoDevelop.Ide.Commands
 		protected override void Run ()
 		{
 			AddinsUpdateHandler.ShowManager ();
+		}
+	}
+
+	internal class RunCustomToolHandler : CommandHandler
+	{
+		ExternalTools.ExternalTool tool;
+
+		public RunCustomToolHandler (ExternalTools.ExternalTool tool)
+		{
+			this.tool = tool;
+		}
+
+		protected override void Run ()
+		{
+			tool.Run ();
 		}
 	}
 
@@ -58,71 +77,34 @@ namespace MonoDevelop.Ide.Commands
 				//Create CommandInfo object
 				CommandInfo commandInfo = new CommandInfo ();
 				commandInfo.Text = externalTool.MenuCommand;
-				commandInfo.Description = GettextCatalog.GetString ("Start tool") + " " + string.Join (string.Empty, externalTool.MenuCommand.Split('&'));
+				commandInfo.Description = GettextCatalog.GetString ("Start tool {0}", string.Join (string.Empty, externalTool.MenuCommand.Split('&')));
+				commandInfo.AccelKey = externalTool.AccelKey;
 
 				//Add menu item
 				info.Add (commandInfo, externalTool);
 
 			}
+			if (info.Count > 0)
+				info.AddSeparator ();
 		}
 
 		protected override void Run (object dataItem)
 		{
 			ExternalTools.ExternalTool tool = (ExternalTools.ExternalTool)dataItem;
-			
-			string argumentsTool = StringParserService.Parse (tool.Arguments, IdeApp.Workbench.GetStringTagModel ());
-			
-			//Save current file checkbox
-			if (tool.SaveCurrentFile && IdeApp.Workbench.ActiveDocument != null)
-				IdeApp.Workbench.ActiveDocument.Save ();
-
-			if (tool.PromptForArguments) {
-				string customerArguments = MessageService.GetTextResponse (GettextCatalog.GetString ("Enter any arguments you want to use while launching tool, {0}:", tool.MenuCommand), GettextCatalog.GetString ("Command Arguments for {0}", tool.MenuCommand), "");
-				if (customerArguments != String.Empty)
-					argumentsTool = StringParserService.Parse (customerArguments, IdeApp.Workbench.GetStringTagModel ());
-			}
-
-			DispatchService.BackgroundDispatch (delegate {
-				RunExternalTool (tool, argumentsTool);
-			});
+			tool.Run ();
 		}
+	}
 
-		void RunExternalTool (ExternalTools.ExternalTool tool, string argumentsTool)
+	internal class EditCustomToolsHandler : CommandHandler
+	{
+		protected override void Update (CommandInfo info)
 		{
-			string commandTool = StringParserService.Parse (tool.Command, IdeApp.Workbench.GetStringTagModel ());
-			string initialDirectoryTool = StringParserService.Parse (tool.InitialDirectory, IdeApp.Workbench.GetStringTagModel ());
-
-			//Execute tool
-			IProgressMonitor progressMonitor = IdeApp.Workbench.ProgressMonitors.GetRunProgressMonitor ();
-			try {
-				progressMonitor.Log.WriteLine (GettextCatalog.GetString ("Running: {0} {1}", (commandTool), (argumentsTool)));
-				progressMonitor.Log.WriteLine ();
-
-				ProcessWrapper processWrapper;
-				if (tool.UseOutputPad)
-					processWrapper = Runtime.ProcessService.StartProcess (commandTool, argumentsTool, initialDirectoryTool, progressMonitor.Log, progressMonitor.Log, null);
-				else
-					processWrapper = Runtime.ProcessService.StartProcess (commandTool, argumentsTool, initialDirectoryTool, null);
-
-				string processName = System.IO.Path.GetFileName (commandTool);
-				try {
-					processName = processWrapper.ProcessName;
-				} catch (SystemException) {
-				}
-
-				processWrapper.WaitForOutput ();
-
-				if (processWrapper.ExitCode == 0) {
-					progressMonitor.Log.WriteLine (GettextCatalog.GetString ("Process '{0}' has completed succesfully", processName));
-				} else {
-					progressMonitor.Log.WriteLine (GettextCatalog.GetString ("Process '{0}' has exited with error code {1}", processName, processWrapper.ExitCode));
-				}
-			} catch (Exception ex) {
-				progressMonitor.ReportError (GettextCatalog.GetString ("External program execution failed.\nError while starting:\n '{0} {1}'", commandTool, argumentsTool), ex);
-			} finally {
-				progressMonitor.Dispose ();
-			}
-
+			info.Text = ExternalTools.ExternalToolService.Tools.Count > 0 ? GettextCatalog.GetString ("Edit Custom Tools...") : GettextCatalog.GetString ("Add Custom Tool...");
+		}
+		
+		protected override void Run ()
+		{
+			IdeApp.Workbench.ShowGlobalPreferencesDialog (IdeApp.Workbench.RootWindow, "ExternalTools");
 		}
 	}
 
@@ -136,6 +118,61 @@ namespace MonoDevelop.Ide.Commands
 		protected override void Update (CommandInfo info)
 		{
 			info.Visible = MonoDevelop.Core.Instrumentation.InstrumentationService.Enabled;
+		}
+	}
+
+	internal class ToggleSessionRecorderHandler : CommandHandler
+	{
+		protected override void Run ()
+		{
+			if (AutoTestService.CurrentRecordSession == null) {
+				AutoTestService.StartRecordingSession ();
+			} else {
+				var selector = new FileSelectorDialog ("Save session as...", Gtk.FileChooserAction.Save);
+				try {
+					var result = MessageService.RunCustomDialog (selector, MessageService.RootWindow);
+
+					if (result == (int)Gtk.ResponseType.Cancel) {
+						return;
+					}
+
+					AutoTestService.StopRecordingSession (selector.Filename);
+				} finally {
+					selector.Destroy ();
+				}
+			}
+		}
+
+		protected override void Update (CommandInfo info)
+		{
+			info.Visible = IdeApp.Preferences.EnableAutomatedTesting;
+			info.Text = AutoTestService.CurrentRecordSession == null ? "Start Session Recorder" : "Stop Session Recorder";
+		}
+	}
+
+	internal class ReplaySessionHandler : CommandHandler
+	{
+		protected override void Run ()
+		{
+			var selector = new FileSelectorDialog ("Open session");
+			string filename = null;
+			try {
+				var result = MessageService.RunCustomDialog (selector, MessageService.RootWindow);
+
+				if (result == (int)Gtk.ResponseType.Cancel) {
+					return;
+				}
+
+				filename = selector.Filename;
+			} finally {
+				selector.Destroy ();
+			}
+			AutoTestService.ReplaySessionFromFile (filename);
+		}
+
+		protected override void Update (CommandInfo info)
+		{
+			info.Visible = IdeApp.Preferences.EnableAutomatedTesting;
 		}
 	}
 }

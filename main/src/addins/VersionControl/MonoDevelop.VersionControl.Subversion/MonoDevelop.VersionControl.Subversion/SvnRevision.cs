@@ -54,6 +54,17 @@ namespace MonoDevelop.VersionControl.Subversion
 			Kind = 1;
 		}
 		
+		public override bool Equals(object o)
+		{
+			var other = (SvnRevision)o;
+			return Rev == other.Rev && Kind == other.Kind;
+		}
+
+		public override int GetHashCode ()
+		{
+			return Rev ^ (Kind << 16);
+		}
+
 		public override string ToString()
 		{
 			return Rev.ToString();

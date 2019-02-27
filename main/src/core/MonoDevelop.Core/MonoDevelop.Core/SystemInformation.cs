@@ -66,13 +66,9 @@ namespace MonoDevelop.Core
 		}
 		
 		internal abstract void AppendOperatingSystem (StringBuilder sb);
-		
-		IEnumerable<ISystemInformationProvider> InternalGetDescription ()
-		{
-			foreach (var info in AddinManager.GetExtensionObjects<ISystemInformationProvider> ("/MonoDevelop/Core/SystemInformation", false)) {
-				yield return info;
-			}
 
+		public static string GetBuildInformation ()
+		{
 			var sb = new StringBuilder ();
 			// First append the MonoDevelop build information
 			var biFile = ((FilePath)Assembly.GetEntryAssembly ().Location).ParentDirectory.Combine ("buildinfo");
@@ -89,18 +85,30 @@ namespace MonoDevelop.Core
 			}
 
 			// Then append the Xamarin Addins information if it exists
-			biFile = ((FilePath) Assembly.GetEntryAssembly ().Location).ParentDirectory.Combine ("buildinfo_xamarin");
+			biFile = ((FilePath)Assembly.GetEntryAssembly ().Location).ParentDirectory.Combine ("buildinfo_xamarin");
 			if (File.Exists (biFile)) {
 				var lines = File.ReadAllLines (biFile)
 					.Select (l => l.Trim ())
 					.Where (l => !string.IsNullOrEmpty (l))
 					.ToArray ();
 				if (lines.Length > 0) {
-					sb.Append ("Xamarin addins: ");
+					sb.Append ("Xamarin extensions: ");
 					foreach (var line in lines)
 						sb.AppendLine (line);
 				}
 			}
+
+			return sb.ToString ();
+		}
+		
+		IEnumerable<ISystemInformationProvider> InternalGetDescription ()
+		{
+			foreach (var info in AddinManager.GetExtensionObjects<ISystemInformationProvider> ("/MonoDevelop/Core/SystemInformation", false)) {
+				yield return info;
+			}
+
+			var sb = new StringBuilder ();
+			sb.Append (GetBuildInformation ());
 
 			if (!string.IsNullOrEmpty (MonoDevelop.BuildInfo.BuildLane))
 				sb.Append ("Build lane: ").AppendLine (MonoDevelop.BuildInfo.BuildLane);
@@ -120,6 +128,17 @@ namespace MonoDevelop.Core
 				Title = "Operating System",
 				Description = sb.ToString ()
 			};
+
+			string userAddins = string.Join (Environment.NewLine,
+				AddinManager.Registry.GetModules (AddinSearchFlags.IncludeAddins | AddinSearchFlags.LatestVersionsOnly)
+				.Where (addin => addin.IsUserAddin && addin.Enabled)
+				.Select (addin => string.Format ("{0} {1}", addin.Name, addin.Version))
+			);
+			if (!string.IsNullOrEmpty (userAddins))
+				yield return new SystemInformationSection () {
+					Title = "Enabled user installed extensions",
+					Description = userAddins,
+				};
 		}
 
 		internal static string GetReleaseId ()
@@ -147,6 +166,13 @@ namespace MonoDevelop.Core
 				sb.Append ("\n\n");
 			}
 			return sb.ToString ();
+		}
+
+		public static string GetOperatingSystemDescription ()
+		{
+			var sb = new StringBuilder ();
+			Instance.AppendOperatingSystem (sb);
+			return sb.ToString ().Trim ();
 		}
 	}
 

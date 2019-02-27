@@ -42,7 +42,7 @@ namespace MonoDevelop.Ide.StandardHeader
 {
 	public static class StandardHeaderService
 	{
-		public static string GetHeader (SolutionItem policyParent, string fileName, bool newFile)
+		public static string GetHeader (SolutionFolderItem policyParent, string fileName, bool newFile)
 		{
 			StandardHeaderPolicy headerPolicy = policyParent != null ? policyParent.Policies.Get<StandardHeaderPolicy> () : MonoDevelop.Projects.Policies.PolicyService.GetDefaultPolicy<StandardHeaderPolicy> ();
 			TextStylePolicy textPolicy = policyParent != null ? policyParent.Policies.Get<TextStylePolicy> ("text/plain") : MonoDevelop.Projects.Policies.PolicyService.GetDefaultPolicy<TextStylePolicy> ("text/plain");
@@ -70,7 +70,7 @@ namespace MonoDevelop.Ide.StandardHeader
 				if (!char.IsWhiteSpace (cmt[cmt.Length - 1]))
 					cmt = cmt + " ";
 				
-				StringBuilder sb = new StringBuilder (policy.Text.Length);
+				StringBuilder sb = StringBuilderCache.Allocate ();
 				string[] lines = policy.Text.Split ('\n');
 				foreach (string line in lines) {
 					if (string.IsNullOrWhiteSpace (line)) {
@@ -82,7 +82,7 @@ namespace MonoDevelop.Ide.StandardHeader
 					sb.Append (line);
 					sb.Append (eolMarker);
 				}
-				result = sb.ToString ();
+				result = StringBuilderCache.ReturnAndFree (sb);
 			} else {
 				//multiline comment
 				result = String.Concat (comment[0], "\n", policy.Text, "\n", comment[1], "\n");

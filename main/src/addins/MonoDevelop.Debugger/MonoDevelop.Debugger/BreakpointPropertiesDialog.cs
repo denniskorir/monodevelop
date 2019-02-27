@@ -36,6 +36,8 @@ using Xwt;
 using Xwt.Drawing;
 using System.Linq;
 using System.IO;
+using System.Threading.Tasks;
+using MetadataReferenceProperties = Microsoft.CodeAnalysis.MetadataReferenceProperties;
 
 namespace MonoDevelop.Debugger
 {
@@ -53,19 +55,19 @@ namespace MonoDevelop.Debugger
 		Catchpoint
 	}
 
-	sealed class BreakpointPropertiesDialog : Dialog
+	sealed class BreakpointPropertiesDialog : Xwt.Dialog
 	{
 		// For button sensitivity.
 		DialogButton buttonOk;
 		bool editing;
 
 		// Groupings for sensitivity
-		HBox hboxFunction = new HBox (){ MarginLeft = 18 };
+		HBox hboxFunction = new HBox () { MarginLeft = 18 };
 		HBox hboxLocation = new HBox ();
 		HBox hboxException = new HBox ();
 		HBox hboxCondition = new HBox ();
-		VBox vboxException = new VBox (){ MarginLeft = 18 };
-		VBox vboxLocation = new VBox (){ MarginLeft = 18 };
+		VBox vboxException = new VBox () { MarginLeft = 18 };
+		VBox vboxLocation = new VBox () { MarginLeft = 18 };
 		// Breakpoint Action radios.
 		readonly RadioButton breakpointActionPause = new RadioButton (GettextCatalog.GetString ("Pause the program"));
 		readonly RadioButton breakpointActionPrint = new RadioButton (GettextCatalog.GetString ("Print a message and continue"));
@@ -76,104 +78,18 @@ namespace MonoDevelop.Debugger
 		readonly RadioButton stopOnException = new RadioButton (GettextCatalog.GetString ("When an exception is thrown"));
 
 		// Text entries
-		readonly TextEntry entryFunctionName = new TextEntry (){ PlaceholderText = GettextCatalog.GetString ("e.g. System.Object.ToString") };
-		readonly TextEntry entryLocationFile = new TextEntry (){ PlaceholderText = GettextCatalog.GetString ("e.g. Program.cs:15:5") };
-		readonly TextEntryWithCodeCompletion entryExceptionType = new TextEntryWithCodeCompletion (){ PlaceholderText = GettextCatalog.GetString ("e.g. System.InvalidOperationException") };
-		readonly TextEntry entryConditionalExpression = new TextEntry (){ PlaceholderText = GettextCatalog.GetString ("e.g. colorName == \"Red\"") };
+		readonly TextEntry entryFunctionName = new TextEntry () { PlaceholderText = GettextCatalog.GetString ("e.g. System.Object.ToString") };
+		readonly TextEntry entryLocationFile = new TextEntry () { PlaceholderText = GettextCatalog.GetString ("e.g. Program.cs:15:5") };
+		readonly TextEntryWithCodeCompletion entryExceptionType = new TextEntryWithCodeCompletion () { PlaceholderText = GettextCatalog.GetString ("e.g. System.InvalidOperationException") };
+		readonly TextEntry entryConditionalExpression = new TextEntry () { PlaceholderText = GettextCatalog.GetString ("e.g. colorName == \"Red\"") };
 		readonly TextEntry entryPrintExpression = new TextEntry () { PlaceholderText = GettextCatalog.GetString ("e.g. Value of 'name' is {name}") };
 
 		// Warning icon
-		readonly ImageViewWithTooltip warningFunction = new ImageViewWithTooltip (ImageService.GetIcon (Ide.Gui.Stock.Warning, Gtk.IconSize.Menu));
-		readonly ImageViewWithTooltip warningLocation = new ImageViewWithTooltip (ImageService.GetIcon (Ide.Gui.Stock.Warning, Gtk.IconSize.Menu));
-		readonly ImageViewWithTooltip warningException = new ImageViewWithTooltip (ImageService.GetIcon (Ide.Gui.Stock.Warning, Gtk.IconSize.Menu));
-		readonly ImageViewWithTooltip warningCondition = new ImageViewWithTooltip (ImageService.GetIcon (Ide.Gui.Stock.Warning, Gtk.IconSize.Menu));
-		readonly ImageViewWithTooltip warningPrintExpression = new ImageViewWithTooltip (ImageService.GetIcon (Ide.Gui.Stock.Warning, Gtk.IconSize.Menu));
-
-		//This class was created because normal TooltipText sometimes didn't appear seems like GTK# bug
-		class ImageViewWithTooltip : Xwt.Widget
-		{
-			string tip;
-			Xwt.Drawing.Image icon;
-			Xwt.ImageView image;
-
-			MonoDevelop.Components.TooltipPopoverWindow tooltipWindow;
-			bool mouseOver;
-
-			public ImageViewWithTooltip (Xwt.Drawing.Image icon)
-			{
-				this.icon = icon;
-				image = new Xwt.ImageView (icon);
-				this.Content = image;
-
-				MouseEntered += HandleEnterNotifyEvent;
-				MouseExited += HandleLeaveNotifyEvent;
-			}
-
-			[GLib.ConnectBefore]
-			void HandleLeaveNotifyEvent (object sender, EventArgs e)
-			{
-				mouseOver = false;
-				HideTooltip ();
-			}
-
-			[GLib.ConnectBefore]
-			void HandleEnterNotifyEvent (object sender, EventArgs e)
-			{
-				mouseOver = true;
-				ShowTooltip ();
-			}
-
-			bool ShowTooltip ()
-			{
-				if (!string.IsNullOrEmpty (tip)) {
-					HideTooltip ();
-					tooltipWindow = new MonoDevelop.Components.TooltipPopoverWindow ();
-					tooltipWindow.ShowArrow = true;
-					tooltipWindow.Text = tip;
-					var rect = this.ScreenBounds;
-					tooltipWindow.ShowPopup ((Gtk.Widget)Xwt.Toolkit.CurrentEngine.GetNativeWidget (this),
-						new Gdk.Rectangle ((int)(ParentWindow.X - rect.X), (int)(ParentWindow.Y - rect.Y), (int)rect.Width, (int)rect.Height), 
-						MonoDevelop.Components.PopupPosition.Bottom);
-				}
-				return false;
-			}
-
-			void HideTooltip ()
-			{
-				if (tooltipWindow != null) {
-					tooltipWindow.Destroy ();
-					tooltipWindow = null;
-				}
-			}
-
-			protected override void Dispose (bool disposing)
-			{
-				HideTooltip ();
-				base.Dispose (disposing);
-			}
-
-			public string ToolTip {
-				get { return tip; }
-				set {
-					tip = value;
-					if (tooltipWindow != null) {
-						if (!string.IsNullOrEmpty (tip))
-							tooltipWindow.Text = value;
-						else
-							HideTooltip ();
-					} else if (!string.IsNullOrEmpty (tip) && mouseOver)
-						ShowTooltip ();
-				}
-			}
-
-			public Xwt.Drawing.Image Image {
-				get { return icon; }
-				set {
-					icon = value;
-					image.Image = icon;
-				}
-			}
-		}
+		readonly Components.InformationPopoverWidget warningFunction = new Components.InformationPopoverWidget () { Severity = Ide.Tasks.TaskSeverity.Warning };
+		readonly Components.InformationPopoverWidget warningLocation = new Components.InformationPopoverWidget () { Severity = Ide.Tasks.TaskSeverity.Warning };
+		readonly Components.InformationPopoverWidget warningException = new Components.InformationPopoverWidget () { Severity = Ide.Tasks.TaskSeverity.Warning };
+		readonly Components.InformationPopoverWidget warningCondition = new Components.InformationPopoverWidget () { Severity = Ide.Tasks.TaskSeverity.Warning };
+		readonly Components.InformationPopoverWidget warningPrintExpression = new Components.InformationPopoverWidget () { Severity = Ide.Tasks.TaskSeverity.Warning };
 
 		// Combobox + Pager
 		readonly SpinButton ignoreHitCount = new SpinButton ();
@@ -196,16 +112,17 @@ namespace MonoDevelop.Debugger
 		ParsedLocation breakpointLocation = new ParsedLocation ();
 
 		BreakEvent be;
-		string[] parsedParamTypes;
+		string [] parsedParamTypes;
 		string parsedFunction;
 		readonly HashSet<string> classes = new HashSet<string> ();
 
 		public BreakpointPropertiesDialog (BreakEvent be, BreakpointType breakpointType)
 		{
 			this.be = be;
-			LoadExceptionList ();
+			Task.Run (LoadExceptionList);
 			Initialize ();
 			SetInitialData ();
+			SetAccessibility ();
 			SetLayout ();
 			if (be == null) {
 				switch (breakpointType) {
@@ -220,6 +137,9 @@ namespace MonoDevelop.Debugger
 				case BreakpointType.Catchpoint:
 					stopOnException.Active = true;
 					entryExceptionType.SetFocus ();
+					entryExceptionType.Text = "System.Exception";
+					entryExceptionType.SelectionStart = 0;
+					entryExceptionType.SelectionLength = entryExceptionType.TextLength;
 					break;
 				}
 			}
@@ -227,9 +147,14 @@ namespace MonoDevelop.Debugger
 
 		void Initialize ()
 		{
-			Title = GettextCatalog.GetString (be == null ? "Create a Breakpoint" : "Edit Breakpoint");
-			var buttonLabel = GettextCatalog.GetString (be == null ? "Create" : "Apply");
-
+			string buttonLabel;
+			if (be == null) {
+				Title = GettextCatalog.GetString ("Create a Breakpoint");
+				buttonLabel = GettextCatalog.GetString ("Create");
+			} else {
+				Title = GettextCatalog.GetString ("Edit Breakpoint");
+				buttonLabel = GettextCatalog.GetString ("Apply");
+			}
 			var actionGroup = new RadioButtonGroup ();
 			breakpointActionPause.Group = actionGroup;
 			breakpointActionPrint.Group = actionGroup;
@@ -351,12 +276,12 @@ namespace MonoDevelop.Debugger
 
 			if (project != null) {
 				// Check the startup project of the solution too, since the current project may be a library
-				SolutionEntityItem startup = project.ParentSolution.StartupItem;
+				SolutionItem startup = project.ParentSolution.StartupItem;
 				entryConditionalExpression.Sensitive = DebuggingService.IsFeatureSupported (project, DebuggerFeatures.ConditionalBreakpoints) ||
 				DebuggingService.IsFeatureSupported (startup, DebuggerFeatures.ConditionalBreakpoints);
 
 				bool canTrace = DebuggingService.IsFeatureSupported (project, DebuggerFeatures.Tracepoints) ||
-				                DebuggingService.IsFeatureSupported (startup, DebuggerFeatures.Tracepoints);
+								DebuggingService.IsFeatureSupported (startup, DebuggerFeatures.Tracepoints);
 
 				breakpointActionPause.Sensitive = canTrace;
 				entryPrintExpression.Sensitive = canTrace;
@@ -416,11 +341,11 @@ namespace MonoDevelop.Debugger
 				checkIncludeSubclass.Active = true;
 
 				if (IdeApp.Workbench.ActiveDocument != null &&
-				    IdeApp.Workbench.ActiveDocument.Editor != null &&
-				    IdeApp.Workbench.ActiveDocument.FileName != FilePath.Null) {
+					IdeApp.Workbench.ActiveDocument.Editor != null &&
+					IdeApp.Workbench.ActiveDocument.FileName != FilePath.Null) {
 					breakpointLocation.Update (IdeApp.Workbench.ActiveDocument.FileName,
-						IdeApp.Workbench.ActiveDocument.Editor.Caret.Line,
-						IdeApp.Workbench.ActiveDocument.Editor.Caret.Column);
+						IdeApp.Workbench.ActiveDocument.Editor.CaretLine,
+						IdeApp.Workbench.ActiveDocument.Editor.CaretColumn);
 					entryLocationFile.Text = breakpointLocation.ToString ();
 					stopOnLocation.Active = true;
 				}
@@ -441,36 +366,36 @@ namespace MonoDevelop.Debugger
 			public void Update (string location)
 			{
 				if (string.IsNullOrWhiteSpace (location)) {
-					Warning = GettextCatalog.GetString ("Enter location");
+					Warning = GettextCatalog.GetString ("Enter location.");
 					return;
 				}
 				var splitted = location.Split (':');
 				if (!File.Exists (splitted [0])) {
 					//Maybe it's C:\filepath.ext
 					if (splitted.Length > 1 && File.Exists (splitted [0] + ":" + splitted [1])) {
-						var newSplitted = new string[splitted.Length - 1];
+						var newSplitted = new string [splitted.Length - 1];
 						newSplitted [0] = splitted [0] + ":" + splitted [1];
 						for (int i = 2; i < splitted.Length; i++) {
 							newSplitted [i - 1] = splitted [i];
 						}
 						splitted = newSplitted;
 					} else {
-						Warning = GettextCatalog.GetString ("File does not exist");
+						Warning = GettextCatalog.GetString ("File does not exist.");
 						return;
 					}
 				}
 				if (splitted.Length < 2) {
-					Warning = GettextCatalog.GetString ("Missing ':' for line declaration");
+					Warning = GettextCatalog.GetString ("Missing ':' for line declaration.");
 					return;
 				}
 				FileName = splitted [0];
 				if (!int.TryParse (splitted [1], out line)) {
-					Warning = GettextCatalog.GetString ("Line is not a number");
+					Warning = GettextCatalog.GetString ("Line is not a number.");
 					return;
 				}
 
 				if (splitted.Length > 2 && !int.TryParse (splitted [2], out column)) {
-					Warning = GettextCatalog.GetString ("Column is not a number");
+					Warning = GettextCatalog.GetString ("Column is not a number.");
 					return;
 				} else {
 					column = 1;
@@ -486,7 +411,7 @@ namespace MonoDevelop.Debugger
 			public void Update (string filePath, int line, int column)
 			{
 				if (!System.IO.File.Exists (filePath)) {
-					Warning = GettextCatalog.GetString ("File does not exist");
+					Warning = GettextCatalog.GetString ("File does not exist.");
 				} else {
 					Warning = "";
 				}
@@ -617,7 +542,7 @@ namespace MonoDevelop.Debugger
 
 			if (breakpointActionPrint.Active && string.IsNullOrWhiteSpace (entryPrintExpression.Text)) {
 				warningPrintExpression.Show ();
-				warningPrintExpression.ToolTip = GettextCatalog.GetString ("Trace expression not specified");
+				warningPrintExpression.Message = GettextCatalog.GetString ("Enter trace expression.");
 				result = false;
 			}
 
@@ -627,13 +552,13 @@ namespace MonoDevelop.Debugger
 				if (stopOnFunction.Active) {
 					if (text.Length == 0) {
 						warningFunction.Show ();
-						warningFunction.ToolTip = GettextCatalog.GetString ("Function name not specified");
+						warningFunction.Message = GettextCatalog.GetString ("Enter function name.");
 						result = false;
 					}
 
 					if (!TryParseFunction (text, out parsedFunction, out parsedParamTypes)) {
 						warningFunction.Show ();
-						warningFunction.ToolTip = GettextCatalog.GetString ("Invalid function syntax");
+						warningFunction.Message = GettextCatalog.GetString ("Invalid function syntax.");
 						result = false;
 					}
 				}
@@ -641,20 +566,26 @@ namespace MonoDevelop.Debugger
 				breakpointLocation.Update (entryLocationFile.Text);
 				if (!breakpointLocation.IsValid) {
 					warningLocation.Show ();
-					warningLocation.ToolTip = breakpointLocation.Warning;
+					warningLocation.Message = breakpointLocation.Warning;
 					result = false;
 				}
 			} else if (stopOnException.Active) {
-				if (!classes.Contains (entryExceptionType.Text)) {
+				if (string.IsNullOrWhiteSpace (entryExceptionType.Text)) {
 					warningException.Show ();
-					warningException.ToolTip = GettextCatalog.GetString ("Exception not identified");
+					warningException.Message = GettextCatalog.GetString ("Enter exception type.");
 					result = false;
+				} else if (!classes.Contains (entryExceptionType.Text)) {
+					warningException.Show ();
+					warningException.Message = GettextCatalog.GetString ("Exception not identified in exception list generated from currently selected project.");
+					//We might be missing some exceptions that are loaded at runtime from outside our project
+					//or we don't have project at all, hence show warning but still allow user to close window
+					result = true;
 				}
 			}
 			return result;
 		}
 
-		static bool TryParseFunction (string signature, out string function, out string[] paramTypes)
+		static bool TryParseFunction (string signature, out string function, out string [] paramTypes)
 		{
 			int paramListStart = signature.IndexOf ('(');
 			int paramListEnd = signature.IndexOf (')');
@@ -684,24 +615,42 @@ namespace MonoDevelop.Debugger
 			return true;
 		}
 
-		void LoadExceptionList ()
+		async Task LoadExceptionList ()
 		{
 			classes.Add ("System.Exception");
-			if (IdeApp.ProjectOperations.CurrentSelectedProject != null) {
-				var dom = TypeSystemService.GetCompilation (IdeApp.ProjectOperations.CurrentSelectedProject);
-				foreach (var t in dom.FindType (typeof (Exception)).GetSubTypeDefinitions ())
-					classes.Add (t.ReflectionName);
-			} else {
-				// no need to unload this assembly context, it's not cached.
-				var unresolvedAssembly = TypeSystemService.LoadAssemblyContext (Runtime.SystemAssemblyService.CurrentRuntime, MonoDevelop.Core.Assemblies.TargetFramework.Default, typeof(Uri).Assembly.Location);
-				var mscorlib = TypeSystemService.LoadAssemblyContext (Runtime.SystemAssemblyService.CurrentRuntime, MonoDevelop.Core.Assemblies.TargetFramework.Default, typeof(object).Assembly.Location);
-				if (unresolvedAssembly != null && mscorlib != null) {
-					var dom = new ICSharpCode.NRefactory.TypeSystem.Implementation.SimpleCompilation (unresolvedAssembly, mscorlib);
-					foreach (var t in dom.FindType (typeof (Exception)).GetSubTypeDefinitions ())
-						classes.Add (t.ReflectionName);
+			try {
+				Microsoft.CodeAnalysis.Compilation compilation = null;
+				MonoDevelopWorkspace workspace = null;
+
+				var project = IdeApp.ProjectOperations.CurrentSelectedProject;
+				if (project != null) {
+					var roslynProj = TypeSystemService.GetProject (project);
+					if (roslynProj != null) {
+						workspace = (MonoDevelopWorkspace)roslynProj.Solution.Workspace;
+						compilation = await roslynProj.GetCompilationAsync ();
+					}
 				}
+
+				if (compilation == null) {
+					var service = workspace.MetadataReferenceManager;
+					var corlib = service.GetOrCreateMetadataReferenceSnapshot (System.Reflection.Assembly.GetAssembly (typeof (object)).Location, MetadataReferenceProperties.Assembly);
+					var system = service.GetOrCreateMetadataReferenceSnapshot (System.Reflection.Assembly.GetAssembly (typeof (Uri)).Location, MetadataReferenceProperties.Assembly);
+
+					//no need to unload this assembly context, it's not cached.
+					compilation = Microsoft.CodeAnalysis.CSharp.CSharpCompilation.Create ("GetExceptions")
+					                       .AddReferences (corlib)
+					                       .AddReferences (system);
+				}
+				var exceptionClass = compilation.GetTypeByMetadataName ("System.Exception");
+				foreach (var t in compilation.GlobalNamespace.GetAllTypes ().Where ((arg) => arg.IsDerivedFromClass (exceptionClass))) {
+					classes.Add (t.GetFullMetadataName ());
+				}
+			} catch (Exception e) {
+				LoggingService.LogError ("Failed to obtain exceptions list in breakpoint dialog.", e);
 			}
-			entryExceptionType.SetCodeCompletionList (classes.ToList ());
+			await Runtime.RunInMainThread (() => {
+				entryExceptionType.SetCodeCompletionList (classes.ToList ());
+			});
 		}
 
 		public BreakEvent GetBreakEvent ()
@@ -709,18 +658,108 @@ namespace MonoDevelop.Debugger
 			return be;
 		}
 
+		void SetAccessibility ()
+		{
+			var accessible = breakpointActionPause.Accessible;
+			accessible.Identifier = "BreakpointPropertiesDialog.Pause";
+			accessible.Description = GettextCatalog.GetString ("Cause the program to pause when the breakpoint is hit");
+
+			accessible = breakpointActionPrint.Accessible;
+			accessible.Identifier = "BreakpointPropertiesDialog.Print";
+			accessible.Description = GettextCatalog.GetString ("Cause the program to print a message and continue when the breakpoint is hit");
+
+			accessible = entryPrintExpression.Accessible;
+			accessible.Identifier = "BreakpointPropertiesDialog.PrintExpression";
+			accessible.Label = GettextCatalog.GetString ("Breakpoint Expression");
+			accessible.Description = GettextCatalog.GetString ("Enter the expression you wish to have printed to the console. Place simple C# expressions within {} to interpolate them.");
+
+			accessible = warningPrintExpression.Accessible;
+			accessible.Identifier = "BreakpointPropertiesDialog.WarningPrintExpression";
+			accessible.Description = GettextCatalog.GetString ("There is a warning for the print expression");
+
+			accessible = stopOnFunction.Accessible;
+			accessible.Identifier = "BreakpointPropertiesDialog.StopOnFunction";
+			accessible.Description = GettextCatalog.GetString ("Execute the action when a function is entered");
+
+			accessible = entryFunctionName.Accessible;
+			accessible.Identifier = "BreakpointPropertiesDialog.FunctionName";
+			accessible.Label = GettextCatalog.GetString ("Breakpoint Function");
+			accessible.Description = GettextCatalog.GetString ("Enter the name of the breakpoint function");
+
+			accessible = warningFunction.Accessible;
+			accessible.Identifier = "BreakpointPropertiesDialog.WarningFunction";
+			accessible.Description = GettextCatalog.GetString ("There is a warning for the function name");
+
+			accessible = stopOnException.Accessible;
+			accessible.Identifier = "BreakpointPropertiesDialog.StopOnException";
+			accessible.Description = GettextCatalog.GetString ("Execute the action when an exception is thrown");
+
+			accessible = entryExceptionType.Accessible;
+			accessible.Identifier = "BreakpointPropertiesDialog.ExceptionType";
+			accessible.Label = GettextCatalog.GetString ("Breakpoint Exception");
+			accessible.Description = GettextCatalog.GetString ("Enter the type of the breakpoint exception");
+
+			accessible = warningException.Accessible;
+			accessible.Identifier = "BreakpointPropertiesDialog.WarningException";
+			accessible.Description = GettextCatalog.GetString ("There is a warning for the exception type");
+
+			accessible = checkIncludeSubclass.Accessible;
+			accessible.Identifier = "BreakpointPropertiesDialog.IncludeSubclasses";
+			accessible.Description = GettextCatalog.GetString ("Select whether to also break on exception subclasses");
+
+			accessible = stopOnLocation.Accessible;
+			accessible.Identifier = "BreakpointPropertiesDialog.StopOnLocation";
+			accessible.Description = GettextCatalog.GetString ("Execute the action when the program reaches a location in a file");
+
+			accessible = entryLocationFile.Accessible;
+			accessible.Identifier = "BreakpointPropertiesDialog.FileLocation";
+			accessible.Label = GettextCatalog.GetString ("Breakpoint Location");
+			accessible.Description = GettextCatalog.GetString ("Enter the file and line number of the breakpoint location");
+
+			accessible = warningLocation.Accessible;
+			accessible.Identifier = "BreakpointPropertiesDialog.WarningLocation";
+			accessible.Description = GettextCatalog.GetString ("There is a warning for the breakpoint location");
+
+			accessible = ignoreHitType.Accessible;
+			accessible.Identifier = "BreakpointPropertiesDialog.HitType";
+			accessible.Label = GettextCatalog.GetString ("Breakpoint Hit Count Type");
+			accessible.Description = GettextCatalog.GetString ("Select a hit count condition for this breakpoint");
+
+			accessible = ignoreHitCount.Accessible;
+			accessible.Identifier = "BreakpointPropertiesDialog.HitCount";
+			accessible.Label = GettextCatalog.GetString ("Hit Count");
+			accessible.Description = GettextCatalog.GetString ("Enter the hit count required for the condition");
+
+			accessible = conditionalHitType.Accessible;
+			accessible.Identifier = "BreakpointPropertiesDialog.ConditionalHit";
+			accessible.Label = GettextCatalog.GetString ("Conditional Breakpoint Hit Type");
+			accessible.Description = GettextCatalog.GetString ("Select an extra condition for this breakpoint");
+
+			accessible = entryConditionalExpression.Accessible;
+			accessible.Identifier = "BreakpointPropertiesDialog.ConditionEntry";
+			accessible.Label = GettextCatalog.GetString ("Conditional Breakpoint Expression");
+			accessible.Description = GettextCatalog.GetString ("Enter a C# boolean expression to act as a condition for this breakpoint. The scope of the expression is local to the breakpoint");
+
+			accessible = warningCondition.Accessible;
+			accessible.Identifier = "BreakpointPropertiesDialog.WarningCondition";
+			accessible.Description = GettextCatalog.GetString ("There is a warning for the condition expression");
+		}
+
 		void SetLayout ()
 		{
 			var vbox = new VBox ();
+			vbox.Accessible.Role = Xwt.Accessibility.Role.Filler;
 			vbox.MinWidth = 450;
 
-			vbox.PackStart (new Label (GettextCatalog.GetString ("Breakpoint Action")) {
+			var actionLabel = new Label (GettextCatalog.GetString ("Breakpoint Action")) {
 				Font = vbox.Font.WithWeight (FontWeight.Bold)
-			});
+			};
+			vbox.PackStart (actionLabel);
 
 			var breakpointActionGroup = new VBox {
 				MarginLeft = 12
 			};
+			breakpointActionGroup.Accessible.Role = Xwt.Accessibility.Role.Filler;
 
 			breakpointActionGroup.PackStart (breakpointActionPause);
 			breakpointActionGroup.PackStart (breakpointActionPrint);
@@ -729,7 +768,13 @@ namespace MonoDevelop.Debugger
 				MarginLeft = 18
 			};
 
+			printExpressionGroup.Accessible.Role = Xwt.Accessibility.Role.Filler;
+
 			printExpressionGroup.PackStart (entryPrintExpression, true);
+
+			// We'll ignore this label because the content of the label is included in the accessibility Help text of the 
+			// entryPrintExpression widget
+			warningPrintExpression.Accessible.Role = Xwt.Accessibility.Role.Filler;
 			printExpressionGroup.PackStart (warningPrintExpression);
 			breakpointActionGroup.PackStart (printExpressionGroup);
 
@@ -737,13 +782,15 @@ namespace MonoDevelop.Debugger
 
 			vbox.PackStart (breakpointActionGroup);
 
-			vbox.PackStart (new Label (GettextCatalog.GetString ("When to Take Action")) {
+			var whenLabel = new Label (GettextCatalog.GetString ("When to Take Action")) {
 				Font = vbox.Font.WithWeight (FontWeight.Bold)
-			});
+			};
+			vbox.PackStart (whenLabel);
 
 			var whenToTakeActionRadioGroup = new VBox {
 				MarginLeft = 12
 			};
+			whenToTakeActionRadioGroup.Accessible.Role = Xwt.Accessibility.Role.Filler;
 
 			// Function group
 			{
@@ -760,6 +807,8 @@ namespace MonoDevelop.Debugger
 				whenToTakeActionRadioGroup.PackStart (stopOnException);
 
 				hboxException = new HBox ();
+				hboxException.Accessible.Role = Xwt.Accessibility.Role.Filler;
+
 				hboxException.PackStart (entryExceptionType, true);
 				hboxException.PackEnd (warningException);
 
@@ -780,23 +829,31 @@ namespace MonoDevelop.Debugger
 			}
 			vbox.PackStart (whenToTakeActionRadioGroup);
 
-			vbox.PackStart (new Label (GettextCatalog.GetString ("Advanced Conditions")) {
+			var advancedLabel = new Label (GettextCatalog.GetString ("Advanced Conditions")) {
 				Font = vbox.Font.WithWeight (FontWeight.Bold)
-			});
+			};
+			vbox.PackStart (advancedLabel);
 
 			var vboxAdvancedConditions = new VBox {
 				MarginLeft = 30
 			};
+			vboxAdvancedConditions.Accessible.Role = Xwt.Accessibility.Role.Filler;
+
 			var hboxHitCount = new HBox ();
+			hboxHitCount.Accessible.Role = Xwt.Accessibility.Role.Filler;
 			hboxHitCount.PackStart (ignoreHitType, true);
 			hboxHitCount.PackStart (ignoreHitCount);
 			vboxAdvancedConditions.PackStart (hboxHitCount);
 
 			vboxAdvancedConditions.PackStart (conditionalHitType);
 			hboxCondition = new HBox ();
+			hboxCondition.Accessible.Role = Xwt.Accessibility.Role.Filler;
+
 			hboxCondition.PackStart (entryConditionalExpression, true);
 			hboxCondition.PackStart (warningCondition);
 			vboxAdvancedConditions.PackStart (hboxCondition);
+
+			conditionalExpressionTip.Accessible.Role = Xwt.Accessibility.Role.Filler;
 			vboxAdvancedConditions.PackEnd (conditionalExpressionTip);
 
 			vbox.PackStart (vboxAdvancedConditions);

@@ -30,24 +30,32 @@ using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.Linq;
+using System.Threading;
+using System.Threading.Tasks;
+using MonoDevelop.Core;
 
 namespace MonoDevelop.Components.Commands
 {
-	public class CommandArrayInfo: IEnumerable
+	public class CommandArrayInfo: IEnumerable<CommandInfo>
 	{
 		List<CommandInfo> list = new List<CommandInfo> ();
 		CommandInfo defaultInfo;
 		bool bypass;
 		internal object UpdateHandlerData;
+		Task updateTask;
+		CancellationTokenSource cancellationTokenSource;
 		
 		internal CommandArrayInfo (CommandInfo defaultInfo)
 		{
 			this.defaultInfo = defaultInfo;
 		}
 
+		internal CommandInfo ParentCommandInfo { get; set; }
+
 		public void Clear ()
 		{
 			list.Clear ();
+			NotifyChanged ();
 		}
 		
 		public CommandInfo FindCommandInfo (object dataItem)
@@ -80,6 +88,8 @@ namespace MonoDevelop.Components.Commands
 			if (info.Text == null) info.Text = defaultInfo.Text;
 			if (info.Icon.IsNull) info.Icon = defaultInfo.Icon;
 			list.Insert (index, info);
+			info.ParentCommandArrayInfo = this;
+			NotifyChanged ();
 		}
 
 		public CommandInfo Insert (int index, string text, object dataItem)
@@ -100,6 +110,8 @@ namespace MonoDevelop.Components.Commands
 			if (info.Text == null) info.Text = defaultInfo.Text;
 			if (info.Icon.IsNull) info.Icon = defaultInfo.Icon;
 			list.Add (info);
+			info.ParentCommandArrayInfo = this;
+			NotifyChanged ();
 		}
 
 		public CommandInfo Add (string text, object dataItem)
@@ -128,10 +140,20 @@ namespace MonoDevelop.Components.Commands
 		public CommandInfo DefaultCommandInfo {
 			get { return defaultInfo; }
 		}
-		
-		public IEnumerator GetEnumerator ()
+
+		public List<CommandInfo>.Enumerator GetEnumerator ()
 		{
 			return list.GetEnumerator ();
+		}
+
+		IEnumerator<CommandInfo> IEnumerable<CommandInfo>.GetEnumerator ()
+		{
+			return list.GetEnumerator ();
+		}
+
+		IEnumerator IEnumerable.GetEnumerator ()
+		{
+			return GetEnumerator ();
 		}
 		
 		// When set in an update handler, the command manager will ignore this handler method
@@ -139,6 +161,38 @@ namespace MonoDevelop.Components.Commands
 		public bool Bypass {
 			get { return bypass; }
 			set { bypass = value; }
+		}
+
+		internal void NotifyChanged ()
+		{
+			Runtime.AssertMainThread ();
+			Changed?.Invoke (this, EventArgs.Empty);
+			ParentCommandInfo?.NotifyChanged ();
+		}
+
+		public event EventHandler Changed;
+
+		public CancellationToken AsyncUpdateCancellationToken {
+			get {
+				if (cancellationTokenSource == null)
+					cancellationTokenSource = new CancellationTokenSource ();
+				return cancellationTokenSource.Token;
+			}
+		}
+
+		public bool IsUpdatingAsynchronously {
+			get { return updateTask != null; }
+		}
+
+		public void SetUpdateTask (Task task)
+		{
+			updateTask = task;
+		}
+
+		internal void CancelAsyncUpdate ()
+		{
+			if (cancellationTokenSource != null)
+				cancellationTokenSource.Cancel ();
 		}
 	}
 }

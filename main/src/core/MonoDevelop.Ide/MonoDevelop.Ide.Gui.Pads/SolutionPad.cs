@@ -28,6 +28,8 @@
 
 using System;
 
+using MonoDevelop.Components.AtkCocoaHelper;
+using MonoDevelop.Core;
 using MonoDevelop.Projects;
 using MonoDevelop.Ide.Gui.Components;
 
@@ -46,11 +48,17 @@ namespace MonoDevelop.Ide.Gui.Pads
 			base.Initialize (builders, options, contextMenuPath);
 			foreach (WorkspaceItem it in IdeApp.Workspace.Items)
 				treeView.AddChild (it);
+			base.TreeView.Tree.Name = "solutionBrowserTree";
+
+			base.TreeView.Tree.SetCommonAccessibilityAttributes ("SolutionBrowserTree",
+			                                                     GettextCatalog.GetString ("Solution"),
+			                                                     GettextCatalog.GetString ("Explore the current solution's files and structure"));
 		}
 		
 		protected virtual void OnOpenWorkspace (object sender, WorkspaceItemEventArgs e)
 		{
-			treeView.AddChild (e.Item);
+			if (treeView.GetNodeAtObject (e.Item) == null)
+				treeView.AddChild (e.Item);
 		}
 
 		protected virtual void OnCloseWorkspace (object sender, WorkspaceItemEventArgs e)

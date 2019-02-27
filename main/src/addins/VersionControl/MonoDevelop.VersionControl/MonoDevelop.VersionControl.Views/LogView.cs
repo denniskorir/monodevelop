@@ -2,23 +2,21 @@ using System;
 using System.IO;
 using Gtk;
 using MonoDevelop.Core;
+using MonoDevelop.Components;
 using MonoDevelop.Components.Commands;
-using MonoDevelop.Ide.Gui;
 using MonoDevelop.Ide;
 using System.Linq;
 
 namespace MonoDevelop.VersionControl.Views
 {
-	public interface ILogView : IAttachableViewContent
+	public interface ILogView
 	{
 	}
 	
-	public class LogView : BaseView, ILogView
+	class LogView : BaseView, ILogView
 	{
 		LogWidget widget;
 		VersionInfo vinfo;
-		
-		ListStore changedpathstore;
 		
 		public LogWidget LogWidget {
 			get {
@@ -32,7 +30,7 @@ namespace MonoDevelop.VersionControl.Views
 		}
 		
 		VersionControlDocumentInfo info;
-		public LogView (VersionControlDocumentInfo info) : base (GettextCatalog.GetString ("Log"))
+		public LogView (VersionControlDocumentInfo info) : base (GettextCatalog.GetString ("Log"), GettextCatalog.GetString ("Shows the source control log for the current file"))
 		{
 			this.info = info;
 		}
@@ -42,15 +40,18 @@ namespace MonoDevelop.VersionControl.Views
 			var lw = new LogWidget (info);
 			
 			widget = lw;
-			info.Updated += delegate {
-				lw.History = this.info.History;
-				vinfo   = this.info.VersionInfo;
-			};
+			info.Updated += OnInfoUpdated;
 			lw.History = this.info.History;
-			vinfo   = this.info.VersionInfo;
+			vinfo   = this.info.Item.VersionInfo;
 		
 			if (WorkbenchWindow != null)
 				widget.SetToolbar (WorkbenchWindow.GetToolbar (this));
+		}
+
+		void OnInfoUpdated (object sender, EventArgs e)
+		{
+			widget.History = this.info.History;
+			vinfo   = this.info.Item.VersionInfo;
 		}
 
 		[Obsolete]
@@ -67,7 +68,7 @@ namespace MonoDevelop.VersionControl.Views
 			// Widget setup
 			VersionControlDocumentInfo info  =new VersionControlDocumentInfo (null, null, vc);
 			info.History = history;
-			info.VersionInfo = vinfo;
+			info.Item.VersionInfo = vinfo;
 			var lw = new LogWidget (info);
 			
 			widget = lw;
@@ -75,7 +76,7 @@ namespace MonoDevelop.VersionControl.Views
 		}
 
 		
-		public override Gtk.Widget Control { 
+		public override Control Control { 
 			get {
 				if (widget == null)
 					CreateControlFromInfo ();
@@ -83,9 +84,9 @@ namespace MonoDevelop.VersionControl.Views
 			}
 		}
 
-		protected override void OnWorkbenchWindowChanged (EventArgs e)
+		protected override void OnWorkbenchWindowChanged ()
 		{
-			base.OnWorkbenchWindowChanged (e);
+			base.OnWorkbenchWindowChanged ();
 			if (WorkbenchWindow != null && widget != null)
 				widget.SetToolbar (WorkbenchWindow.GetToolbar (this));
 		}
@@ -96,15 +97,14 @@ namespace MonoDevelop.VersionControl.Views
 				widget.Destroy ();
 				widget = null;
 			}
-			if (changedpathstore != null) {
-				changedpathstore.Dispose ();
-				changedpathstore = null;
+			if (info != null) {
+				info.Updated -= OnInfoUpdated;
+				info = null;
 			}
 			base.Dispose ();
 		}
 
-		#region IAttachableViewContent implementation
-		public void Selected ()
+		public void Init ()
 		{
 			if (info != null && !info.Started) {
 				widget.ShowLoading ();
@@ -112,26 +112,24 @@ namespace MonoDevelop.VersionControl.Views
 			}
 		}
 
-		public void Deselected ()
+		protected override void OnSelected ()
 		{
+			Init ();
 		}
-
-		public void BeforeSave ()
-		{
-		}
-
-		public void BaseContentChanged ()
-		{
-		}
-		#endregion
 
 		[CommandHandler (MonoDevelop.Ide.Commands.EditCommands.Copy)]
 		protected void OnCopy ()
 		{
-			string data = widget.DiffText;
-			if (data == null)
+			string data = widget.GetSelectedText ();
+			if (data == null) {
 				return;
+			}
 
+			CopyToClipboard (data);
+		}
+
+		internal static void CopyToClipboard (string data)
+		{
 			var clipboard = Clipboard.Get (Gdk.Atom.Intern ("CLIPBOARD", false));
 			clipboard.Text = data;
 			clipboard = Clipboard.Get (Gdk.Atom.Intern ("PRIMARY", false));

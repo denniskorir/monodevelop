@@ -27,50 +27,34 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using ICSharpCode.PackageManagement;
 using MonoDevelop.Components.Commands;
-using MonoDevelop.Ide;
 
 namespace MonoDevelop.PackageManagement.Commands
 {
-	public class UpdateAllPackagesInSolutionHandler : PackagesCommandHandler
+	internal class UpdateAllPackagesInSolutionHandler : PackagesCommandHandler
 	{
 		protected override void Run ()
 		{
 			try {
-				UpdateAllPackagesInSolution updateAllPackages = CreateUpdateAllPackagesInSolution ();
-				ProgressMonitorStatusMessage progressMessage = ProgressMonitorStatusMessageFactory.CreateUpdatingPackagesInSolutionMessage (updateAllPackages.Projects);
-				RestoreBeforeUpdateAction.Restore (updateAllPackages.Projects, () => {
-					DispatchService.GuiSyncDispatch (() => {
-						Update (updateAllPackages, progressMessage);
-					});
-				});
+				Update ();
 			} catch (Exception ex) {
 				ProgressMonitorStatusMessage progressMessage = ProgressMonitorStatusMessageFactory.CreateUpdatingPackagesInSolutionMessage ();
 				PackageManagementServices.BackgroundPackageActionRunner.ShowError (progressMessage, ex);
 			}
 		}
 
-		void Update (UpdateAllPackagesInSolution updateAllPackages, ProgressMonitorStatusMessage progressMessage)
+		void Update ()
 		{
-			try {
-				List<UpdatePackageAction> updateActions = updateAllPackages.CreateActions ().ToList ();
-				PackageManagementServices.BackgroundPackageActionRunner.Run (progressMessage, updateActions);
-			} catch (Exception ex) {
-				PackageManagementServices.BackgroundPackageActionRunner.ShowError (progressMessage, ex);
-			}
-		}
+			var updateAllPackages = new UpdateAllNuGetPackagesInSolution (GetSelectedSolution ());
+			List<IPackageAction> updateActions = updateAllPackages.CreateActions ().ToList ();
 
-		UpdateAllPackagesInSolution CreateUpdateAllPackagesInSolution ()
-		{
-			return new UpdateAllPackagesInSolution (
-				PackageManagementServices.Solution,
-				PackageManagementServices.PackageRepositoryCache.CreateAggregateRepository ());
+			ProgressMonitorStatusMessage progressMessage = ProgressMonitorStatusMessageFactory.CreateUpdatingPackagesInSolutionMessage (updateAllPackages.GetProjects ());
+			PackageManagementServices.BackgroundPackageActionRunner.Run (progressMessage, updateActions);
 		}
 
 		protected override void Update (CommandInfo info)
 		{
-			info.Enabled = SelectedDotNetProjectOrSolutionHasPackages ();
+			info.Enabled = CanUpdatePackagesForSelectedDotNetProjectOrSolution ();
 		}
 	}
 }

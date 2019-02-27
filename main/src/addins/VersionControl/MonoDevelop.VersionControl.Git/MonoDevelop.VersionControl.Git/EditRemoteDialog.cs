@@ -23,28 +23,49 @@
 // LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 // THE SOFTWARE.
-using LibGit2Sharp;
 
+using System;
+using System.Linq;
+using LibGit2Sharp;
+using MonoDevelop.Components;
 
 namespace MonoDevelop.VersionControl.Git
 {
 	partial class EditRemoteDialog : Gtk.Dialog
 	{
+		GitRepository repo;
+
 		// TODO: Add user possibility to choose refspecs.
-		public EditRemoteDialog () : this (null)
+		public EditRemoteDialog () : this (null, null)
 		{
 		}
 
-		public EditRemoteDialog (Remote remote)
+		bool sameUrls;
+		public EditRemoteDialog (GitRepository repository, Remote remote)
 		{
 			this.Build ();
+
+			this.UseNativeContextMenus ();
+
+			repo = repository;
+
 			if (remote != null) {
 				entryName.Text = remote.Name;
 				entryUrl.Text = remote.Url ?? "";
 				entryPushUrl.Text = remote.PushUrl ?? "";
 			}
+
+			sameUrls = entryPushUrl.Text == entryUrl.Text;
+			SetPushUrlTextStyle (sameUrls);
+
 			checkImportTags.Visible = remote == null;
 			UpdateButtons ();
+		}
+
+		void SetPushUrlTextStyle (bool disabled)
+		{
+			entryPushUrl.ModifyText (Gtk.StateType.Normal, entryUrl.Style.Text (disabled ? Gtk.StateType.Insensitive : Gtk.StateType.Normal));
+			entryPushUrl.ModifyText (Gtk.StateType.Active, entryUrl.Style.Text (disabled ? Gtk.StateType.Insensitive : Gtk.StateType.Active));
 		}
 
 		public string RemoteName {
@@ -65,7 +86,7 @@ namespace MonoDevelop.VersionControl.Git
 
 		void UpdateButtons ()
 		{
-			buttonOk.Sensitive = entryName.Text.Length > 0 && entryUrl.Text.Length > 0;
+			buttonOk.Sensitive = entryName.Text.Length > 0 && IsValidUrl (entryUrl.Text) && IsValidUrl(entryPushUrl.Text);
 		}
 
 		protected virtual void OnEntryNameChanged (object sender, System.EventArgs e)
@@ -75,7 +96,29 @@ namespace MonoDevelop.VersionControl.Git
 
 		protected virtual void OnEntryUrlChanged (object sender, System.EventArgs e)
 		{
+			// If we had the same text or we're now having matching text, then change styling.
+			if (sameUrls || entryPushUrl.Text == entryUrl.Text) {
+				entryPushUrl.Text = entryUrl.Text;
+				sameUrls = true;
+				SetPushUrlTextStyle (sameUrls);
+			}
+
 			UpdateButtons ();
+		}
+
+		protected void OnEntryPushUrlChanged (object sender, System.EventArgs e)
+		{
+			sameUrls = entryPushUrl.Text == entryUrl.Text;
+			SetPushUrlTextStyle (sameUrls);
+
+			UpdateButtons ();
+		}
+
+		bool IsValidUrl (string url)
+		{
+			if (repo == null)
+				return url.Length > 0;
+			return repo.IsUrlValid (url);
 		}
 	}
 }

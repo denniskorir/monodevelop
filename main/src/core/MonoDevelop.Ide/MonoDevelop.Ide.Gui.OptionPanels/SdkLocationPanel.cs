@@ -27,6 +27,7 @@
 using System;
 using Gtk;
 using MonoDevelop.Components;
+using MonoDevelop.Components.AtkCocoaHelper;
 using MonoDevelop.Core;
 using MonoDevelop.Ide.Gui.Dialogs;
 
@@ -39,7 +40,7 @@ namespace MonoDevelop.Ide.Gui.OptionPanels
 	{
 		SdkLocationWidget w;
 		
-		public override Widget CreatePanelWidget ()
+		public override Control CreatePanelWidget ()
 		{
 			return w = new SdkLocationWidget (this);
 		}
@@ -60,6 +61,16 @@ namespace MonoDevelop.Ide.Gui.OptionPanels
 		public virtual FilePath[] DefaultSdkLocations {
 			get {
 				return new FilePath[0];
+			}
+		}
+
+		/// <summary>
+		/// Checks whether or not a restart is needed when the SDK location is changed.
+		/// </summary>
+		/// <value><c>true</c> if a change requires a restart; otherwise, <c>false</c>.</value>
+		public virtual bool RequiresRestart {
+			get {
+				return false;
 			}
 		}
 		
@@ -83,7 +94,7 @@ namespace MonoDevelop.Ide.Gui.OptionPanels
 	{
 		FolderEntry locationEntry = new FolderEntry ();
 		Label messageLabel = new Label ();
-		Image messageIcon = new Image ();
+		ImageView messageIcon = new ImageView ();
 		SdkLocationPanel panel;
 		
 		public SdkLocationWidget (SdkLocationPanel panel) : base (false, 12)
@@ -115,33 +126,57 @@ namespace MonoDevelop.Ide.Gui.OptionPanels
 				Validate ();
 			};
 			Validate ();
+
+			if (panel.RequiresRestart) {
+				PackStart (new HSeparator (), false, false, 0);
+
+				var tableRestart = new RestartPanel ();
+				tableRestart.RestartRequested += (sender, e) => {
+					ApplyChanges ();
+					IdeApp.Restart (true).Ignore();
+				};
+
+				PackStart (tableRestart, false, false, 0);
+			}
+
 			ShowAll ();
 		}
-		
+
+		void UpdateIconAccessibility (bool found)
+		{
+			messageIcon.SetCommonAccessibilityAttributes ("LocationImage",
+			                                              found ? GettextCatalog.GetString ("A Tick") : GettextCatalog.GetString ("A Cross"),
+			                                              found ? GettextCatalog.GetString ("The SDK was found") : GettextCatalog.GetString ("The SDK was not found"));
+		}
+
 		void Validate ()
 		{
 			FilePath location = CleanPath (locationEntry.Path);
 			if (!location.IsNullOrEmpty) {
 				if (panel.ValidateSdkLocation (location)) {
 					messageLabel.Text = GettextCatalog.GetString ("SDK found at specified location.");
-					messageIcon.Stock = Gtk.Stock.Apply;
+					messageIcon.SetIcon (Gtk.Stock.Apply, IconSize.Menu);
+					UpdateIconAccessibility (true);
 					return;
 				}
 				messageLabel.Text = GettextCatalog.GetString ("No SDK found at specified location.");
-				messageIcon.Stock = Gtk.Stock.Cancel;
+				messageIcon.SetIcon (Gtk.Stock.Cancel, IconSize.Menu);
+				UpdateIconAccessibility (false);
 				return;
 			}
 
 			foreach (var loc in panel.DefaultSdkLocations) {
 				if (panel.ValidateSdkLocation (loc)) {
 					messageLabel.Text = GettextCatalog.GetString ("SDK found at default location.");
-					messageIcon.Stock = Gtk.Stock.Apply;
+					messageIcon.SetIcon (Gtk.Stock.Apply, IconSize.Menu);
+					UpdateIconAccessibility (true);
 					return;
 				}
 			}
 
 			messageLabel.Text = GettextCatalog.GetString ("No SDK found at default location.");
-			messageIcon.Stock = Gtk.Stock.Cancel;
+			messageIcon.SetIcon (Gtk.Stock.Cancel, IconSize.Menu);
+			UpdateIconAccessibility (false);
 		}
 		
 		FilePath CleanPath (FilePath path)

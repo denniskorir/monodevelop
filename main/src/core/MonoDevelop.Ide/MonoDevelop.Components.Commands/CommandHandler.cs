@@ -27,21 +27,23 @@
 //
 
 using System;
+using System.Threading;
+using System.Threading.Tasks;
 
 namespace MonoDevelop.Components.Commands
 {
 	public abstract class CommandHandler
 	{
-		internal void InternalRun ()
-		{
-			Run ();
-		}
-		
 		internal void InternalRun (object dataItem)
 		{
 			Run (dataItem);
 		}
-		
+
+		internal void InternalRun ()
+		{
+			Run ();
+		}
+
 		internal void InternalUpdate (CommandInfo info)
 		{
 			Update (info);
@@ -51,22 +53,54 @@ namespace MonoDevelop.Components.Commands
 		{
 			Update (info);
 		}
-		
+
+		/// <summary>
+		/// Runs this command.
+		/// </summary>
+		/// <remarks>This method will be executed when the command is dispatched.
+		/// </remarks>
 		protected virtual void Run ()
-		{			
+		{
 		}
 	
+		/// <summary>
+		/// Runs this command (for array commands)
+		/// </summary>
+		/// <param name="dataItem">Context data</param>
+		/// <remarks>This method will be executed when the command is dispatched.
+		/// </remarks>
+		/// 
 		protected virtual void Run (object dataItem)
 		{
 			Run ();
 		}
 	
+		/// <summary>
+		/// Updates the status of the command
+		/// </summary>
+		/// <param name="info">Information instance where to set the status of the command</param>
 		protected virtual void Update (CommandInfo info)
 		{
+			var t = UpdateAsync (info, info.AsyncUpdateCancellationToken);
+			if (t != null)
+				info.SetUpdateTask (t);
 		}
 	
+		protected virtual Task UpdateAsync (CommandInfo info, CancellationToken cancelToken)
+		{
+			return null;
+		}
+
 		protected virtual void Update (CommandArrayInfo info)
 		{
+			var t = UpdateAsync (info, info.AsyncUpdateCancellationToken);
+			if (t != null)
+				info.SetUpdateTask (t);
+		}
+
+		protected virtual Task UpdateAsync (CommandArrayInfo info, CancellationToken cancelToken)
+		{
+			return null;
 		}
 	}
 }

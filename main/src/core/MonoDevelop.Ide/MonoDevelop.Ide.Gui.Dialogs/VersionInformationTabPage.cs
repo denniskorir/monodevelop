@@ -53,14 +53,14 @@ namespace MonoDevelop.Ide.Gui.Dialogs
 			new System.Threading.Thread (() => {
 				try {
 					var info = SystemInformation.GetDescription ().ToArray ();
-					Gtk.Application.Invoke (delegate {
+					Gtk.Application.Invoke ((o, args) => {
 						if (destroyed)
 							return;
 						SetText (info);
 					});
 				} catch (Exception ex) {
 					LoggingService.LogError ("Failed to load version information", ex);
-					Gtk.Application.Invoke (delegate {
+					Gtk.Application.Invoke ((o, args) => {
 						if (destroyed)
 							return;
 						SetLabel (GettextCatalog.GetString ("Failed to load version information."));
@@ -130,7 +130,7 @@ namespace MonoDevelop.Ide.Gui.Dialogs
 		{
 			var box = new Gtk.VBox ();
 			box.PackStart (new Gtk.Label () {
-				Markup = "<b>LoadedAssemblies</b>",
+				Markup = string.Format ("<b>{0}</b>", GettextCatalog.GetString ("Loaded Assemblies")),
 				Xalign = 0
 			});
 			var table = new Gtk.Table (0, 0, false);
@@ -151,10 +151,10 @@ namespace MonoDevelop.Ide.Gui.Dialogs
 			return box;
 		}
 
-		public override void Destroy ()
+		protected override void OnDestroyed ()
 		{
-			base.Destroy ();
 			destroyed = true;
+			base.OnDestroyed ();
 		}
 	}
 }

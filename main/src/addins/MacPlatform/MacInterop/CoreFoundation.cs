@@ -48,11 +48,11 @@ namespace MonoDevelop.MacInterop
 		public static extern void Release (IntPtr cfRef);
 		
 		struct CFRange {
-			public int Location, Length;
+			public IntPtr Location, Length;
 			public CFRange (int l, int len)
 			{
-				Location = l;
-				Length = len;
+				Location = (IntPtr)l;
+				Length = (IntPtr)len;
 			}
 		}
 		
@@ -64,7 +64,7 @@ namespace MonoDevelop.MacInterop
 		
 		[DllImport (CFLib, CharSet=CharSet.Unicode)]
 		extern static IntPtr CFStringGetCharacters (IntPtr handle, CFRange range, IntPtr buffer);
-		
+
 		public static string FetchString (IntPtr handle)
 		{
 			if (handle == IntPtr.Zero)
@@ -151,7 +151,7 @@ namespace MonoDevelop.MacInterop
 			All = 0xFFFFFFFF
 		}
 		
-		static IntPtr CreatePathUrl (string path)
+		public static IntPtr CreatePathUrl (string path)
 		{
 			IntPtr str = IntPtr.Zero;
 			IntPtr url = IntPtr.Zero;

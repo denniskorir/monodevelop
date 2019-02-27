@@ -27,44 +27,41 @@ using System;
 using System.Collections.Generic;
 using NUnit.Framework;
 using System.Linq;
+using MonoDevelop.Ide.Editor;
+using MonoDevelop.Ide.Editor.Extension;
 
 namespace Mono.TextEditor.Tests
 {
 	[TestFixture()]
 	public class SmartIndentModeTests
 	{
-		internal readonly static IIndentationTracker IndentTracker = new TestIndentTracker ();
+		internal readonly static IndentationTracker IndentTracker = new TestIndentTracker ();
 
-		internal class TestIndentTracker : IIndentationTracker
+		internal class TestIndentTracker : IndentationTracker
 		{
 			string indentString;
+			Dictionary<int, string> definedIndents = new Dictionary<int, string> ();
 
-			public TestIndentTracker (string indentString = "\t\t")
+			IndentationTrackerFeatures features;
+			public override IndentationTrackerFeatures SupportedFeatures => features;
+
+			public TestIndentTracker (string indentString = "\t\t", IndentationTrackerFeatures features = IndentationTrackerFeatures.All)
 			{
 				this.indentString = indentString;
+				this.features = features;
 			}
-			
-			#region IIndentationTracker implementation
-			public string GetIndentationString (int offset)
+
+			public override string GetIndentationString (int lineNumber)
 			{
+				if (definedIndents.TryGetValue (lineNumber, out string result))
+					return result;
 				return indentString;
 			}
 
-			public string GetIndentationString (int lineNumber, int column)
+			public void SetIndent (int lineNumber, string indentationString)
 			{
-				return indentString;
+				definedIndents [lineNumber] = indentationString;
 			}
-
-			public int GetVirtualIndentationColumn (int offset)
-			{
-				return indentString.Length + 1;
-			}
-
-			public int GetVirtualIndentationColumn (int lineNumber, int column)
-			{
-				return indentString.Length + 1;
-			}
-			#endregion
 		}
 
 		TextEditorData CreateData (string content)
@@ -139,6 +136,23 @@ namespace Mono.TextEditor.Tests
 			CaretMoveActions.Right (data);
 			Assert.AreEqual (new DocumentLocation (3, 1), data.Caret.Location);
 		}
+
+
+		/// <summary>
+		/// Bug 53878 - Insert matching brace does not indent properly
+		/// </summary>
+		[Test]
+		public void TestBug53878 ()
+		{
+			var data = CreateData ("    FooBar\n    Foo {}");
+			data.Caret.Offset = data.Document.GetLine (2).EndOffset - 1;
+			data.Options.IndentStyle = IndentStyle.Auto;
+			MiscActions.InsertNewLine (data);
+
+			Assert.AreEqual ("    FooBar\n    Foo {\n    }", data.Document.Text);
+			Assert.AreEqual (data.Document.GetLine (3).EndOffset - 1, data.Caret.Offset);
+		}
+
 	}
 }
 

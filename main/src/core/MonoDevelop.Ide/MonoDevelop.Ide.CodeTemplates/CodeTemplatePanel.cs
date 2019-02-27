@@ -31,6 +31,8 @@ using Gtk;
 using MonoDevelop.Core;
 using MonoDevelop.Ide.Gui.Dialogs;
 using MonoDevelop.Components;
+using MonoDevelop.Ide.Editor;
+using MonoDevelop.Ide.Gui;
 
 namespace MonoDevelop.Ide.CodeTemplates
 {
@@ -41,14 +43,14 @@ namespace MonoDevelop.Ide.CodeTemplates
 		Gtk.TreeStore templateStore;
 		CellRendererText   templateCellRenderer;
 		CellRendererImage pixbufCellRenderer;
-		Mono.TextEditor.TextEditor textEditor = new Mono.TextEditor.TextEditor ();
-		Mono.TextEditor.TextEditorOptions options;
-		
+		TextEditor textEditor = TextEditorFactory.CreateNewEditor ();
+
 		public CodeTemplatePanelWidget (OptionsDialog parent)
 		{
 			this.Build();
-			scrolledwindow1.Add (textEditor);
-			textEditor.ShowAll ();
+			Gtk.Widget control = textEditor;
+			scrolledwindow1.AddWithViewport (control);
+			control.ShowAll ();
 			
 			templateStore = new TreeStore (typeof (CodeTemplate), typeof (string), typeof (string));
 			
@@ -68,18 +70,15 @@ namespace MonoDevelop.Ide.CodeTemplates
 			treeviewCodeTemplates.AppendColumn (column);
 			
 			treeviewCodeTemplates.Model = templateStore;
+			treeviewCodeTemplates.SearchColumn = -1; // disable the interactive search
 			templates = new List<CodeTemplate> (CodeTemplateService.Templates);
 			templates.ForEach (t => InsertTemplate (t));
 			
 			treeviewCodeTemplates.ExpandAll ();
 			treeviewCodeTemplates.Selection.Changed += HandleChanged;
-			
-			options = new MonoDevelop.Ide.Gui.CommonTextEditorOptions ();
-			options.ShowLineNumberMargin = false;
-			options.ShowFoldMargin = false;
-			options.ShowIconMargin = false;
-			textEditor.Options = options;
-			textEditor.Document.ReadOnly = true;
+
+			textEditor.Options = DefaultSourceEditorOptions.PlainEditor;
+			textEditor.IsReadOnly = true;
 			this.buttonAdd.Clicked += ButtonAddClicked;
 			this.buttonEdit.Clicked += ButtonEditClicked;
 			this.buttonRemove.Clicked += ButtonRemoveClicked;
@@ -116,9 +115,9 @@ namespace MonoDevelop.Ide.CodeTemplates
 			var template = GetSelectedTemplate ();
 			if (template != null) {
 				templatesToSave.Add (template);
-				var editDialog = new EditTemplateDialog (template, false);
-				if (MessageService.ShowCustomDialog (editDialog, this.Toplevel as Gtk.Window) == (int)ResponseType.Ok)
-					templatesToSave.Add (template);
+				using (var editDialog = new EditTemplateDialog (template, false))
+					if (MessageService.ShowCustomDialog (editDialog, this.Toplevel as Gtk.Window) == (int)ResponseType.Ok)
+						templatesToSave.Add (template);
 				HandleChanged (this, EventArgs.Empty);
 			}
 		}
@@ -134,11 +133,12 @@ namespace MonoDevelop.Ide.CodeTemplates
 		void ButtonAddClicked (object sender, EventArgs e)
 		{
 			var newTemplate = new CodeTemplate ();
-			var editDialog = new EditTemplateDialog (newTemplate, true);
-			if (MessageService.ShowCustomDialog (editDialog, this.Toplevel as Gtk.Window) == (int)ResponseType.Ok) {
-				InsertTemplate (newTemplate);
-				templates.Add (newTemplate);
-				templatesToSave.Add (newTemplate);
+			using (var editDialog = new EditTemplateDialog (newTemplate, true)) {
+				if (MessageService.ShowCustomDialog (editDialog, this.Toplevel as Gtk.Window) == (int)ResponseType.Ok) {
+					InsertTemplate (newTemplate);
+					templates.Add (newTemplate);
+					templatesToSave.Add (newTemplate);
+				}
 			}
 		}
 		
@@ -151,32 +151,34 @@ namespace MonoDevelop.Ide.CodeTemplates
 			CodeTemplateService.Templates = templates;
 		}
 		
-		void RenderIcon (Gtk.TreeViewColumn column, Gtk.CellRenderer cell, Gtk.TreeModel model, Gtk.TreeIter iter)
+		static void RenderIcon (Gtk.TreeViewColumn column, Gtk.CellRenderer cell, Gtk.TreeModel model, Gtk.TreeIter iter)
 		{
-			CodeTemplate template = (CodeTemplate)templateStore.GetValue (iter, 0);
-			
+			CodeTemplate template = (CodeTemplate)model.GetValue (iter, 0);
+
+			var cri = (CellRendererImage)cell;
 			if (template == null) {
-				pixbufCellRenderer.Image = ImageService.GetIcon (treeviewCodeTemplates.GetRowExpanded (templateStore.GetPath (iter)) ? MonoDevelop.Ide.Gui.Stock.OpenFolder : MonoDevelop.Ide.Gui.Stock.ClosedFolder, IconSize.Menu);
+				cri.Image = ImageService.GetIcon (((TreeView)column.TreeView).GetRowExpanded (model.GetPath (iter)) ? MonoDevelop.Ide.Gui.Stock.OpenFolder : MonoDevelop.Ide.Gui.Stock.ClosedFolder, IconSize.Menu);
 			} else {
-				pixbufCellRenderer.Image = ImageService.GetIcon (template.Icon, IconSize.Menu);
+				cri.Image = ImageService.GetIcon (template.Icon, IconSize.Menu);
 			}
 				
 		}
 		
 		void RenderTemplateName (Gtk.TreeViewColumn column, Gtk.CellRenderer cell, Gtk.TreeModel model, Gtk.TreeIter iter)
 		{
-			CodeTemplate template = (CodeTemplate)templateStore.GetValue (iter, 0);
+			CodeTemplate template = (CodeTemplate)model.GetValue (iter, 0);
+			var crt = (CellRendererText)cell;
 			if (template == null) {
-				templateCellRenderer.Markup = (string)templateStore.GetValue (iter, 2);
+				crt.Markup = (string)model.GetValue (iter, 2);
 				return;
 			}
 			
-			if (treeviewCodeTemplates.Selection.IterIsSelected (iter)) {
-				templateCellRenderer.Markup = GLib.Markup.EscapeText (template.Shortcut) + " (" + 
+			if (((TreeView)column.TreeView).Selection.IterIsSelected (iter)) {
+				crt.Markup = GLib.Markup.EscapeText (template.Shortcut) + " (" + 
 					GLib.Markup.EscapeText (GettextCatalog.GetString (template.Description)) + ")";
 			} else {
-				templateCellRenderer.Markup =  GLib.Markup.EscapeText (template.Shortcut) + " <span foreground=\"" + 
-					GetColorString (Style.Text (StateType.Insensitive)) + "\">(" 
+				crt.Markup =  GLib.Markup.EscapeText (template.Shortcut) + " <span foreground=\"" + 
+					Styles.SecondaryTextColorHexString + "\">(" 
 					+ GLib.Markup.EscapeText (GettextCatalog.GetString (template.Description)) + ")</span>";
 			}
 		}
@@ -188,10 +190,10 @@ namespace MonoDevelop.Ide.CodeTemplates
 				CodeTemplate template = templateStore.GetValue (iter, 0) as CodeTemplate;
 				if (template != null) {
 					textEditor.ClearSelection ();
-					textEditor.Document.MimeType = template.MimeType;
-					textEditor.Document.Text     = template.Code;
+					textEditor.MimeType = template.MimeType;
+					textEditor.Text     = template.Code;
 				} else {
-					textEditor.Document.Text = "";
+					textEditor.Text = "";
 				}
 			}
 		}
@@ -209,23 +211,18 @@ namespace MonoDevelop.Ide.CodeTemplates
 			return templateStore.AppendValues (null, groupName, "<b>" + groupName + "</b>");
 		}
 		
-		internal static string GetColorString (Gdk.Color color)
-		{
-			return string.Format ("#{0:X02}{1:X02}{2:X02}", color.Red / 256, color.Green / 256, color.Blue / 256);
-		}
-		
 		TreeIter InsertTemplate (CodeTemplate template)
 		{
 			TreeIter iter = GetGroup (template.Group);
 			return templateStore.AppendValues (iter, template, template.Shortcut, null);
 		}
 	}
-	
+
 	internal class CodeTemplatePane : OptionsPanel
 	{
 		CodeTemplatePanelWidget codeTemplatePanelWidget;
 		
-		public override Widget CreatePanelWidget ()
+		public override Control CreatePanelWidget ()
 		{
 			
 			return codeTemplatePanelWidget = new CodeTemplatePanelWidget (this.ParentDialog);

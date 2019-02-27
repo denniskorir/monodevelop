@@ -24,7 +24,7 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 // THE SOFTWARE.
 using System;
-using Gtk;
+using MonoDevelop.Components;
 using MonoDevelop.Core;
 using MonoDevelop.Projects;
 using MonoDevelop.Projects.Policies;
@@ -43,8 +43,8 @@ namespace MonoDevelop.Ide.Projects
 
 			fileEntry.Action = FileChooserAction.Save;
 			fileEntry.DefaultPath = DefaultFileDialogPolicyDir;
-			if (policyProvider is SolutionItem)
-				fileEntry.Path = ((SolutionItem)policyProvider).Name + ".mdpolicy";
+			if (policyProvider is SolutionFolderItem)
+				fileEntry.Path = ((SolutionFolderItem)policyProvider).Name + ".mdpolicy";
 			else if (policyProvider is Solution)
 				fileEntry.Path = ((Solution)policyProvider).Name + ".mdpolicy";
 			
@@ -64,7 +64,6 @@ namespace MonoDevelop.Ide.Projects
 			
 			tree.SetPolicies (policyProvider.Policies);
 			if (!tree.HasPolicies) {
-				tree.Message = GettextCatalog.GetString ("No policies");
 				buttonOk.Sensitive = false;
 			}
 			
@@ -127,7 +126,7 @@ namespace MonoDevelop.Ide.Projects
 				try {
 					pset.SaveToFile (file);
 				} catch (Exception ex) {
-					MessageService.ShowError ("The policy file could not be saved", ex);
+					MessageService.ShowError (GettextCatalog.GetString ("The policy file could not be saved"), ex);
 					return;
 				}
 			}

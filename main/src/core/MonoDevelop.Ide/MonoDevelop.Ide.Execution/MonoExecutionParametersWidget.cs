@@ -28,12 +28,12 @@ using System;
 using MonoDevelop.Ide.Execution;
 using MonoDevelop.Components.PropertyGrid;
 using MonoDevelop.Core;
-
+using MonoDevelop.Projects;
 
 namespace MonoDevelop.Ide.Execution
 {
 	[System.ComponentModel.ToolboxItem(true)]
-	partial class MonoExecutionParametersWidget : Gtk.Bin, IExecutionConfigurationEditor
+	partial class MonoExecutionParametersWidget : Gtk.Bin
 	{
 		MonoExecutionParameters config;
 		public MonoExecutionParametersWidget ()
@@ -41,16 +41,10 @@ namespace MonoDevelop.Ide.Execution
 			this.Build ();
 		}
 
-		public Gtk.Widget Load (CommandExecutionContext ctx, object data)
+		public void Load (MonoExecutionParameters config)
 		{
-			config = (MonoExecutionParameters) data;
-			if (config != null)
-				config = config.Clone ();
-			else
-				config = new MonoExecutionParameters ();
+			this.config = config;
 			propertyGrid.CurrentObject = config;
-			
-			return this;
 		}
 		
 		public object Save ()
@@ -61,8 +55,8 @@ namespace MonoDevelop.Ide.Execution
 		protected virtual void OnButtonPreviewClicked (object sender, System.EventArgs e)
 		{
 			propertyGrid.CommitPendingChanges ();
-			var dlg = new MonoExecutionParametersPreview (config);
-			MessageService.ShowCustomDialog (dlg, this.Toplevel as Gtk.Window);
+			using (var dlg = new MonoExecutionParametersPreview (config))
+				MessageService.ShowCustomDialog (dlg, this.Toplevel as Gtk.Window);
 		}
 
 		protected virtual void OnButtonResetClicked (object sender, System.EventArgs e)
@@ -70,8 +64,8 @@ namespace MonoDevelop.Ide.Execution
 			propertyGrid.CommitPendingChanges ();
 			if (!MessageService.Confirm (GettextCatalog.GetString ("Are you sure you want to clear all specified options?"), AlertButton.Clear))
 				return;
-			config = new MonoExecutionParameters ();
-			propertyGrid.CurrentObject = config;
+			config.ResetProperties ();
+			propertyGrid.Refresh ();
 		}
 	}
 }

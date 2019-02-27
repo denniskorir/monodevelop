@@ -26,17 +26,13 @@
 // WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 //
 
-using System;
-using System.Linq;
-using ICSharpCode.PackageManagement;
 using MonoDevelop.Components.Commands;
-using MonoDevelop.Core;
 using MonoDevelop.Ide;
 using MonoDevelop.Projects;
 
 namespace MonoDevelop.PackageManagement.Commands
 {
-	public abstract class PackagesCommandHandler : CommandHandler
+	internal abstract class PackagesCommandHandler : CommandHandler
 	{
 		protected override void Update (CommandInfo info)
 		{
@@ -90,6 +86,37 @@ namespace MonoDevelop.PackageManagement.Commands
 				return SelectedDotNetProjectHasPackages ();
 			} else if (IsDotNetSolutionSelected ()) {
 				return SelectedDotNetSolutionHasPackages ();
+			}
+			return false;
+		}
+
+		protected Solution GetSelectedSolution ()
+		{
+			DotNetProject project = GetSelectedDotNetProject ();
+			if (project != null) {
+				return project.ParentSolution;
+			}
+			return IdeApp.ProjectOperations.CurrentSelectedSolution;
+		}
+
+		protected bool CanUpdatePackagesForSelectedDotNetProject ()
+		{
+			DotNetProject project = GetSelectedDotNetProject ();
+			return project?.CanUpdatePackages () == true;
+		}
+
+		bool CanUpdatePackagesForSelectedDotNetSolution ()
+		{
+			Solution solution = IdeApp.ProjectOperations.CurrentSelectedSolution;
+			return solution?.CanUpdatePackages () == true;
+		}
+
+		protected bool CanUpdatePackagesForSelectedDotNetProjectOrSolution ()
+		{
+			if (IsDotNetProjectSelected ()) {
+				return CanUpdatePackagesForSelectedDotNetProject ();
+			} else if (IsDotNetSolutionSelected ()) {
+				return CanUpdatePackagesForSelectedDotNetSolution ();
 			}
 			return false;
 		}

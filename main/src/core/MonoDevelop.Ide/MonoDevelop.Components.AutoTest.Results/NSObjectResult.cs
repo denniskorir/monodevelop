@@ -26,29 +26,77 @@
 #if MAC
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Reflection;
+using System.Xml;
+
 using AppKit;
 using Foundation;
+
+using MonoDevelop.Components.MainToolbar;
+using MonoDevelop.Core;
 
 namespace MonoDevelop.Components.AutoTest.Results
 {
 	public class NSObjectResult : AppResult
 	{
 		NSObject ResultObject;
+		int index = -1;
 
-		public NSObjectResult (NSObject resultObject)
+		internal NSObjectResult (NSObject resultObject)
 		{
 			ResultObject = resultObject;
 		}
 
+		internal NSObjectResult (NSObject resultObject, int index)
+		{
+			ResultObject = resultObject;
+			this.index = index;
+		}
+
+		public override string ToString ()
+		{
+			return string.Format ("NSObject: Type: {0} {1}", ResultObject.GetType ().FullName, this.index);
+		}
+
+		public override void ToXml (XmlElement element)
+		{
+			AddAttribute (element, "type", ResultObject.GetType ().ToString ());
+			AddAttribute (element, "fulltype", ResultObject.GetType ().FullName);
+
+			NSView view = ResultObject as NSView;
+			if (view == null) {
+				return;
+			}
+
+			if (view.Identifier != null) {
+				AddAttribute (element, "name", view.Identifier);
+			}
+
+			// In Cocoa the attribute is Hidden as opposed to Gtk's Visible.
+			AddAttribute (element, "visible", (!view.Hidden).ToString ());
+			AddAttribute (element, "allocation", view.Frame.ToString ());
+		}
+
+		public override string GetResultType  ()
+		{
+			return ResultObject.GetType ().FullName;
+		}
+
 		public override AppResult Marked (string mark)
 		{
+			if (CheckForText (ResultObject.GetType ().FullName, mark, true)) {
+				return this;
+			}
+
 			if (ResultObject is NSView) {
-				if (((NSView)ResultObject).Identifier == mark) {
+				if (CheckForText (((NSView)ResultObject).Identifier, mark, true)) {
 					return this;
 				}
+			}
 
-				if (ResultObject.GetType ().FullName == mark) {
+			if (ResultObject is NSWindow) {
+				if (CheckForText (((NSWindow)ResultObject).Title,  mark, true)) {
 					return this;
 				}
 			}
@@ -64,20 +112,39 @@ namespace MonoDevelop.Components.AutoTest.Results
 			return null;
 		}
 
-		bool CheckForText (string haystack, string needle, bool exact)
-		{
-			if (exact) {
-				return haystack == needle;
-			} else {
-				return (haystack.IndexOf (needle) > -1);
-			}
-		}
-
+		protected string[] GetPossibleNSCellValues (NSCell cell) =>
+		new [] { cell.StringValue, cell.Title, cell.AccessibilityLabel, cell.Identifier, cell.AccessibilityTitle };
 		public override AppResult Text (string text, bool exact)
 		{
+			if (ResultObject is NSTableView) {
+				var control = (NSTableView)ResultObject;
+				for (int i = 0; i < control.ColumnCount;i ++)
+				{
+					var cell = control.GetCell (i, index);
+					var possValues = GetPossibleNSCellValues (cell);
+					LoggingService.LogInfo ($"Possible values for NSTableView with column {i} and row {index} -> "+string.Join (", ", possValues));
+					if (possValues.Any (haystack => CheckForText (text, haystack, exact)))
+						return this;
+				}
+			}
 			if (ResultObject is NSControl) {
 				NSControl control = (NSControl)ResultObject;
 				string value = control.StringValue;
+				if (CheckForText (value, text, exact)) {
+					return this;
+				}
+
+				if (ResultObject is NSButton) {
+					var nsButton = (NSButton)ResultObject;
+					if (CheckForText (nsButton.Title, text, exact)) {
+						return this;
+					}
+				}
+			}
+
+			if(ResultObject is NSSegmentedControl){
+				NSSegmentedControl control = (NSSegmentedControl)ResultObject;
+				string value = control.GetLabel (this.index);
 				if (CheckForText (value, text, exact)) {
 					return this;
 				}
@@ -108,7 +175,13 @@ namespace MonoDevelop.Components.AutoTest.Results
 
 		public override AppResult Property (string propertyName, object value)
 		{
-			return (GetPropertyValue (propertyName) == value) ? this : null;
+			if (ResultObject is NSSegmentedControl) {
+				NSSegmentedControl control = (NSSegmentedControl)ResultObject;
+				if (this.index >= 0 && propertyName == "Sensitive" || propertyName == "Visible") {
+					return control.IsEnabled (this.index) == (bool)value ? this : null;
+				}
+			}
+			return MatchProperty (propertyName, ResultObject, value);
 		}
 
 		public override List<AppResult> NextSiblings ()
@@ -116,9 +189,49 @@ namespace MonoDevelop.Components.AutoTest.Results
 			return null;
 		}
 
+		public override List<AppResult> Children (bool recursive = true)
+		{
+			if (ResultObject is NSTableView) {
+				var control = (NSTableView)ResultObject;
+				var children = new List<AppResult> ();
+				for (int i = 0; i < control.RowCount; i++) {
+					LoggingService.LogInfo ($"Found row {i} of NSTableView -  {control.Identifier} - {control.AccessibilityIdentifier}");
+					children.Add (new NSObjectResult (control, i));
+				}
+				return children;
+			}
+			return base.Children(recursive);
+		}
+
+		public override ObjectProperties Properties ()
+		{
+			return GetProperties (ResultObject);
+		}
+
 		public override bool Select ()
 		{
+			if (ResultObject is NSTableView) {
+				var control = (NSTableView)ResultObject;
+				LoggingService.LogInfo($"Found NSTableView with index: {index}");
+				if (index >= 0)
+				{
+					LoggingService.LogInfo ($"Selecting row '{index}' of ");
+					control.SelectRow(index, true);
+					control.PerformClick(0, index);
+				}
+				return true;
+			}
 			return false;
+		}
+
+		public override AppResult Selected ()
+		{
+			if (ResultObject is NSTableView) {
+				var control = (NSTableView)ResultObject;
+				if(control.SelectedRow == index || control.SelectedRows.Contains((nuint)index))
+					return this;
+			}
+			return null;
 		}
 
 		public override bool Click ()
@@ -128,8 +241,14 @@ namespace MonoDevelop.Components.AutoTest.Results
 				return false;
 			}
 
-			control.PerformClick (null);
+			using (var nsObj = new NSObject ())
+				control.PerformClick (nsObj);
 			return true;
+		}
+
+		public override bool Click (double x, double y)
+		{
+			return Click ();
 		}
 
 		NSEvent MakeEvent (string c, NSEventType type, double epochTime, nint winID)
@@ -168,10 +287,15 @@ namespace MonoDevelop.Components.AutoTest.Results
 			return true;
 		}
 
-		public override bool TypeKey (char key, string state)
+		public override bool TypeKey (char key, string state = "")
 		{
 			RealTypeKey (key);
 			return true;
+		}
+
+		public override bool TypeKey (string keyString, string state = "")
+		{
+			throw new NotImplementedException ();
 		}
 
 		public override bool Toggle (bool active)
@@ -183,6 +307,71 @@ namespace MonoDevelop.Components.AutoTest.Results
 
 			button.State = active ? NSCellStateValue.On : NSCellStateValue.Off;
 			return true;
+		}
+
+		public override void Flash ()
+		{
+			
+		}
+
+		public override void SetProperty (string propertyName, object value)
+		{
+			SetProperty (ResultObject, propertyName, value);
+		}
+
+#region MacPlatform.MacIntegration.MainToolbar.SelectorView
+		public override bool SetActiveConfiguration (string configurationName)
+		{
+			Type type = ResultObject.GetType ();
+			PropertyInfo pinfo = type.GetProperty ("ConfigurationModel");
+			if (pinfo == null) {
+				return false;
+			}
+
+			IEnumerable<IConfigurationModel> model = (IEnumerable<IConfigurationModel>)pinfo.GetValue (ResultObject, null);
+			var configuration = model.FirstOrDefault (c => c.DisplayString == configurationName);
+			if (configuration == null) {
+				return false;
+			}
+
+			pinfo = type.GetProperty ("ActiveConfiguration");
+			if (pinfo == null) {
+				return false;
+			}
+
+			pinfo.SetValue (ResultObject, configuration);
+			return true;
+		}
+
+		public override bool SetActiveRuntime (string runtimeName)
+		{
+			Type type = ResultObject.GetType ();
+			PropertyInfo pinfo = type.GetProperty ("RuntimeModel");
+			if (pinfo == null) {
+				return false;
+			}
+
+			IEnumerable<IRuntimeModel> model = (IEnumerable<IRuntimeModel>)pinfo.GetValue (ResultObject, null);
+
+			var runtime = model.FirstOrDefault (r => r.GetMutableModel ().FullDisplayString == runtimeName);
+			if (runtime == null) {
+				return false;
+			}
+
+			pinfo = type.GetProperty ("ActiveRuntime");
+			if (pinfo == null) {
+				return false;
+			}
+
+			pinfo.SetValue (ResultObject, runtime);
+			return true;
+		}
+		#endregion
+
+		protected override void Dispose (bool disposing)
+		{
+			ResultObject = null;
+			base.Dispose (disposing);
 		}
 	}
 }

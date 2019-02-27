@@ -8,19 +8,27 @@ using MonoDevelop.Ide.Gui.Components;
 using MonoDevelop.Ide;
 using System.Collections.Generic;
 using MonoDevelop.Core.Assemblies;
+using System.Threading.Tasks;
 
 namespace MonoDevelop.WebReferences.Commands
 {
 	/// <summary>Defines the properties and methods for the WebReferenceCommandHandler class.</summary>
 	public class WebReferenceCommandHandler : NodeCommandHandler
 	{
-		StatusBarContext UpdateReferenceContext {
-			get; set;
+		bool updatingReferences;
+
+		[CommandUpdateHandler (WebReferenceCommands.Add)]
+		void CanAddWebReference (CommandInfo ci)
+		{
+			var project = CurrentNode.GetParentDataItem (typeof (DotNetProject), true) as DotNetProject;
+
+			ci.Enabled = ci.Visible = project.TargetFramework.Id.Identifier != ".NETStandard" &&
+				project.TargetFramework.Id.Identifier != ".NETCoreApp";
 		}
-		
+
 		/// <summary>Execute the command for adding a new web reference to a project.</summary>
 		[CommandHandler (WebReferenceCommands.Add)]
-		public void NewWebReference()
+		public async void NewWebReference()
 		{
 			// Get the project and project folder
 			var project = CurrentNode.GetParentDataItem (typeof(DotNetProject), true) as DotNetProject;
@@ -28,11 +36,12 @@ namespace MonoDevelop.WebReferences.Commands
 			// Check and switch the runtime environment for the current project
 			if (project.TargetFramework.Id == TargetFrameworkMoniker.NET_1_1)
 			{
-				string question = "The current runtime environment for your project is set to version 1.0.";
-				question += "Web Service is not supported in this version.";
-				question += "Do you want switch the runtime environment for this project version 2.0 ?";
+				string msg1 = GettextCatalog.GetString ("The current runtime environment for your project is set to version 1.0.");
+				string msg2 = GettextCatalog.GetString ("Web Service is not supported in this version.");
+				string msg3 = GettextCatalog.GetString ("Do you want switch the runtime environment for this project version 2.0?");
+				string question = $"{msg1} {msg2} {msg3}";
 				
-				var switchButton = new AlertButton ("_Switch to .NET2"); 
+				var switchButton = new AlertButton (GettextCatalog.GetString ("_Switch to .NET 2.0")); 
 				if (MessageService.AskQuestion(question, AlertButton.Cancel, switchButton) == switchButton)
 					project.TargetFramework = Runtime.SystemAssemblyService.GetTargetFramework (TargetFrameworkMoniker.NET_2_0);					
 				else
@@ -46,12 +55,13 @@ namespace MonoDevelop.WebReferences.Commands
 				if (MessageService.RunCustomDialog (dialog) != (int)Gtk.ResponseType.Ok)
 					return;
 
-				dialog.SelectedService.GenerateFiles (project, dialog.Namespace, dialog.ReferenceName);
-				IdeApp.ProjectOperations.Save(project);
+				await dialog.SelectedService.GenerateFiles (project, dialog.Namespace, dialog.ReferenceName);
+				await IdeApp.ProjectOperations.SaveAsync(project);
 			} catch (Exception exception) {
-				MessageService.ShowError ("The web reference could not be added", exception);
+				MessageService.ShowError (GettextCatalog.GetString ("The web reference could not be added"), exception);
 			} finally {
 				dialog.Destroy ();
+				dialog.Dispose ();
 			}
 		}
 
@@ -59,72 +69,57 @@ namespace MonoDevelop.WebReferences.Commands
 		[CommandUpdateHandler (WebReferenceCommands.UpdateAll)]
 		void CanUpdateWebReferences (CommandInfo ci)
 		{
-			// This does not appear to work.
-			ci.Enabled = UpdateReferenceContext == null;
+			ci.Enabled = !updatingReferences;
 		}
 		
 		/// <summary>Execute the command for updating a web reference in a project.</summary>
 		[CommandHandler (WebReferenceCommands.Update)]
-		public void Update()
+		public async void Update()
 		{
-			UpdateReferences (new [] { (WebReferenceItem) CurrentNode.DataItem });
+			await UpdateReferences (new [] { (WebReferenceItem) CurrentNode.DataItem });
 		}
 
 		/// <summary>Execute the command for updating all web reference in a project.</summary>
 		[CommandHandler (WebReferenceCommands.UpdateAll)]
-		public void UpdateAll()
+		public async void UpdateAll()
 		{
 			var folder = (WebReferenceFolder)CurrentNode.DataItem;
 			DotNetProject project = folder.Project;
 			if (folder.IsWCF)
-				UpdateReferences (WebReferencesService.GetWebReferenceItemsWCF (project).ToArray ());
+				await UpdateReferences (WebReferencesService.GetWebReferenceItemsWCF (project).ToArray ());
 			else
-				UpdateReferences (WebReferencesService.GetWebReferenceItemsWS (project).ToArray ());
+				await UpdateReferences (WebReferencesService.GetWebReferenceItemsWS (project).ToArray ());
 		}
 		
-		void UpdateReferences (IList<WebReferenceItem> items)
+		async Task UpdateReferences (IList<WebReferenceItem> items)
 		{
+			if (updatingReferences)
+				return;
 			try {
-				UpdateReferenceContext = IdeApp.Workbench.StatusBar.CreateContext ();
-				UpdateReferenceContext.BeginProgress (GettextCatalog.GetPluralString ("Updating web reference", "Updating web references", items.Count));
-				
-				DispatchService.ThreadDispatch (() => {
-					for (int i = 0; i < items.Count; i ++) {
-						DispatchService.GuiDispatch (() => UpdateReferenceContext.SetProgressFraction (Math.Max (0.1, (double)i / items.Count)));
+				updatingReferences = true;
+				using (var monitor = IdeApp.Workbench.ProgressMonitors.GetStatusProgressMonitor (GettextCatalog.GetPluralString ("Updating web reference", "Updating web references", items.Count), MonoDevelop.Ide.Gui.Stock.StatusDownload, true)) {
+					monitor.BeginTask (GettextCatalog.GetPluralString ("Updating web reference", "Updating web references", items.Count), items.Count);
+
+					for (int i = 0; i < items.Count; i++) {
 						try {
-							items [i].Update();
+							await items [i].Update ();
 						} catch (Exception ex) {
-							DispatchService.GuiSyncDispatch (() => {
-								MessageService.ShowError (GettextCatalog.GetString ("Failed to update Web Reference '{0}'", items [i].Name), ex);
-								DisposeUpdateContext ();
-							});
+							MessageService.ShowError (GettextCatalog.GetString ("Failed to update Web Reference '{0}'", items [i].Name), ex);
 							return;
 						}
+						monitor.Step ();
 					}
-					
-					DispatchService.GuiDispatch (() => {
-						// Make sure that we save all relevant projects, there should only be 1 though
-						foreach (var project in items.Select (i =>i.Project).Distinct ())
-							IdeApp.ProjectOperations.Save (project);
-						
-						IdeApp.Workbench.StatusBar.ShowMessage(GettextCatalog.GetPluralString ("Updated Web Reference {0}", "Updated Web References", items.Count, items[0].Name));
-						DisposeUpdateContext ();
-					});
-				});
-			} catch {
-				DisposeUpdateContext ();
-				throw;
+
+					// Make sure that we save all relevant projects, there should only be 1 though
+					foreach (var project in items.Select (i => i.Project).Distinct ())
+						await IdeApp.ProjectOperations.SaveAsync (project);
+				}
+				IdeApp.Workbench.StatusBar.ShowMessage (GettextCatalog.GetPluralString ("Updated Web Reference {0}", "Updated Web References", items.Count, items [0].Name));
+			} finally {
+				updatingReferences = false;
 			}
 		}
 	
-		void DisposeUpdateContext ()
-		{
-			if (UpdateReferenceContext != null) {
-				UpdateReferenceContext.Dispose ();
-				UpdateReferenceContext = null;
-			}
-		}
-		
 		/// <summary>Execute the command for removing a web reference from a project.</summary>
 		[CommandHandler (WebReferenceCommands.Delete)]
 		public void Delete()
@@ -133,8 +128,8 @@ namespace MonoDevelop.WebReferences.Commands
 			if (!MessageService.Confirm (GettextCatalog.GetString ("Are you sure you want to delete the web service reference '{0}'?", item.Name), AlertButton.Delete))
 				return;
 			item.Delete();
-			IdeApp.ProjectOperations.Save (item.Project);
-			IdeApp.Workbench.StatusBar.ShowMessage("Deleted Web Reference " + item.Name);
+			IdeApp.ProjectOperations.SaveAsync (item.Project);
+			IdeApp.Workbench.StatusBar.ShowMessage(GettextCatalog.GetString ("Deleted Web Reference {0}", item.Name));
 		}
 		
 		/// <summary>Execute the command for removing all web references from a project.</summary>
@@ -153,8 +148,8 @@ namespace MonoDevelop.WebReferences.Commands
 			foreach (var item in items.ToList ())
 				item.Delete();
 
-			IdeApp.ProjectOperations.Save(project);
-			IdeApp.Workbench.StatusBar.ShowMessage("Deleted all Web References");
+			IdeApp.ProjectOperations.SaveAsync(project);
+			IdeApp.Workbench.StatusBar.ShowMessage(GettextCatalog.GetString ("Deleted all Web References"));
 		}
 
 		[CommandUpdateHandler (WebReferenceCommands.Configure)]
@@ -166,7 +161,7 @@ namespace MonoDevelop.WebReferences.Commands
 
 		/// <summary>Execute the command for configuring a web reference in a project.</summary>
 		[CommandHandler (WebReferenceCommands.Configure)]
-		public void Configure ()
+		public async void Configure ()
 		{
 			var item = (WebReferenceItem) CurrentNode.DataItem;
 
@@ -194,11 +189,12 @@ namespace MonoDevelop.WebReferences.Commands
 					return;
 				
 				refgroup.Save (item.MapFile.FilePath);
-				UpdateReferences (new [] { item });
+				await UpdateReferences (new [] { item });
 			} catch (Exception exception) {
 				LoggingService.LogInternalError (exception);
 			} finally {
 				dialog.Destroy ();
+				dialog.Dispose ();
 			}
 		}
 	}	

@@ -28,18 +28,22 @@ using Gtk;
 using Mono.TextEditor;
 using System.Text;
 using MonoDevelop.Core;
+using MonoDevelop.Ide.Editor;
+using MonoDevelop.Components;
+using MonoDevelop.Ide.Editor.Highlighting;
+using System.Threading;
 
 namespace MonoDevelop.SourceEditor
 {
 	class SourceEditorPrintOperation : PrintOperation
 	{
-		TextDocument doc;
+		TextEditor editor;
 		FilePath filename;
 		SourceEditorPrintSettings settings;
 		
-		public SourceEditorPrintOperation (TextDocument doc, FilePath filename)
+		public SourceEditorPrintOperation (TextEditor editor, FilePath filename)
 		{
-			this.doc = doc;
+			this.editor = editor;
 			this.filename = filename;
 			this.settings = SourceEditorPrintSettings.Load ();
 			
@@ -51,17 +55,15 @@ namespace MonoDevelop.SourceEditor
 			layout = PangoUtil.CreateLayout (context);
 			layout.FontDescription = settings.Font;
 			
-			layout.FontDescription.Weight = Pango.Weight.Bold;
-			layout.SetText (" ");
-			int w, h;
-			layout.GetSize (out w, out h);
-			this.lineHeight = h / Pango.Scale.PangoScale;
-			layout.FontDescription.Weight = Pango.Weight.Normal;
-			
+			using (var PangoContext = context.CreatePangoContext ())
+			using (var metrics = PangoContext.GetMetrics (settings.Font, PangoContext.Language)) {
+				lineHeight = Math.Ceiling (0.5 + (metrics.Ascent + metrics.Descent) / Pango.Scale.PangoScale);
+			}
+
 			SetHeaderFormat (settings.HeaderFormat);
 			SetFooterFormat (settings.FooterFormat);
 			
-			style = Mono.TextEditor.Highlighting.SyntaxModeService.GetColorStyle (settings.ColorScheme);
+			style = SyntaxHighlightingService.GetEditorTheme (settings.EditorTheme);
 			
 			pageWidth = context.PageSetup.GetPageWidth (Unit.Pixel);
 			pageHeight = context.PageSetup.GetPageHeight (Unit.Pixel);
@@ -69,7 +71,7 @@ namespace MonoDevelop.SourceEditor
 				- (headerLines > 0? settings.HeaderPadding : 0) 
 				- (footerLines > 0? settings.FooterPadding : 0);
 			linesPerPage = (int)(contentHeight / lineHeight) - (headerLines + footerLines);
-			totalPages = (int)Math.Ceiling ((double)doc.LineCount / linesPerPage); 
+			totalPages = (int)Math.Ceiling ((double)editor.LineCount / linesPerPage); 
 			
 			NPages = totalPages;
 			
@@ -91,12 +93,12 @@ namespace MonoDevelop.SourceEditor
 		double pageWidth, pageHeight;
 		
 		Pango.Layout layout;
-		Mono.TextEditor.Highlighting.ColorScheme style;
+		Ide.Editor.Highlighting.EditorTheme style;
 		
 		string headerText;
 		string footerText;
 		
-		protected override void OnDrawPage (PrintContext context, int pageNr)
+		protected override async void OnDrawPage (PrintContext context, int pageNr)
 		{
 			using (var cr = context.CairoContext) {
 				double xPos = 0, yPos = 0;
@@ -104,13 +106,14 @@ namespace MonoDevelop.SourceEditor
 				PrintHeader (cr, context, pageNr, ref xPos, ref yPos);
 			
 				int startLine = pageNr * linesPerPage;
-				int endLine = Math.Min (startLine + linesPerPage - 1, doc.LineCount);
-			
+				int endLine = Math.Min (startLine + linesPerPage - 1, editor.LineCount);
+				var theme =editor.Options.GetEditorTheme ();
+
 				//FIXME: use proper 1-layout-per-line
 				for (int i = startLine; i < endLine; i++) {
-					var line = doc.GetLine (i + 1);
+					var line = editor.GetLine (i + 1);
 					if (!settings.UseHighlighting) {
-						string text = doc.GetTextAt (line);
+						string text = editor.GetTextAt (line);
 						text = text.Replace ("\t", new string (' ', settings.TabSize));
 					
 						layout.SetText (text);
@@ -121,16 +124,18 @@ namespace MonoDevelop.SourceEditor
 						continue;
 					}
 					
-					var startChunk = doc.SyntaxMode.GetChunks (style, line, line.Offset, line.LengthIncludingDelimiter);
-					foreach (Chunk chunk in startChunk) {
-						var chunkStyle = chunk != null ? style.GetChunkStyle (chunk) : null;
-						string text = doc.GetTextAt (chunk);
+					var highlightedLine = await editor.SyntaxHighlighting.GetHighlightedLineAsync (line, default(CancellationToken));
+					var lineOffset = line.Offset;
+					foreach (var chunk in highlightedLine.Segments) {
+						var chunkStyle = theme.GetChunkStyle (chunk.ScopeStack);
+						string text = editor.GetTextAt (lineOffset + chunk.Offset, chunk.Length);
 						text = text.Replace ("\t", new string (' ', settings.TabSize));
 						layout.SetText (text);
 					
 						var atts = ResetAttributes ();
-					
-						atts.Insert (new Pango.AttrForeground ((ushort)(chunkStyle.Foreground.R * ushort.MaxValue), (ushort)(chunkStyle.Foreground.G * ushort.MaxValue), (ushort)(chunkStyle.Foreground.B * ushort.MaxValue)));
+
+						var foreground = (Cairo.Color)chunkStyle.Foreground;
+						atts.Insert (new Pango.AttrForeground ((ushort)(foreground.R * ushort.MaxValue), (ushort)(foreground.G * ushort.MaxValue), (ushort)(foreground.B * ushort.MaxValue)));
 					
 						if (chunkStyle.FontWeight != Xwt.Drawing.FontWeight.Normal) {
 							atts.Insert (new Pango.AttrWeight ((Pango.Weight)chunkStyle.FontWeight));
@@ -201,12 +206,12 @@ namespace MonoDevelop.SourceEditor
 
 		string Subst (string text, int page)
 		{
-			var sb = new StringBuilder (text);
+			var sb = StringBuilderCache.Allocate (text);
 			sb.Replace ("%N", (page + 1).ToString ());
 			sb.Replace ("%Q", totalPages.ToString ());
 			//FIXME: use font width for ellipsizing better 
 			sb.Replace ("%F", SourceEditorWidget.EllipsizeMiddle (filename, 60));
-			return sb.ToString ();
+			return StringBuilderCache.ReturnAndFree (sb);
 		}
 		
 		void PrintFooter (Cairo.Context cr, PrintContext context, int page, ref double xPos, ref double yPos)
@@ -284,11 +289,19 @@ namespace MonoDevelop.SourceEditor
 		
 		private SourceEditorPrintSettings ()
 		{
-			Font = DefaultSourceEditorOptions.Instance.Font;
+			try {
+				Font = Pango.FontDescription.FromString (DefaultSourceEditorOptions.Instance.FontName);
+			} catch {
+				LoggingService.LogWarning ("Could not load font: {0}", DefaultSourceEditorOptions.Instance.FontName);
+			}
+			if (Font == null || String.IsNullOrEmpty (Font.Family))
+				Font = Pango.FontDescription.FromString (TextEditorOptions.DEFAULT_FONT);
+			//if (Font != null)
+			//	Font.Size = (int)(Font.Size * DefaultSourceEditorOptions.Instance.Zoom);
 			TabSize = DefaultSourceEditorOptions.Instance.TabSize;
 			HeaderFormat = "%F";
 			FooterFormat = GettextCatalog.GetString ("Page %N of %Q");
-			ColorScheme = "default";
+			EditorTheme = MonoDevelop.Ide.Editor.Highlighting.EditorTheme.DefaultThemeName;
 			HeaderSeparatorWeight = FooterSeparatorWeight = 0.5;
 			HeaderPadding = FooterPadding = 6;
 			UseHighlighting = true;
@@ -297,7 +310,7 @@ namespace MonoDevelop.SourceEditor
 		public bool UseHighlighting { get; private set; }
 		public Pango.FontDescription Font { get; private set; }
 		public int TabSize { get; private set; }
-		public string ColorScheme { get; private set; }
+		public string EditorTheme { get; private set; }
 		
 		public string HeaderFormat { get; private set; }
 		public string FooterFormat { get; private set; }

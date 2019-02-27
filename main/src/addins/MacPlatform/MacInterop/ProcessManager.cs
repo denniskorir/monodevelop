@@ -27,50 +27,30 @@
 using System;
 using System.Runtime.InteropServices;
 
+using AppKit;
+
 namespace MonoDevelop.MacInterop
 {
 	public static class ProcessManager
 	{
-		const string CARBON = "/System/Library/Frameworks/Carbon.framework/Versions/A/Carbon";
-		
-		[DllImport (CARBON)]
-		static extern OSStatus GetProcessPID (ref ProcessSerialNumber psn, out int pid);
-		
-		[DllImport (CARBON)]
-		static extern OSStatus KillProcess (ref ProcessSerialNumber process);
-		
-		public static int GetProcessPid (ProcessSerialNumber psn)
+		public static bool KillProcess (int pid)
 		{
-			int pid;
-			if (GetProcessPID (ref psn, out pid) == OSStatus.Ok)
-				return pid;
-			return -1;
+			NSRunningApplication runningApp = NSRunningApplication.GetRunningApplication (pid);
+			if (runningApp == null)
+				return false;
+
+			return runningApp.ForceTerminate ();
 		}
-		
-		public static bool KillProcess (ProcessSerialNumber psn)
+
+		public static bool IsRunning (int pid)
 		{
-			return KillProcess (ref psn) == OSStatus.Ok;
+			return NSRunningApplication.GetRunningApplication (pid) != null;
 		}
-		
+
 		enum OSStatus
 		{
 			Ok = 0
 		}
-	}
-	
-	public struct ProcessSerialNumber
-	{
-		uint high;
-		uint low;
-		
-		public ProcessSerialNumber (uint high, uint low)
-		{
-			this.high = high;
-			this.low = low;
-		}
-		
-		public uint High { get { return high; } }
-		public uint Low { get { return low; } }
 	}
 }
 

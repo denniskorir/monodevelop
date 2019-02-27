@@ -17,14 +17,29 @@ namespace SubversionAddinWindows
 	sealed class SvnSharpClient: SubversionVersionControl
 	{
 		static bool errorShown;
+		static bool initialized;
 		static bool installError {
-			get { return client.Value == null; }
+			get {
+				if (initialized)
+					return !client.IsValueCreated;
+
+				try {
+					initialized = true;
+
+					// Intended.
+					var dummy = client.Value;
+				} catch (Exception e) {
+					LoggingService.LogError ("SVN client could not be initialized", e);
+					return true;
+				}
+				return false;
+			}
 		}
-		static readonly internal Lazy<SvnClient> client;
+		static readonly internal Lazy<object> client;
 		
 		static SvnSharpClient ()
 		{
-			client = new Lazy<SvnClient> (CheckInstalled);
+			client = new Lazy<object> (CheckInstalled);
 		}
 
 		public override string Version {
@@ -33,7 +48,7 @@ namespace SubversionAddinWindows
 			}
 		}
 
-		static SvnClient CheckInstalled ()
+		static object CheckInstalled ()
 		{
 			try {
 				return new SvnClient ();
@@ -54,10 +69,15 @@ namespace SubversionAddinWindows
 			{
 				if (!errorShown && installError) {
 					errorShown = true;
-					var db = new AlertButton ("Go to Download Page");
-					AlertButton res = MessageService.AskQuestion ("The Subversion add-in could not be initialized", "This add-in requires the 'Microsoft Visual C++ 2005 Service Pack 1 Redistributable'. You may need to install it.", db, AlertButton.Ok);
+					var db = new AlertButton (GettextCatalog.GetString ("Go to Download Page"));
+					AlertButton res = MessageService.AskQuestion (
+						GettextCatalog.GetString ("The Subversion add-in could not be initialized"),
+						GettextCatalog.GetString ("This add-in requires the 'Microsoft Visual C++ 2010 Redistributable'. You may need to install it."),
+						db,
+						AlertButton.Ok);
+
 					if (res == db) {
-						DesktopService.ShowUrl ("http://www.microsoft.com/downloads/details.aspx?familyid=766a6af7-ec73-40ff-b072-9112bab119c2");
+						DesktopService.ShowUrl ("https://www.microsoft.com/en-us/download/details.aspx?id=5555");
 					}
 				}
 				return !installError;
@@ -68,8 +88,11 @@ namespace SubversionAddinWindows
 		{
 			string wc_path;
 			try {
+				if (client.Value == null)
+					return string.Empty;
+				
 				lock (client.Value)
-					wc_path = client.Value.GetWorkingCopyRoot (path.FullPath);
+					wc_path = ((SvnClient)client.Value).GetWorkingCopyRoot (path.FullPath);
 				return wc_path;
 			} catch (SvnException e) {
 				switch (e.SvnErrorCode) {
@@ -85,10 +108,10 @@ namespace SubversionAddinWindows
 	sealed class SvnSharpBackend: SubversionBackend
 	{
 		static SvnClient client {
-			get { return SvnSharpClient.client.Value; }
+			get { return (SvnClient)SvnSharpClient.client.Value; }
 		}
 
-		IProgressMonitor updateMonitor;
+		ProgressMonitor updateMonitor;
 		NotifData notifyData;
 		ProgressData progressData;
 
@@ -145,7 +168,7 @@ namespace SubversionAddinWindows
 				if (updateMonitor == null)
 					return;
 
-				a.Cancel = updateMonitor.IsCancelRequested;
+				a.Cancel = updateMonitor.CancellationToken.IsCancellationRequested;
 			};
 		}
 
@@ -207,7 +230,7 @@ namespace SubversionAddinWindows
 			e.CertificateFile = file;
 		}
 
-		public override void Add (FilePath path, bool recurse, IProgressMonitor monitor)
+		public override void Add (FilePath path, bool recurse, ProgressMonitor monitor)
 		{
 			var args = new SvnAddArgs {
 				Depth = recurse ? SvnDepth.Infinity : SvnDepth.Empty,
@@ -218,7 +241,7 @@ namespace SubversionAddinWindows
 				client.Add (path, args);
 		}
 
-		public override void Checkout (string url, FilePath path, Revision rev, bool recurse, IProgressMonitor monitor)
+		public override void Checkout (string url, FilePath path, Revision rev, bool recurse, ProgressMonitor monitor)
 		{
 			var args = new SvnCheckOutArgs {
 				Depth = recurse ? SvnDepth.Infinity : SvnDepth.Empty,
@@ -234,7 +257,7 @@ namespace SubversionAddinWindows
 			}
 		}
 
-		public override void Commit (FilePath[] paths, string message, IProgressMonitor monitor)
+		public override void Commit (FilePath[] paths, string message, ProgressMonitor monitor)
 		{
 			var args = new SvnCommitArgs {
 				LogMessage = message,
@@ -244,7 +267,7 @@ namespace SubversionAddinWindows
 				client.Commit (paths.ToStringArray (), args);
 		}
 
-		public override void Delete (FilePath path, bool force, IProgressMonitor monitor)
+		public override void Delete (FilePath path, bool force, ProgressMonitor monitor)
 		{
 			var args = new SvnDeleteArgs {
 				Force = force,
@@ -334,7 +357,7 @@ namespace SubversionAddinWindows
 			lock (client)
 				client.Log (path, args, (o, a) =>
 					list.Add (new SvnRevision (repo, (int)a.Revision, a.Time, a.Author, a.LogMessage,
-						a.ChangedPaths.Select (item => new RevisionPath (item.Path, ConvertRevisionAction (item.Action), "")).ToArray ())));
+						a.ChangedPaths == null ? new RevisionPath[0] : a.ChangedPaths.Select (item => new RevisionPath (item.Path, ConvertRevisionAction (item.Action), "")).ToArray ())));
 			return list;
 		}
 
@@ -349,7 +372,7 @@ namespace SubversionAddinWindows
 			return RevisionAction.Other;
 		}
 
-		public override void Mkdir (string[] paths, string message, IProgressMonitor monitor)
+		public override void Mkdir (string[] paths, string message, ProgressMonitor monitor)
 		{
 			var args = new SvnCreateDirectoryArgs {
 				CreateParents = true,
@@ -361,7 +384,7 @@ namespace SubversionAddinWindows
 				client.RemoteCreateDirectories (uris, args);
 		}
 
-		public override void Move (FilePath srcPath, FilePath destPath, SvnRevision rev, bool force, IProgressMonitor monitor)
+		public override void Move (FilePath srcPath, FilePath destPath, SvnRevision rev, bool force, ProgressMonitor monitor)
 		{
 			var args = new SvnMoveArgs {
 				Force = force,
@@ -388,7 +411,7 @@ namespace SubversionAddinWindows
 			}
 		}
 
-		public override void Revert (FilePath[] paths, bool recurse, IProgressMonitor monitor)
+		public override void Revert (FilePath[] paths, bool recurse, ProgressMonitor monitor)
 		{
 			var args = new SvnRevertArgs {
 				Depth = recurse ? SvnDepth.Infinity : SvnDepth.Children,
@@ -398,7 +421,7 @@ namespace SubversionAddinWindows
 				client.Revert (paths.ToStringArray (), args);
 		}
 
-		public override void RevertRevision (FilePath path, Revision revision, IProgressMonitor monitor)
+		public override void RevertRevision (FilePath path, Revision revision, ProgressMonitor monitor)
 		{
 			var args = new SvnMergeArgs ();
 			BindMonitor (monitor);
@@ -408,7 +431,7 @@ namespace SubversionAddinWindows
 				client.Merge (path, new SvnPathTarget (path), range, args);
 		}
 
-		public override void RevertToRevision (FilePath path, Revision revision, IProgressMonitor monitor)
+		public override void RevertToRevision (FilePath path, Revision revision, ProgressMonitor monitor)
 		{
 			var args = new SvnMergeArgs ();
 			BindMonitor (monitor);
@@ -419,6 +442,9 @@ namespace SubversionAddinWindows
 
 		public override IEnumerable<VersionInfo> Status (Repository repo, FilePath path, SvnRevision revision, bool descendDirs, bool changedItemsOnly, bool remoteStatus)
 		{
+			if (path == FilePath.Null)
+				throw new ArgumentNullException ();
+			
 			var list = new List<VersionInfo> ();
 			var args = new SvnStatusArgs {
 				Revision = GetRevision (revision),
@@ -430,12 +456,14 @@ namespace SubversionAddinWindows
 				try {
 					client.Status (path, args, (o, a) => list.Add (CreateVersionInfo (repo, a)));
 				} catch (SvnInvalidNodeKindException e) {
-					if (e.SvnErrorCode == SvnErrorCode.SVN_ERR_WC_NOT_WORKING_COPY)
-						list.Add (VersionInfo.CreateUnversioned (e.File, true));
-					else if (e.SvnErrorCode == SvnErrorCode.SVN_ERR_WC_NOT_FILE)
-						list.Add (VersionInfo.CreateUnversioned (e.File, false));
-					else
-						throw;
+					if (!string.IsNullOrEmpty (e.File)) {
+						if (e.SvnErrorCode == SvnErrorCode.SVN_ERR_WC_NOT_WORKING_COPY)
+							list.Add (VersionInfo.CreateUnversioned (e.File, true));
+						else if (e.SvnErrorCode == SvnErrorCode.SVN_ERR_WC_NOT_FILE)
+							list.Add (VersionInfo.CreateUnversioned (e.File, false));
+						else
+							throw;
+					}
 				} catch (SvnWorkingCopyPathNotFoundException e) {
 					list.Add (VersionInfo.CreateUnversioned (e.File, Directory.Exists (e.File)));
 				}
@@ -452,7 +480,7 @@ namespace SubversionAddinWindows
 			if (ent.IsRemoteUpdated) {
 				rs = ConvertStatus (SvnSchedule.Normal, ent.RemoteContentStatus);
 				rr = new SvnRevision (repo, (int) ent.RemoteUpdateRevision, ent.RemoteUpdateCommitTime,
-									  ent.RemoteUpdateCommitAuthor, "(unavailable)", null);
+				                      ent.RemoteUpdateCommitAuthor, GettextCatalog.GetString ("(unavailable)"), null);
 			}
 
 			VersionStatus status = ConvertStatus (SvnSchedule.Normal, ent.LocalContentStatus);
@@ -506,7 +534,7 @@ namespace SubversionAddinWindows
 			return VersionStatus.Unversioned;
 		}
 
-		public override void Lock (IProgressMonitor monitor, string comment, bool stealLock, params FilePath[] paths)
+		public override void Lock (ProgressMonitor monitor, string comment, bool stealLock, params FilePath[] paths)
 		{
 			var args = new SvnLockArgs {
 				Comment = comment,
@@ -517,7 +545,7 @@ namespace SubversionAddinWindows
 				client.Lock (paths.ToStringArray (), args);
 		}
 
-		public override void Unlock (IProgressMonitor monitor, bool breakLock, params FilePath[] paths)
+		public override void Unlock (ProgressMonitor monitor, bool breakLock, params FilePath[] paths)
 		{
 			var args = new SvnUnlockArgs {
 				BreakLock = breakLock,
@@ -527,7 +555,7 @@ namespace SubversionAddinWindows
 				client.Unlock (paths.ToStringArray (), args);
 		}
 
-		public override void Update (FilePath path, bool recurse, IProgressMonitor monitor)
+		public override void Update (FilePath path, bool recurse, ProgressMonitor monitor)
 		{
 			var args = new SvnUpdateArgs {
 				Depth = recurse ? SvnDepth.Infinity : SvnDepth.Children,
@@ -595,7 +623,7 @@ namespace SubversionAddinWindows
 				var annotations = new Annotation [numAnnotations];
 				foreach (var annotation in list) {
 					if (annotation.LineNumber < annotations.Length)
-						annotations [(int)annotation.LineNumber] = new Annotation (annotation.Revision.ToString (),
+						annotations [(int)annotation.LineNumber] = new Annotation (new SvnRevision(repo, (int)annotation.Revision),
 																					annotation.Author, annotation.Time);
 				}
 				return annotations;
@@ -653,7 +681,7 @@ namespace SubversionAddinWindows
 			public int Seconds;
 		}
 
-		void BindMonitor (IProgressMonitor monitor)
+		void BindMonitor (ProgressMonitor monitor)
 		{
 			notifyData = new NotifData ();
 			progressData = new ProgressData ();
@@ -664,11 +692,11 @@ namespace SubversionAddinWindows
 		static string BytesToSize (long kbytes)
 		{
 			if (kbytes < 1024)
-				return String.Format ("{0} KBytes", kbytes);
-			return String.Format ("{0:0.00} MBytes", kbytes / 1024.0);
+				return GettextCatalog.GetString ("{0} KBytes", kbytes);
+			return GettextCatalog.GetString ("{0:0.00} MBytes", kbytes / 1024.0);
 		}
 
-		static void ProgressWork (SvnProgressEventArgs e, ProgressData data, IProgressMonitor monitor)
+		static void ProgressWork (SvnProgressEventArgs e, ProgressData data, ProgressMonitor monitor)
 		{
 			if (monitor == null)
 				return;
@@ -700,17 +728,18 @@ namespace SubversionAddinWindows
 			data.LogTimer.Interval = 1000;
 			data.LogTimer.Elapsed += delegate {
 				data.Seconds += 1;
-				monitor.Log.WriteLine ("Transferred {0} in {1} seconds.", BytesToSize (data.KBytes), data.Seconds);
+				Runtime.RunInMainThread (() => {
+					monitor.Log.WriteLine (GettextCatalog.GetString ("Transferred {0} in {1} seconds."), BytesToSize (data.KBytes), data.Seconds);
+				});
 			};
 			data.LogTimer.Start ();
 		}
 
-		static void Notify (SvnNotifyEventArgs e, NotifData notifData, IProgressMonitor monitor)
+		static void Notify (SvnNotifyEventArgs e, NotifData notifData, ProgressMonitor monitor)
 		{
 			string actiondesc;
 			string file = e.Path;
 			bool skipEol = false;
-			bool notifyChange = false;
 
 			switch (e.Action) {
 			case SvnNotifyAction.Skip:
@@ -756,7 +785,6 @@ namespace SubversionAddinWindows
 
 			case SvnNotifyAction.UpdateUpdate:
 				actiondesc = string.Format (GettextCatalog.GetString ("Update '{0}'"), file);
-				notifyChange = true;
 				break;
 			case SvnNotifyAction.UpdateExternal:
 				actiondesc = string.Format (GettextCatalog.GetString ("Fetching external item into '{0}'"), file);
@@ -776,7 +804,6 @@ namespace SubversionAddinWindows
 				break;
 			case SvnNotifyAction.CommitModified:
 				actiondesc = string.Format (GettextCatalog.GetString ("Sending        {0}"), file);
-				notifyChange = true;
 				break;
 			case SvnNotifyAction.CommitAdded:
 				if (e.MimeTypeIsBinary) {
@@ -787,7 +814,6 @@ namespace SubversionAddinWindows
 				break;
 			case SvnNotifyAction.CommitReplaced:
 				actiondesc = string.Format (GettextCatalog.GetString ("Replacing      {0}"), file);
-				notifyChange = true;
 				break;
 			case SvnNotifyAction.CommitSendData:
 				if (!notifData.SendingData) {
@@ -811,14 +837,13 @@ namespace SubversionAddinWindows
 			}
 
 			if (monitor != null) {
-				if (skipEol)
-					monitor.Log.Write (actiondesc);
-				else
-					monitor.Log.WriteLine (actiondesc);
+				Runtime.RunInMainThread (() => {
+					if (skipEol)
+						monitor.Log.Write (actiondesc);
+					else
+						monitor.Log.WriteLine (actiondesc);
+				});
 			}
-
-			if (notifyChange && File.Exists (file))
-				FileService.NotifyFileChanged (file, true);
 		}
 
 		public override bool HasNeedLock (FilePath file)

@@ -35,13 +35,26 @@ using Mono.Addins.Setup;
 using System.IO;
 using System.Collections;
 using MonoDevelop.Core.Logging;
+using System.Threading;
+using System.Collections.Generic;
+using System.Reflection;
+using System.Threading.Tasks;
 
-public class MonoDevelopProcessHost
+class MonoDevelopProcessHost
 {
+	[STAThread]
 	public static int Main (string[] args)
 	{
 		try {
-			Runtime.SetProcessName ("mdtool");
+			var sc = new ConsoleSynchronizationContext ();
+			SynchronizationContext.SetSynchronizationContext (sc);
+			Runtime.MainSynchronizationContext = SynchronizationContext.Current;
+
+			string exeName = Path.GetFileNameWithoutExtension (Assembly.GetEntryAssembly ().Location);
+			if (!Platform.IsMac && !Platform.IsWindows)
+				exeName = exeName.ToLower ();
+
+			Runtime.SetProcessName (exeName);
 
 			EnabledLoggingLevel verbosity = EnabledLoggingLevel.Fatal;
 			bool regUpdate = true;
@@ -113,7 +126,7 @@ public class MonoDevelopProcessHost
 			Runtime.Initialize (regUpdate);
 
 			if (showHelp || badInput) {
-				ShowHelp (badInput);
+				ShowHelp (badInput, exeName);
 				return badInput? 1 : 0;
 			}
 
@@ -129,7 +142,11 @@ public class MonoDevelopProcessHost
 				return badInput? 1 : 0;
 			}
 
-			return tool.Run (toolArgs);
+			var task = tool.Run (toolArgs);
+			task.ContinueWith ((t) => sc.ExitLoop ());
+			sc.RunMainLoop ();
+			return task.Result;
+
 		} catch (UserException ex) {
 			Console.WriteLine (ex.Message);
 			return -1;
@@ -145,31 +162,31 @@ public class MonoDevelopProcessHost
 		}
 	}
 
-	static void ShowHelp (bool shortHelp)
+	static void ShowHelp (bool shortHelp, string exeName)
 	{
 		if (shortHelp) {
 			Console.WriteLine ();
-			Console.WriteLine ("Run `mdtool --help` to show usage information.");
+			Console.WriteLine ("Run `{0} --help` to show usage information.", exeName);
 			Console.WriteLine ();
 			return;
 		}
 		Console.WriteLine ();
 		Console.WriteLine (BrandingService.BrandApplicationName ("MonoDevelop Tool Runner"));
 		Console.WriteLine ();
-		Console.WriteLine ("Usage: mdtool [options] <tool> ... : Runs a tool.");
-		Console.WriteLine ("       mdtool setup ... : Runs the setup utility.");
-		Console.WriteLine ("       mdtool -q : Lists available tools.");
+		Console.WriteLine ("Usage: {0} [options] <tool> ... : Runs a tool.", exeName);
+		Console.WriteLine ("       {0} setup ... : Runs the setup utility.", exeName);
+		Console.WriteLine ("       {0} -q : Lists available tools.", exeName);
 		Console.WriteLine ();
 		Console.WriteLine ("Options:");
 		Console.WriteLine ("  --verbose (-v)   Increases log verbosity. Can be used multiple times.");
-		Console.WriteLine ("  --no-reg-update  Skip updating addin registry. Faster but results in");
+		Console.WriteLine ("  --no-reg-update  Skip updating extension registry. Faster but results in");
 		Console.WriteLine ("                   random errors if registry is not up to date.");
 		ShowAvailableTools ();
 	}
 	
 	static int RunSetup (string[] args)
 	{
-		Console.WriteLine (BrandingService.BrandApplicationName ("MonoDevelop Add-in Setup Utility"));
+		Console.WriteLine (BrandingService.BrandApplicationName ("MonoDevelop Extension Setup Utility"));
 		bool verbose = false;
 		foreach (string a in args)
 			if (a == "-v")
@@ -198,4 +215,67 @@ public class MonoDevelopProcessHost
 		Console.WriteLine ();
 	}
 
+	class ConsoleSynchronizationContext: SynchronizationContext
+	{
+		// This class implements a threading context based on a basic message loop, which emulates the
+		// behavior of a normal UI loop. This is necessary since there is no UI loop when running mdtool.
+
+		Queue<Tuple<SendOrPostCallback,object>> work = new Queue<Tuple<SendOrPostCallback, object>> ();
+		bool endLoop;
+
+		public override void Post (SendOrPostCallback d, object state)
+		{
+			lock (work) {
+				work.Enqueue (new Tuple<SendOrPostCallback, object> (d, state));
+				Monitor.Pulse (work);
+			}
+		}
+
+		public override void Send (SendOrPostCallback d, object state)
+		{
+			var evt = new ManualResetEventSlim (false);
+			Exception exception = null;
+			Post (s => {
+				try {
+					d.Invoke (state);
+				} catch (Exception ex) {
+					exception = ex;
+				} finally {
+					Thread.MemoryBarrier ();
+					evt.Set ();
+				}
+			}, null);
+			evt.Wait ();
+			if (exception != null)
+				throw exception;
+		}
+
+		public void RunMainLoop ()
+		{
+			do {
+				Tuple<SendOrPostCallback,object> next = null;
+				lock (work) {
+					if (work.Count > 0 && !endLoop)
+						next = work.Dequeue ();
+					else if (!endLoop)
+						Monitor.Wait (work);
+				}
+				if (next != null) {
+					try {
+						next.Item1 (next.Item2);
+					} catch (Exception ex) {
+						Console.WriteLine (ex);
+					}
+				}
+			} while (!endLoop);
+		}
+
+		public void ExitLoop ()
+		{
+			lock (work) {
+				endLoop = true;
+				Monitor.Pulse (work);
+			}
+		}
+	}
 }

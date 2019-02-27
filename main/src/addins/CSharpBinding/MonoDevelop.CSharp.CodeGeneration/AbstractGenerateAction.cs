@@ -31,18 +31,28 @@ using Gtk;
 using System.Collections.Generic;
 using MonoDevelop.Refactoring;
 using MonoDevelop.Ide;
-using ICSharpCode.NRefactory.TypeSystem;
 using MonoDevelop.Ide.TypeSystem;
 using MonoDevelop.Components;
+using Microsoft.CodeAnalysis;
+using MonoDevelop.Ide.Editor;
+using MonoDevelop.Core.Text;
+using MonoDevelop.CSharp.Completion;
+using MonoDevelop.CSharp.Formatting;
+using Microsoft.CodeAnalysis.Formatting;
+using MonoDevelop.Core;
+using Microsoft.CodeAnalysis.Text;
+using Microsoft.CodeAnalysis.Editor;
+using Microsoft.CodeAnalysis.Shared.Extensions;
+using System.Threading;
 
 namespace MonoDevelop.CodeGeneration
 {
-	public abstract class AbstractGenerateAction : IGenerateAction
+	abstract class AbstractGenerateAction : IGenerateAction
 	{
 		readonly TreeStore store = new TreeStore (typeof(bool), typeof(Xwt.Drawing.Image), typeof(string), typeof(object));
 		readonly CodeGenerationOptions options;
 		
-		public CodeGenerationOptions Options {
+		internal CodeGenerationOptions Options {
 			get {
 				return options; 
 			}
@@ -76,26 +86,22 @@ namespace MonoDevelop.CodeGeneration
 			column.Expand = true;
 
 			treeView.AppendColumn (column);
-			Ambience ambience = AmbienceService.GetAmbienceForFile (options.Document.FileName);
 			foreach (object obj in GetValidMembers ()) {
-				var member = obj as IEntity;
+				var member = obj as ISymbol;
 				if (member != null) {
-					Store.AppendValues (false, ImageService.GetIcon (member.GetStockIcon (), IconSize.Menu), ambience.GetString (member, OutputFlags.ClassBrowserEntries), member);
+					Store.AppendValues (false, ImageService.GetIcon (member.GetStockIcon (), IconSize.Menu), member.ToDisplayString (Ambience.LabelFormat), member);
 					continue;
 				}
 
-				var tuple = obj as Tuple<IMember, bool>;
+				var tuple = obj as Tuple<ISymbol, bool>;
 				if (tuple != null) {
-					Store.AppendValues (false, ImageService.GetIcon (tuple.Item1.GetStockIcon (), IconSize.Menu), ambience.GetString (tuple.Item1, OutputFlags.ClassBrowserEntries), tuple);
+					Store.AppendValues (false, ImageService.GetIcon (tuple.Item1.GetStockIcon (), IconSize.Menu), tuple.Item1.ToDisplayString (Ambience.LabelFormat), tuple);
 					continue;
 				}
-
-				var variable = obj as IVariable;
-				if (variable != null)
-					Store.AppendValues (false, ImageService.GetIcon (variable.GetStockIcon (), IconSize.Menu), variable.Name, variable);
 			}
 			
 			treeView.Model = store;
+			treeView.SearchColumn = -1; // disable the interactive search
 		}
 		
 		void ToggleRendererToggled (object o, ToggledArgs args)
@@ -118,17 +124,16 @@ namespace MonoDevelop.CodeGeneration
 		
 		static string AddIndent (string text, string indent)
 		{
-			var doc = new Mono.TextEditor.TextDocument ();
-			doc.Text = text;
-			var result = new StringBuilder ();
-			foreach (var line in doc.Lines) {
+			var doc = TextEditorFactory.CreateNewReadonlyDocument (new StringTextSource (text), "");
+			var result = StringBuilderCache.Allocate ();
+			foreach (var line in doc.GetLines ()) {
 				result.Append (indent);
 				result.Append (doc.GetTextAt (line.SegmentIncludingDelimiter));
 			}
-			return result.ToString ();
+			return StringBuilderCache.ReturnAndFree (result);
 		}
 
-		public void GenerateCode ()
+		public void GenerateCode (Gtk.TreeView treeView)
 		{
 			TreeIter iter;
 			if (!store.GetIterFirst (out iter))
@@ -139,9 +144,13 @@ namespace MonoDevelop.CodeGeneration
 				if (include)
 					includedMembers.Add (store.GetValue (iter, 3));
 			} while (store.IterNext (ref iter));
-
-			var output = new StringBuilder ();
-			string indent = RefactoringOptions.GetIndent (options.Document, (IEntity)options.EnclosingMember ?? options.EnclosingType) + "\t";
+			if (includedMembers.Count == 0) {
+				if (treeView.Selection.GetSelected (out iter)) {
+					includedMembers.Add (store.GetValue (iter, 3));
+				}
+			}
+			var output = StringBuilderCache.Allocate ();
+			string indent = options.Editor.GetVirtualIndentationString (options.Editor.CaretLine);
 			foreach (string nodeText in GenerateCode (includedMembers)) {
 				if (output.Length > 0) {
 					output.AppendLine ();
@@ -151,8 +160,16 @@ namespace MonoDevelop.CodeGeneration
 			}
 
 			if (output.Length > 0) {
-				var data = options.Document.Editor;
-				data.InsertAtCaret (output.ToString ().TrimStart ());
+				var data = options.Editor;
+				data.EnsureCaretIsNotVirtual ();
+				int offset = data.CaretOffset;
+				var text = StringBuilderCache.ReturnAndFree (output).TrimStart ();
+				data.InsertAtCaret (text);				
+				var formattingService = options.DocumentContext?.AnalysisDocument?.GetLanguageService<IEditorFormattingService> ();
+				if (formattingService != null) {
+					var changes = formattingService.GetFormattingChangesAsync (options.DocumentContext.AnalysisDocument, new TextSpan (offset, text.Length), CancellationToken.None).WaitAndGetResult (CancellationToken.None);
+					data.ApplyTextChanges (changes);
+				}
 			}
 		}
 	}

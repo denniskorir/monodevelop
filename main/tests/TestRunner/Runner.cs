@@ -32,15 +32,17 @@ using Mono.Addins;
 using System.Linq;
 using Mono.Addins.Description;
 using System.Diagnostics;
+using System.Threading;
+using System.Threading.Tasks;
 
 namespace MonoDevelop.Tests.TestRunner
 {
 	public class Runer: IApplication
 	{
-		public int Run (string[] arguments)
+		public Task<int> Run (string[] arguments)
 		{
 			var args = new List<string> (arguments);
-			bool useGuiUnit = false;
+			Assembly guiUnitAsm = null;
 			foreach (var ar in args) {
 				if ((ar.EndsWith (".dll", StringComparison.OrdinalIgnoreCase) || ar.EndsWith (".exe", StringComparison.OrdinalIgnoreCase)) && File.Exists (ar)) {
 					try {
@@ -49,8 +51,8 @@ namespace MonoDevelop.Tests.TestRunner
 						var ids = new HashSet<string> ();
 						foreach (var aname in asm.GetReferencedAssemblies ()) {
 							if (aname.Name == "GuiUnit") {
-								Assembly.LoadFile (Path.Combine (Path.GetDirectoryName (path), "GuiUnit.exe"));
-								useGuiUnit = true;
+								guiUnitAsm = Assembly.LoadFile (Path.Combine (Path.GetDirectoryName (path), "GuiUnit.exe"));
+								continue;
 							}
 							ids.UnionWith (GetAddinsFromReferences (aname));
 						}
@@ -63,14 +65,21 @@ namespace MonoDevelop.Tests.TestRunner
 					}
 				}
 			}
-			if (useGuiUnit) {
-				var runnerType = Type.GetType ("GuiUnit.TestRunner, GuiUnit");
-				var method = runnerType.GetMethod ("Main", BindingFlags.Public | BindingFlags.Static);
-				return (int)method.Invoke (null, new [] { args.ToArray () });
+
+			// Make sure the updater is disabled while running tests
+			Runtime.Preferences.EnableUpdaterForCurrentSession = false;
+
+			if (guiUnitAsm != null) {
+				Xwt.XwtSynchronizationContext.AutoInstall = false;
+				SynchronizationContext.SetSynchronizationContext (new Xwt.XwtSynchronizationContext ());
+				Runtime.MainSynchronizationContext = SynchronizationContext.Current;
+
+				var method = guiUnitAsm.EntryPoint;
+				return Task.FromResult ((int)method.Invoke (null, new [] { args.ToArray () }));
 			}
 			args.RemoveAll (a => a.StartsWith ("-port=", StringComparison.Ordinal));
 			args.Add ("-domain=None");
-			return NUnit.ConsoleRunner.Runner.Main (args.ToArray ());
+			return Task.FromResult (NUnit.ConsoleRunner.Runner.Main (args.ToArray ()));
 		}
 
 		static IEnumerable<string> GetAddinsFromReferences (AssemblyName aname)

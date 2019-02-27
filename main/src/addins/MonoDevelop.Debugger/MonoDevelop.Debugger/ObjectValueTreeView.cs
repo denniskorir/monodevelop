@@ -39,9 +39,9 @@ using MonoDevelop.Ide;
 using MonoDevelop.Ide.CodeCompletion;
 using MonoDevelop.Components.Commands;
 using MonoDevelop.Ide.Commands;
-using Mono.TextEditor;
+using MonoDevelop.Ide.Editor.Extension;
 using System.Linq;
-
+using MonoDevelop.Ide.Fonts;
 
 namespace MonoDevelop.Debugger
 {
@@ -76,9 +76,10 @@ namespace MonoDevelop.Debugger
 		double typeColWidth;
 
 		readonly CellRendererTextWithIcon crtExp;
-		readonly CellRendererText crtValue;
+		readonly ValueCellRenderer crtValue;
 		readonly CellRendererText crtType;
 		readonly CellRendererRoundedButton crpButton;
+		readonly CellRendererImage evaluateStatusCell;
 		readonly CellRendererImage crpPin;
 		readonly CellRendererImage crpLiveUpdate;
 		readonly CellRendererImage crpViewer;
@@ -89,10 +90,6 @@ namespace MonoDevelop.Debugger
 		readonly TreeViewColumn valueCol;
 		readonly TreeViewColumn typeCol;
 		readonly TreeViewColumn pinCol;
-		
-		const string errorColor = "red";
-		const string modifiedColor = "blue";
-		const string disabledColor = "gray";
 		
 		static readonly CommandEntrySet menuSet;
 		
@@ -168,7 +165,7 @@ namespace MonoDevelop.Debugger
 				if (!icon.IsNull) {
 					using (var ctx = Gdk.CairoHelper.Create (window)) {
 						using (var layout = new Pango.Layout (widget.PangoContext)) {
-							layout.FontDescription = FontDesc.Copy ();
+							layout.FontDescription = FontService.SansFont.CopyModified (Ide.Gui.Styles.FontScale11);
 							layout.FontDescription.Family = Family;
 							layout.SetText (Text);
 							int w, h;
@@ -182,7 +179,10 @@ namespace MonoDevelop.Debugger
 			}
 		}
 
-		class CellRendererTextUrl : CellRendererText{
+		class ValueCellRenderer : CellRendererText
+		{
+			public bool Compact;
+
 			[GLib.Property ("texturl")]
 			public string TextUrl {
 				get {
@@ -190,14 +190,30 @@ namespace MonoDevelop.Debugger
 				}
 				set {
 					Uri uri;
-					if (value != null && Uri.TryCreate (value.Trim ('"', '{', '}'), UriKind.Absolute, out uri) && (uri.Scheme == "http" || uri.Scheme == "https")) {
-						Underline = Pango.Underline.Single;
-						Foreground = "#197CEF";
-					} else {
+
+					try {
+						if (value != null && Uri.TryCreate (value.Trim ('"', '{', '}'), UriKind.Absolute, out uri) && (uri.Scheme == "http" || uri.Scheme == "https")) {
+							Underline = Pango.Underline.Single;
+							Foreground = Ide.Gui.Styles.LinkForegroundColor.ToHexString (false);
+						} else {
+							Underline = Pango.Underline.None;
+						}
+					} catch (Exception) {
+						// MONO BUG: Uri.TryCreate() throws when unicode characters are encountered. See bug #47364
 						Underline = Pango.Underline.None;
 					}
+
 					Text = value;
 				}
+			}
+
+			public override void GetSize (Widget widget, ref Gdk.Rectangle cell_area, out int x_offset, out int y_offset, out int width, out int height)
+			{
+				if (Compact)
+					this.Ellipsize = Pango.EllipsizeMode.None;
+				base.GetSize (widget, ref cell_area, out x_offset, out y_offset, out width, out height);
+				if (Compact)
+					this.Ellipsize = Pango.EllipsizeMode.End;
 			}
 		}
 
@@ -256,18 +272,18 @@ namespace MonoDevelop.Debugger
 							cell_area.Height - TopBottomPadding * 2 - 1,
 							(cell_area.Height - (TopBottomPadding * 2)) / 2);
 						cr.LineWidth = 1;
-						cr.SetSourceRGB (233 / 255.0, 242 / 255.0, 252 / 255.0);
+						cr.SetSourceColor (Styles.ObjectValueTreeValuesButtonBackground.ToCairoColor ());
 						cr.FillPreserve ();
-						cr.SetSourceRGB (82 / 255.0, 148 / 255.0, 235 / 255.0);
+						cr.SetSourceColor (Styles.ObjectValueTreeValuesButtonBorder.ToCairoColor ());
 						cr.Stroke ();
 
 						int YOffset = (cell_area.Height - h) / 2;
 						if (((ObjectValueTreeView)widget).CompactView && !Platform.IsWindows)
 							YOffset += 1;
-						window.DrawLayoutWithColors (widget.Style.TextGC (StateType.Normal),
-							cell_area.X + (cell_area.Height - TopBottomPadding * 2 + 1) / 2 + xpad,
-							cell_area.Y + YOffset,
-							layout, new Gdk.Color (82, 148, 235), new Gdk.Color (233, 242, 252));
+						cr.SetSourceColor (Styles.ObjectValueTreeValuesButtonText.ToCairoColor ());
+						cr.MoveTo (cell_area.X + (cell_area.Height - TopBottomPadding * 2 + 1) / 2 + xpad,
+								   cell_area.Y + YOffset);
+						cr.ShowLayout (layout);
 					}
 				}
 			}
@@ -296,17 +312,17 @@ namespace MonoDevelop.Debugger
 		{
 			store = new TreeStore (typeof(string), typeof(string), typeof(string), typeof(ObjectValue), typeof(bool), typeof(bool), typeof(string), typeof(string), typeof(string), typeof(bool), typeof(string), typeof(Xwt.Drawing.Image), typeof(bool), typeof(string), typeof(Xwt.Drawing.Image), typeof(bool), typeof(string));
 			Model = store;
+			SearchColumn = -1; // disable the interactive search
 			RulesHint = true;
 			EnableSearch = false;
 			AllowPopupMenu = true;
 			Selection.Mode = Gtk.SelectionMode.Multiple;
 			Selection.Changed += HandleSelectionChanged;
 			ResetColumnSizes ();
-			
-			Pango.FontDescription newFont = Style.FontDescription.Copy ();
-			newFont.Size = (newFont.Size * 8) / 10;
 
-			liveIcon = ImageService.GetIcon (Stock.Execute, IconSize.Menu);
+			Pango.FontDescription newFont = FontService.SansFont.CopyModified (Ide.Gui.Styles.FontScale11);
+
+			liveIcon = ImageService.GetIcon ("md-live", IconSize.Menu);
 			noLiveIcon = liveIcon.WithAlpha (0.5);
 			
 			expCol = new TreeViewColumn ();
@@ -328,28 +344,13 @@ namespace MonoDevelop.Debugger
 			
 			valueCol = new TreeViewColumn ();
 			valueCol.Title = GettextCatalog.GetString ("Value");
-			var evaluateStatusCell = new CellRendererImage ();
+			evaluateStatusCell = new CellRendererImage ();
 			valueCol.PackStart (evaluateStatusCell, false);
 			valueCol.AddAttribute (evaluateStatusCell, "visible", EvaluateStatusIconVisibleColumn);
 			valueCol.AddAttribute (evaluateStatusCell, "image", EvaluateStatusIconColumn);
 			var crColorPreview = new CellRendererColorPreview ();
 			valueCol.PackStart (crColorPreview, false);
-			valueCol.SetCellDataFunc (crColorPreview, new TreeCellDataFunc ((tree_column, cell, model, iter) => {
-				var val = (ObjectValue) model.GetValue (iter, ObjectColumn);
-				Xwt.Drawing.Color? color;
-
-				if (val != null && !val.IsNull && DebuggingService.HasGetConverter<Xwt.Drawing.Color> (val))
-					color = DebuggingService.GetGetConverter<Xwt.Drawing.Color> (val).GetValue (val);
-				else
-					color = null;
-
-				if (color != null) {
-					((CellRendererColorPreview) cell).Color = (Xwt.Drawing.Color) color;
-					cell.Visible = true;
-				} else {
-					cell.Visible = false;
-				}
-			}));
+			valueCol.SetCellDataFunc (crColorPreview, ValueDataFunc);
 			crpButton = new CellRendererRoundedButton ();
 			valueCol.PackStart (crpButton, false);
 			valueCol.AddAttribute (crpButton, "visible", ValueButtonVisibleColumn);
@@ -358,7 +359,8 @@ namespace MonoDevelop.Debugger
 			crpViewer.Image = ImageService.GetIcon (Stock.Edit, IconSize.Menu);
 			valueCol.PackStart (crpViewer, false);
 			valueCol.AddAttribute (crpViewer, "visible", ViewerButtonVisibleColumn);
-			crtValue = new CellRendererTextUrl ();
+			crtValue = new ValueCellRenderer ();
+			crtValue.Ellipsize = Pango.EllipsizeMode.End;
 			valueCol.PackStart (crtValue, true);
 			valueCol.AddAttribute (crtValue, "texturl", ValueColumn);
 			valueCol.AddAttribute (crtValue, "editable", ValueEditableColumn);
@@ -392,6 +394,8 @@ namespace MonoDevelop.Debugger
 			pinCol.Resizable = false;
 			pinCol.Visible = false;
 			pinCol.Expand = false;
+			pinCol.Sizing = TreeViewColumnSizing.Fixed;
+			pinCol.FixedWidth = 16;
 			AppendColumn (pinCol);
 			
 			state = new TreeViewState (this, NameColumn);
@@ -402,16 +406,96 @@ namespace MonoDevelop.Debugger
 			crtValue.EditingStarted += OnValueEditing;
 			crtValue.Edited += OnValueEdited;
 			crtValue.EditingCanceled += OnEditingCancelled;
-			
-			this.EnableAutoTooltips ();
-			
+
 			createMsg = GettextCatalog.GetString ("Click here to add a new watch");
 			CompletionWindowManager.WindowClosed += HandleCompletionWindowClosed;
 			PreviewWindowManager.WindowClosed += HandlePreviewWindowClosed;
 			ScrollAdjustmentsSet += HandleScrollAdjustmentsSet;
+
+
+			expanderSize = (int)this.StyleGetProperty ("expander-size") + 4;//+4 is hardcoded in gtk.c code
+			horizontal_separator = (int)this.StyleGetProperty ("horizontal-separator");
+			grid_line_width = (int)this.StyleGetProperty ("grid-line-width");
+			focus_line_width = (int)this.StyleGetProperty ("focus-line-width") * 2;//we just use *2 version in GetMaxWidth
 		}
 
-		Dictionary<TreeIter, bool> evalSpinnersIcons = new Dictionary<TreeIter, bool>();
+		static void ValueDataFunc (Gtk.TreeViewColumn tree_column, Gtk.CellRenderer cell, Gtk.TreeModel model, Gtk.TreeIter iter)
+		{
+			var val = (ObjectValue)model.GetValue (iter, ObjectColumn);
+			Xwt.Drawing.Color? color;
+
+			if (val != null && !val.IsNull && DebuggingService.HasGetConverter<Xwt.Drawing.Color> (val)) {
+				try {
+					color = DebuggingService.GetGetConverter<Xwt.Drawing.Color> (val).GetValue (val);
+				} catch (Exception) {
+					color = null;
+				}
+			} else {
+				color = null;
+			}
+			if (color != null) {
+				((CellRendererColorPreview)cell).Color = (Xwt.Drawing.Color)color;
+				cell.Visible = true;
+			} else {
+				cell.Visible = false;
+			}
+		}
+
+		int expanderSize;
+		int horizontal_separator;
+		int grid_line_width;
+		int focus_line_width;
+
+		int GetMaxWidth (TreeViewColumn column, TreeIter iter)
+		{
+			var path = Model.GetPath (iter);
+			int x, y, w, h;
+			int columnWidth = 0;
+			column.CellSetCellData (Model, iter, false, false);
+			var area = new Gdk.Rectangle (0, 0, 1000, 1000);
+			bool firstCell = true;
+			foreach (var cellRenderer in column.CellRenderers) {
+				if (!cellRenderer.Visible)
+					continue;
+				if (!firstCell && columnWidth > 0)
+					columnWidth += column.Spacing;
+				cellRenderer.GetSize (this, ref area, out x, out y, out w, out h);
+				columnWidth += w + focus_line_width;
+				firstCell = false;
+			}
+			if (ExpanderColumn == column) {
+				columnWidth += horizontal_separator + (path.Depth - 1) * LevelIndentation;
+				if (ShowExpanders)
+					columnWidth += path.Depth * expanderSize;
+			} else {
+				columnWidth += horizontal_separator;
+			}
+			if (this.GetRowExpanded (path)) {
+				var childrenCount = Model.IterNChildren (iter);
+				for (int i = 0; i < childrenCount; i++) {
+					TreeIter childIter;
+					if (!Model.IterNthChild (out childIter, iter, i))
+						break;
+					columnWidth = Math.Max (columnWidth, GetMaxWidth (column, childIter));
+				}
+			}
+			return columnWidth;
+		}
+
+		void RecalculateWidth ()
+		{
+			TreeIter iter;
+			if (!this.Model.GetIterFirst (out iter))
+				return;
+			foreach (var column in new [] { expCol, valueCol }) {//No need to calculate for Type and PinIcon columns
+				// +1 is here because apperently when we calculate MaxWidth and set to FixedWidth
+				// later GTK when cacluate needed width for Label it doesn't have enough space
+				// and puts "..." to end of text thinking there is not enough space
+				// I assume this is because rounding(floating point) calculation errors
+				// hence do +1 and avoid such problems.
+				column.FixedWidth = GetMaxWidth (column, iter) + 1;
+			}
+		}
 
 		void HandleSelectionChanged (object sender, EventArgs e)
 		{
@@ -422,25 +506,21 @@ namespace MonoDevelop.Debugger
 					SetPreviewButtonIcon (iconBeforeSelected, currentHoverIter);
 				}
 			}
-			foreach (var s in evalSpinnersIcons.ToArray()) {
-				if (store.IterIsValid (s.Key) && Selection.IterIsSelected (s.Key)) {
-					if (!s.Value) {
-						store.LoadIcon (s.Key, EvaluateStatusIconColumn, "md-spinner-selected-16", IconSize.Menu);
-						evalSpinnersIcons [s.Key] = true;
-					}
-				} else {
-					if (s.Value) {
-						store.LoadIcon (s.Key, EvaluateStatusIconColumn, "md-spinner-normal-16", IconSize.Menu);
-						evalSpinnersIcons [s.Key] = false;
-					}
-				}
-			}
 		}
 
+		Adjustment oldHadjustment;
+		Adjustment oldVadjustment;
+		//Don't convert this event handler to override OnSetScrollAdjustments as it causes problems
 		void HandleScrollAdjustmentsSet (object o, ScrollAdjustmentsSetArgs args)
 		{
-			Hadjustment.ValueChanged += UpdatePreviewPosition;
-			Vadjustment.ValueChanged += UpdatePreviewPosition;
+			if (oldHadjustment != null) {
+				oldHadjustment.ValueChanged -= UpdatePreviewPosition;
+				oldVadjustment.ValueChanged -= UpdatePreviewPosition;
+			}
+			oldHadjustment = Hadjustment;
+			oldVadjustment = Vadjustment;
+			oldHadjustment.ValueChanged += UpdatePreviewPosition;
+			oldVadjustment.ValueChanged += UpdatePreviewPosition;
 		}
 
 		void UpdatePreviewPosition (object sender, EventArgs e)
@@ -497,8 +577,13 @@ namespace MonoDevelop.Debugger
 			valueCol.RemoveNotification ("width", OnColumnWidthChanged);
 			expCol.RemoveNotification ("width", OnColumnWidthChanged);
 
-			Hadjustment.ValueChanged -= UpdatePreviewPosition;
-			Vadjustment.ValueChanged -= UpdatePreviewPosition;
+			ScrollAdjustmentsSet -= HandleScrollAdjustmentsSet;
+			if (oldHadjustment != null) {
+				oldHadjustment.ValueChanged -= UpdatePreviewPosition;
+				oldVadjustment.ValueChanged -= UpdatePreviewPosition;
+				oldHadjustment = null;
+				oldVadjustment = null;
+			}
 
 			values.Clear ();
 			valueNames.Clear ();
@@ -521,6 +606,8 @@ namespace MonoDevelop.Debugger
 		{
 			base.OnShown ();
 			AdjustColumnSizes ();
+			if (compact)
+				RecalculateWidth ();
 		}
 
 		protected override void OnRealized ()
@@ -561,7 +648,7 @@ namespace MonoDevelop.Debugger
 
 			if (tval != valueCol.FixedWidth) {
 				valueCol.FixedWidth = tval;
-				Application.Invoke (delegate { QueueResize (); });
+				Application.Invoke ((o, args) => { QueueResize (); });
 			}
 			
 			columnSizesUpdating = false;
@@ -654,7 +741,22 @@ namespace MonoDevelop.Debugger
 			}
 		}
 		
-		public PinnedWatch PinnedWatch { get; set; }
+		PinnedWatch pinnedWatch = null;
+		public PinnedWatch PinnedWatch {
+			get {
+				return pinnedWatch;
+			}
+			set {
+				if (pinnedWatch == value)
+					return;
+				pinnedWatch = value;
+				if (value == null) {
+					pinCol.FixedWidth = 16;
+				} else {
+					pinCol.FixedWidth = 38;
+				}
+			}
+		}
 		
 		public string PinnedWatchFile { get; set; }
 		public int PinnedWatchLine { get; set; }
@@ -667,19 +769,14 @@ namespace MonoDevelop.Debugger
 				compact = value;
 				Pango.FontDescription newFont;
 				if (compact) {
-					newFont = Style.FontDescription.Copy ();
-					newFont.Size = (newFont.Size * 8) / 10;
-					expCol.Sizing = TreeViewColumnSizing.Autosize;
-					valueCol.Sizing = TreeViewColumnSizing.Autosize;
+					newFont = FontService.SansFont.CopyModified (Ide.Gui.Styles.FontScale11);
 					valueCol.MaxWidth = 800;
 					crpViewer.Image = ImageService.GetIcon (Stock.Edit).WithSize (12,12);
-					ColumnsAutosize ();
 				} else {
-					newFont = Style.FontDescription;
-					expCol.Sizing = TreeViewColumnSizing.Fixed;
-					valueCol.Sizing = TreeViewColumnSizing.Fixed;
+					newFont = FontService.SansFont.CopyModified (Ide.Gui.Styles.FontScale12);
 					valueCol.MaxWidth = int.MaxValue;
 				}
+				crtValue.Compact = compact;
 				typeCol.Visible = !compact;
 				crtExp.FontDesc = newFont;
 				crtValue.FontDesc = newFont;
@@ -713,6 +810,8 @@ namespace MonoDevelop.Debugger
 		{
 			values.Add (value);
 			Refresh (false);
+			if (compact)
+				RecalculateWidth ();
 		}
 		
 		public void AddValues (IEnumerable<ObjectValue> newValues)
@@ -720,12 +819,16 @@ namespace MonoDevelop.Debugger
 			foreach (ObjectValue val in newValues)
 				values.Add (val);
 			Refresh (false);
+			if (compact)
+				RecalculateWidth ();
 		}
 		
 		public void RemoveValue (ObjectValue value)
 		{
 			values.Remove (value);
 			Refresh (true);
+			if (compact)
+				RecalculateWidth ();
 		}
 
 		public void ReplaceValue (ObjectValue old, ObjectValue @new)
@@ -736,6 +839,8 @@ namespace MonoDevelop.Debugger
 
 			values [idx] = @new;
 			Refresh (false);
+			if (compact)
+				RecalculateWidth ();
 		}
 
 		public void ClearAll ()
@@ -805,7 +910,7 @@ namespace MonoDevelop.Debugger
 				ShowExpanders = true;
 			
 			if (AllowAdding)
-				store.AppendValues (createMsg, "", "", null, true, true, null, disabledColor, disabledColor);
+				store.AppendValues (createMsg, "", "", null, true, true, null, Ide.Gui.Styles.ColorGetHex (Styles.ObjectValueTreeValueDisabledText), Ide.Gui.Styles.ColorGetHex (Styles.ObjectValueTreeValueDisabledText));
 
 			LoadState ();
 		}
@@ -825,7 +930,7 @@ namespace MonoDevelop.Debugger
 					ExpandRow (store.GetPath (it), false);
 				}
 			} else {
-				RefreshRow (it);
+				RefreshRow (it, val);
 			}
 		}
 
@@ -868,14 +973,15 @@ namespace MonoDevelop.Debugger
 				}
 
 				if (compact)
-					ColumnsAutosize ();
+					RecalculateWidth ();
 				enumerableLoading.Remove (value);
 			}, cancellationTokenSource.Token, TaskContinuationOptions.NotOnCanceled, Xwt.Application.UITaskScheduler);
 		}
-		
-		void RefreshRow (TreeIter iter)
+
+		void RefreshRow (TreeIter iter, ObjectValue val)
 		{
-			var val = (ObjectValue) store.GetValue (iter, ObjectColumn);
+			if (val == null)
+				return;
 			UnregisterValue (val);
 			
 			RemoveChildren (iter);
@@ -908,8 +1014,7 @@ namespace MonoDevelop.Debugger
 
 			while (store.IterChildren (out citer, iter)) {
 				var val = (ObjectValue) store.GetValue (citer, ObjectColumn);
-				if (val != null)
-					UnregisterValue (val);
+				UnregisterValue (val);
 				RemoveChildren (citer);
 				store.Remove (ref citer);
 			}
@@ -925,13 +1030,15 @@ namespace MonoDevelop.Debugger
 
 		void UnregisterValue (ObjectValue val)
 		{
+			if (val == null)
+				return;
 			val.ValueChanged -= OnValueUpdated;
 			nodes.Remove (val);
 		}
 
 		void OnValueUpdated (object o, EventArgs a)
 		{
-			Application.Invoke (delegate {
+			Application.Invoke ((o2, a2) => {
 				if (disposed)
 					return;
 
@@ -957,10 +1064,10 @@ namespace MonoDevelop.Debugger
 							SetValues (parent, it, null, val.GetArrayItem (0));
 							RegisterValue (val, it);
 							for (int n=1; n<val.ArrayCount; n++) {
-								TreeIter cit = store.InsertNodeAfter (it);
+								it = store.InsertNodeAfter (it);
 								ObjectValue cval = val.GetArrayItem (n);
-								SetValues (parent, cit, null, cval);
-								RegisterValue (cval, cit);
+								SetValues (parent, it, null, cval);
+								RegisterValue (cval, it);
 							}
 						}
 					} else {
@@ -968,6 +1075,8 @@ namespace MonoDevelop.Debugger
 					}
 				}
 				UnregisterValue (val);
+				if (compact)
+					RecalculateWidth ();
 			});
 		}
 
@@ -1024,7 +1133,7 @@ namespace MonoDevelop.Debugger
 			RegisterValue (val, iter);
 		}
 		
-		void SetValues (TreeIter parent, TreeIter it, string name, ObjectValue val)
+		void SetValues (TreeIter parent, TreeIter it, string name, ObjectValue val, bool updateJustValue = false)
 		{
 			string strval;
 			bool canEdit;
@@ -1050,40 +1159,35 @@ namespace MonoDevelop.Debugger
 			if (val.IsUnknown) {
 				if (frame != null) {
 					strval = GettextCatalog.GetString ("The name '{0}' does not exist in the current context.", val.Name);
-					nameColor = disabledColor;
+					nameColor = Ide.Gui.Styles.ColorGetHex (Styles.ObjectValueTreeValueDisabledText);
 					canEdit = false;
 				} else {
 					canEdit = !val.IsReadOnly;
 					strval = string.Empty;
 				}
 				evaluateStatusIcon = MonoDevelop.Ide.Gui.Stock.Warning;
-			} else if (val.IsError) {
+			} else if (val.IsError || val.IsNotSupported) {
 				evaluateStatusIcon = MonoDevelop.Ide.Gui.Stock.Warning;
 				strval = val.Value;
 				int i = strval.IndexOf ('\n');
 				if (i != -1)
 					strval = strval.Substring (0, i);
-				valueColor = errorColor;
+				valueColor = Ide.Gui.Styles.ColorGetHex (Styles.ObjectValueTreeValueErrorText);
 				canEdit = false;
-			} else if (val.IsNotSupported) {
+			} else if (val.IsImplicitNotSupported) {
 				strval = "";//val.Value; with new "Show Value" button we don't want to display message "Implicit evaluation is disabled"
-				valueColor = disabledColor;
+				valueColor = Ide.Gui.Styles.ColorGetHex (Styles.ObjectValueTreeValueDisabledText);
 				if (val.CanRefresh)
 					valueButton = GettextCatalog.GetString ("Show Value");
 				canEdit = false;
 			} else if (val.IsEvaluating) {
 				strval = GettextCatalog.GetString ("Evaluating...");
 
-				if (Selection.IterIsSelected (it)) {
-					evalSpinnersIcons [it] = true;
-					evaluateStatusIcon = "md-spinner-selected-16";
-				} else {
-					evalSpinnersIcons [it] = false;
-					evaluateStatusIcon = "md-spinner-normal-16";
-				}
-				valueColor = disabledColor;
+				evaluateStatusIcon = "md-spinner-16";
+
+				valueColor = Ide.Gui.Styles.ColorGetHex (Styles.ObjectValueTreeValueDisabledText);
 				if (val.IsEvaluatingGroup) {
-					nameColor = disabledColor;
+					nameColor = Ide.Gui.Styles.ColorGetHex (Styles.ObjectValueTreeValueDisabledText);
 					name = val.Name;
 				}
 				canEdit = false;
@@ -1099,20 +1203,27 @@ namespace MonoDevelop.Debugger
 				showViewerButton = !val.IsNull && DebuggingService.HasValueVisualizers (val);
 				canEdit = val.IsPrimitive && !val.IsReadOnly;
 				if (!val.IsNull && DebuggingService.HasInlineVisualizer (val)) {
-					strval = DebuggingService.GetInlineVisualizer (val).InlineVisualize (val);
+					try {
+						strval = DebuggingService.GetInlineVisualizer (val).InlineVisualize (val);
+					} catch (Exception) {
+						strval = val.DisplayValue ?? "(null)";
+					}
 				} else {
 					strval = val.DisplayValue ?? "(null)";
 				}
 				if (oldValue != null && strval != oldValue)
-					nameColor = valueColor = modifiedColor;
+					nameColor = valueColor = Ide.Gui.Styles.ColorGetHex (Styles.ObjectValueTreeValueModifiedText);
 			}
 
 			strval = strval.Replace ("\r\n", " ").Replace ("\n", " ");
 
+			store.SetValue (it, ValueColumn, strval);
+			if (updateJustValue)
+				return;
+
 			bool hasChildren = val.HasChildren;
 			string icon = GetIcon (val.Flags);
 			store.SetValue (it, NameColumn, name);
-			store.SetValue (it, ValueColumn, strval);
 			store.SetValue (it, TypeColumn, val.TypeName);
 			store.SetValue (it, ObjectColumn, val);
 			store.SetValue (it, NameEditableColumn, !hasParent && AllowAdding);
@@ -1120,9 +1231,6 @@ namespace MonoDevelop.Debugger
 			store.SetValue (it, IconColumn, icon);
 			store.SetValue (it, NameColorColumn, nameColor);
 			store.SetValue (it, ValueColorColumn, valueColor);
-			if (evaluateStatusIcon != "md-spinner-normal-16" && evaluateStatusIcon != "md-spinner-selected-16") {
-				evalSpinnersIcons.Remove (it);
-			}
 			store.SetValue (it, EvaluateStatusIconVisibleColumn, evaluateStatusIcon != null);
 			store.LoadIcon (it, EvaluateStatusIconColumn, evaluateStatusIcon, IconSize.Menu);
 			store.SetValue (it, ValueButtonVisibleColumn, valueButton != null);
@@ -1143,7 +1251,7 @@ namespace MonoDevelop.Debugger
 			
 			if (hasChildren) {
 				// Add dummy node
-				store.AppendValues (it, GettextCatalog.GetString ("Loading..."), "", "", null, true);
+				store.AppendValues (it, GettextCatalog.GetString ("Loading..."), "", "", null, false);
 				if (!ShowExpanders)
 					ShowExpanders = true;
 				valPath += "/";
@@ -1212,7 +1320,7 @@ namespace MonoDevelop.Debugger
 			base.OnRowCollapsed (iter, path);
 
 			if (compact)
-				ColumnsAutosize ();
+				RecalculateWidth ();
 
 			ScrollToCell (path, expCol, true, 0f, 0f);
 		}
@@ -1253,7 +1361,7 @@ namespace MonoDevelop.Debugger
 					store.Remove (ref it);
 
 					if (compact)
-						ColumnsAutosize ();
+						RecalculateWidth ();
 				}
 
 				expandTasks.Remove (value);
@@ -1277,8 +1385,11 @@ namespace MonoDevelop.Debugger
 					}
 				}
 			}
-			
+
 			base.OnRowExpanded (iter, path);
+
+			if (compact)
+				RecalculateWidth ();
 
 			ScrollToCell (path, expCol, true, 0f, 0f);
 		}
@@ -1404,13 +1515,40 @@ namespace MonoDevelop.Debugger
 			string oldValue;
 			if (oldValues.TryGetValue (valPath, out oldValue)) {
 				if (oldValue != val.Value)
-					newColor = modifiedColor;
+					newColor = Ide.Gui.Styles.ColorGetHex (Styles.ObjectValueTreeValueModifiedText);
 			}
 			
 			store.SetValue (it, NameColorColumn, newColor);
 			store.SetValue (it, ValueColorColumn, newColor);
+			UpdateParentValue (it);
 		}
-		
+
+		private void UpdateParentValue (TreeIter it)
+		{
+			if (store.IterParent (out var parentIter, it)) {
+				if (store.GetValue (parentIter, ObjectColumn) is ObjectValue parentVal) {
+					parentVal.Refresh ();
+					nodes [parentVal] = new TreeRowReference (store, store.GetPath (parentIter));
+					if (parentVal.IsEvaluating)
+						parentVal.ValueChanged += UpdateObjectValue;
+					else
+						UpdateObjectValue (parentVal, null);
+				}
+			}
+		}
+
+		private void UpdateObjectValue (object sender, EventArgs e)
+		{
+			Runtime.RunInMainThread (() => {
+				var val = (ObjectValue)sender;
+				val.ValueChanged -= UpdateObjectValue;
+				if (!FindValue (val, out var it))
+					return;
+				nodes.Remove (val);
+				SetValues (TreeIter.Zero, it, null, val, true);
+			});
+		}
+
 		void OnEditingCancelled (object s, EventArgs args)
 		{
 			OnEndEditing ();
@@ -1441,9 +1579,7 @@ namespace MonoDevelop.Debugger
 		void OnEditKeyRelease (object sender, EventArgs e)
 		{
 			if (!wasHandled) {
-				string text = ctx == null ? editEntry.Text : editEntry.Text.Substring (Math.Max (0, Math.Min (ctx.TriggerOffset, editEntry.Text.Length)));
-				CompletionWindowManager.UpdateWordSelection (text);
-				CompletionWindowManager.PostProcessKeyEvent (key, keyChar, modifierState);
+				CompletionWindowManager.PostProcessKeyEvent (KeyDescriptor.FromGtk (key, keyChar, modifierState));
 				PopupCompletion ((Entry) sender);
 			}
 		}
@@ -1465,32 +1601,34 @@ namespace MonoDevelop.Debugger
 			keyValue = args.Event.KeyValue;
 
 			if (currentCompletionData != null) {
-				wasHandled  = CompletionWindowManager.PreProcessKeyEvent (key, keyChar, modifierState);
+				wasHandled  = CompletionWindowManager.PreProcessKeyEvent (KeyDescriptor.FromGtk (key, keyChar, modifierState));
 				args.RetVal = wasHandled;
 			}
 		}
 
 		static bool IsCompletionChar (char c)
 		{
-			return (char.IsLetterOrDigit (c) || char.IsPunctuation (c) || char.IsSymbol (c) || char.IsWhiteSpace (c));
+			return char.IsLetter (c) || c == '_' || c == '.';
 		}
-
-		void PopupCompletion (Entry entry)
+		CancellationTokenSource cts = new CancellationTokenSource ();
+		async void PopupCompletion (Entry entry)
 		{
-			Application.Invoke (delegate {
+			try {
 				char c = (char)Gdk.Keyval.ToUnicode (keyValue);
 				if (currentCompletionData == null && IsCompletionChar (c)) {
-					string exp = entry.Text.Substring (0, entry.CursorPosition);
-					currentCompletionData = GetCompletionData (exp);
+					string expr = entry.Text.Substring (0, entry.CursorPosition);
+					cts.Cancel ();
+					cts = new CancellationTokenSource ();
+					currentCompletionData = await GetCompletionData (expr, cts.Token);
 					if (currentCompletionData != null) {
-						var dataList = new DebugCompletionDataList (currentCompletionData);
-						ctx = ((ICompletionWidget)this).CreateCodeCompletionContext (entry.CursorPosition - currentCompletionData.ExpressionLength);
+						DebugCompletionDataList dataList = new DebugCompletionDataList (currentCompletionData);
+						ctx = ((ICompletionWidget)this).CreateCodeCompletionContext (expr.Length - currentCompletionData.ExpressionLength);
 						CompletionWindowManager.ShowWindow (null, c, dataList, this, ctx);
-					} else {
-						currentCompletionData = null;
 					}
 				}
-			});
+
+			} catch (OperationCanceledException) {
+			}
 		}
 
 		TreeIter lastPinIter;
@@ -1518,13 +1656,8 @@ namespace MonoDevelop.Debugger
 				if (obj.IsNull)
 					return false;
 				if (obj.IsPrimitive) {
-					if (obj.TypeName != "string") {
-						return false;
-					} else {
-						if (obj.Value.Length < DebuggingService.DebuggerSession.EvaluationOptions.EllipsizedLength + 3) {//3=2x"(qoute) and 1x "…"
-							return false;
-						}
-					}
+					//obj.DisplayValue.Contains ("|") is special case to detect enum with [Flags]
+					return obj.TypeName == "string" || obj.DisplayValue.Contains ("|");
 				}
 				if (string.IsNullOrEmpty (obj.TypeName))
 					return false;
@@ -1650,10 +1783,10 @@ namespace MonoDevelop.Debugger
 		
 		void CleanPinIcon ()
 		{
-			if (!lastPinIter.Equals (TreeIter.Zero)) {
+			if (!lastPinIter.Equals (TreeIter.Zero) && store.IterIsValid (lastPinIter)) {
 				store.SetValue (lastPinIter, PinIconColumn, null);
-				lastPinIter = TreeIter.Zero;
 			}
+			lastPinIter = TreeIter.Zero;
 		}
 		
 		protected override bool OnLeaveNotifyEvent (Gdk.EventCrossing evnt)
@@ -1764,13 +1897,17 @@ namespace MonoDevelop.Debugger
 			CellRenderer cr;
 			TreePath path;
 			bool closePreviewWindow = true;
+			bool clickProcessed = false;
 			
-			if (CanQueryDebugger && evnt.Button == 1 && GetCellAtPos ((int)evnt.X, (int)evnt.Y, out path, out col, out cr)) {
-				TreeIter it;
-				store.GetIter (out it, path);
+			TreeIter it;
+			if (CanQueryDebugger && evnt.Button == 1 && GetCellAtPos ((int)evnt.X, (int)evnt.Y, out path, out col, out cr) && store.GetIter (out it, path)) {
 				if (cr == crpViewer) {
+					clickProcessed = true;
 					var val = (ObjectValue)store.GetValue (it, ObjectColumn);
-					DebuggingService.ShowValueVisualizer (val);
+					if (DebuggingService.ShowValueVisualizer (val)) {
+						UpdateParentValue (it);
+						RefreshRow (it, val);
+					}
 				} else if (cr == crtExp && !PreviewWindowManager.IsVisible && ValidObjectForPreviewIcon (it)) {
 					var val = (ObjectValue)store.GetValue (it, ObjectColumn);
 					startPreviewCaret = GetCellRendererArea (path, col, cr);
@@ -1790,6 +1927,7 @@ namespace MonoDevelop.Debugger
 					startPreviewCaret.Y += (int)Vadjustment.Value;
 					if (startPreviewCaret.X < evnt.X &&
 						startPreviewCaret.X + 16 > evnt.X) {
+						clickProcessed = true;
 						if (CompactView) {
 							SetPreviewButtonIcon (PreviewButtonIcons.Active, it);
 						} else {
@@ -1809,6 +1947,7 @@ namespace MonoDevelop.Debugger
 						var url = crtValue.Text.Trim ('"', '{', '}');
 						Uri uri;
 						if (url != null && Uri.TryCreate (url, UriKind.Absolute, out uri) && (uri.Scheme == "http" || uri.Scheme == "https")) {
+							clickProcessed = true;
 							DesktopService.ShowUrl (url);
 						}
 					}
@@ -1819,14 +1958,17 @@ namespace MonoDevelop.Debugger
 						base.OnButtonPressEvent (evnt);//Select row, so base.OnButtonPressEvent below starts editing
 				} else if (!editing) {
 					if (cr == crpButton) {
+						clickProcessed = true;
 						HandleValueButton (it);
 					} else if (cr == crpPin) {
+						clickProcessed = true;
 						TreeIter pi;
 						if (PinnedWatch != null && !store.IterParent (out pi, it))
 							RemovePinnedWatch (it);
 						else
 							CreatePinnedWatch (it);
 					} else if (cr == crpLiveUpdate) {
+						clickProcessed = true;
 						TreeIter pi;
 						if (PinnedWatch != null && !store.IterParent (out pi, it)) {
 							DebuggingService.SetLiveUpdateMode (PinnedWatch, !PinnedWatch.LiveUpdate);
@@ -1843,6 +1985,9 @@ namespace MonoDevelop.Debugger
 				PreviewWindowManager.DestroyWindow ();
 			}
 
+			if (clickProcessed)
+				return true;
+			
 			//HACK: show context menu in release event instead of show event to work around gtk bug
 			if (evnt.TriggersContextMenu ()) {
 				//	ShowPopup (evnt);
@@ -1879,7 +2024,7 @@ namespace MonoDevelop.Debugger
 		void ShowPopup (Gdk.EventButton evt)
 		{
 			if (AllowPopupMenu)
-				IdeApp.CommandService.ShowContextMenu (this, evt, menuSet, this);
+				this.ShowContextMenu (evt, menuSet, this);
 		}
 
 		[CommandUpdateHandler (EditCommands.SelectAll)]
@@ -1922,18 +2067,16 @@ namespace MonoDevelop.Debugger
 				}
 			}
 
-			var values = new List<string> ();
-			var names = new List<string> ();
-			var types = new List<string> ();
-			int maxValue = 0;
-			int maxName = 0;
-
+			var str = new StringBuilder ();
+			bool needsNewLine = false;
 			for (int i = 0; i < selected.Length; i++) {
 				if (!store.GetIter (out iter, selected[i]))
 					continue;
+				if (needsNewLine)
+					str.AppendLine ();
+				needsNewLine = true;
 
 				string value = (string) store.GetValue (iter, ValueColumn);
-				string name = (string) store.GetValue (iter, NameColumn);
 				string type = (string) store.GetValue (iter, TypeColumn);
 				if (type == "string") {
 					var objVal = store.GetValue (iter, ObjectColumn) as ObjectValue;
@@ -1943,29 +2086,7 @@ namespace MonoDevelop.Debugger
 						value = '"' + Mono.Debugging.Evaluation.ExpressionEvaluator.EscapeString ((string)objVal.GetRawValue (opt)) + '"';
 					}
 				}
-
-				maxValue = Math.Max (maxValue, value.Length);
-				maxName = Math.Max (maxName, name.Length);
-
-				values.Add (value);
-				names.Add (name);
-				types.Add (type);
-			}
-
-			var str = new StringBuilder ();
-			for (int i = 0; i < values.Count; i++) {
-				if (i > 0)
-					str.AppendLine ();
-
-				str.Append (names[i]);
-				if (names[i].Length < maxName)
-					str.Append (new string (' ', maxName - names[i].Length));
-				str.Append ('\t');
-				str.Append (values[i]);
-				if (values[i].Length < maxValue)
-					str.Append (new string (' ', maxValue - values[i].Length));
-				str.Append ('\t');
-				str.Append (types[i]);
+				str.Append (value);
 			}
 
 			Clipboard.Get (Gdk.Selection.Clipboard).Text = str.ToString ();
@@ -2071,9 +2192,12 @@ namespace MonoDevelop.Debugger
 			var val = (ObjectValue) store.GetValue (iter, ObjectColumn);
 			if (val != null && val.Name == DebuggingService.DebuggerSession.EvaluationOptions.CurrentExceptionTag)
 				DebuggingService.ShowExceptionCaughtDialog ();
+
+			if (val != null && DebuggingService.HasValueVisualizers (val))
+				DebuggingService.ShowValueVisualizer (val);
 		}
-		
-		
+
+
 		bool GetCellAtPos (int x, int y, out TreePath path, out TreeViewColumn col, out CellRenderer cellRenderer)
 		{
 			if (GetPathAtPos (x, y, out path, out col)) {
@@ -2082,7 +2206,21 @@ namespace MonoDevelop.Debugger
 				foreach (CellRenderer cr in col.CellRenderers) {
 					int xo, w;
 					col.CellGetPosition (cr, out xo, out w);
-					if (cr.Visible && x >= xo && x < xo + w) {
+					var visible = cr.Visible;
+					if (cr == crpViewer) {
+						if (store.GetIter (out var it, path)) {
+							visible = (bool)store.GetValue (it, ViewerButtonVisibleColumn);
+						}
+					} else if (cr == evaluateStatusCell) {
+						if (store.GetIter (out var it, path)) {
+							visible = (bool)store.GetValue (it, EvaluateStatusIconVisibleColumn);
+						}
+					} else if (cr == crpButton) {
+						if (store.GetIter (out var it, path)) {
+							visible = (bool)store.GetValue (it, ValueButtonVisibleColumn);
+						}
+					}
+					if (visible && x >= xo && x < xo + w) {
 						cellRenderer = cr;
 						return true;
 					}
@@ -2157,7 +2295,13 @@ namespace MonoDevelop.Debugger
 				return ((ICompletionWidget)this).CreateCodeCompletionContext (editEntry.Position);
 			}
 		}
-		
+
+		public double ZoomLevel {
+			get {
+				return 1;
+			}
+		}
+
 		public event EventHandler CompletionContextChanged;
 
 		protected virtual void OnCompletionContextChanged (EventArgs e)
@@ -2192,6 +2336,9 @@ namespace MonoDevelop.Debugger
 			get {
 				return editEntry.Position;
 			}
+			set {
+				editEntry.Position = value;
+			}
 		}
 		
 		char ICompletionWidget.GetChar (int offset)
@@ -2200,28 +2347,22 @@ namespace MonoDevelop.Debugger
 
 			return offset >= txt.Length ? '\0' : txt[offset];
 		}
-		
+
 		CodeCompletionContext ICompletionWidget.CreateCodeCompletionContext (int triggerOffset)
 		{
-			var c = new CodeCompletionContext ();
-			c.TriggerLine = 0;
-			c.TriggerOffset = triggerOffset;
-			c.TriggerLineOffset = c.TriggerOffset;
-			c.TriggerTextHeight = editEntry.SizeRequest ().Height;
-			c.TriggerWordLength = currentCompletionData.ExpressionLength;
-
 			int x, y;
-			int tx, ty;
 			editEntry.GdkWindow.GetOrigin (out x, out y);
-			editEntry.GetLayoutOffsets (out tx, out ty);
+			editEntry.GetLayoutOffsets (out int tx, out int ty);
 			int cp = editEntry.TextIndexToLayoutIndex (editEntry.Position);
 			Pango.Rectangle rect = editEntry.Layout.IndexToPos (cp);
-			tx += Pango.Units.ToPixels (rect.X) + x;
+			x += Pango.Units.ToPixels (rect.X) + tx;
 			y += editEntry.Allocation.Height;
 
-			c.TriggerXCoord = tx;
-			c.TriggerYCoord = y;
-			return c;
+			return new CodeCompletionContext (
+				x, y, editEntry.SizeRequest ().Height,
+				triggerOffset, 0, triggerOffset,
+				currentCompletionData.ExpressionLength
+			);
 		}
 		
 		string ICompletionWidget.GetCompletionText (CodeCompletionContext ctx)
@@ -2231,18 +2372,20 @@ namespace MonoDevelop.Debugger
 		
 		void ICompletionWidget.SetCompletionText (CodeCompletionContext ctx, string partial_word, string complete_word)
 		{
-			int sp = editEntry.Position - partial_word.Length;
+			int cursorOffset = editEntry.Position - (ctx.TriggerOffset + partial_word.Length);
+			int sp = ctx.TriggerOffset;
 			editEntry.DeleteText (sp, sp + partial_word.Length);
 			editEntry.InsertText (complete_word, ref sp);
-			editEntry.Position = sp; // sp is incremented by InsertText
+			editEntry.Position = sp + cursorOffset; // sp is incremented by InsertText
 		}
 		
 		void ICompletionWidget.SetCompletionText (CodeCompletionContext ctx, string partial_word, string complete_word, int offset)
 		{
-			int sp = editEntry.Position - partial_word.Length;
+			int cursorOffset = editEntry.Position - (ctx.TriggerOffset + partial_word.Length);
+			int sp = ctx.TriggerOffset;
 			editEntry.DeleteText (sp, sp + partial_word.Length);
 			editEntry.InsertText (complete_word, ref sp);
-			editEntry.Position = sp + offset; // sp is incremented by InsertText
+			editEntry.Position = sp + offset + cursorOffset; // sp is incremented by InsertText
 		}
 		
 		int ICompletionWidget.TextLength {
@@ -2262,6 +2405,7 @@ namespace MonoDevelop.Debugger
 				return editEntry.Style;
 			}
 		}
+
 		#endregion 
 
 		ObjectValue[] GetValues (string[] names)
@@ -2297,10 +2441,10 @@ namespace MonoDevelop.Debugger
 			return values;
 		}
 		
-		Mono.Debugging.Client.CompletionData GetCompletionData (string exp)
+		async Task<Mono.Debugging.Client.CompletionData> GetCompletionData (string exp, CancellationToken token)
 		{
 			if (CanQueryDebugger && frame != null)
-				return frame.GetExpressionCompletionData (exp);
+				return await DebuggingService.GetCompletionDataAsync (frame, exp, token);
 
 			return null;
 		}
@@ -2311,9 +2455,8 @@ namespace MonoDevelop.Debugger
 		}
 	}
 	
-	class DebugCompletionDataList: List<ICSharpCode.NRefactory.Completion.ICompletionData>, ICompletionDataList
+	class DebugCompletionDataList: CompletionDataList
 	{
-		public bool IsSorted { get; set; }
 		public DebugCompletionDataList (Mono.Debugging.Client.CompletionData data)
 		{
 			IsSorted = false;
@@ -2321,45 +2464,6 @@ namespace MonoDevelop.Debugger
 				Add (new DebugCompletionData (it));
 			AutoSelect =true;
 		}
-		public bool AutoSelect { get; set; }
-		public string DefaultCompletionString {
-			get {
-				return string.Empty;
-			}
-		}
-
-		public bool AutoCompleteUniqueMatch {
-			get { return false; }
-		}
-		
-		public bool AutoCompleteEmptyMatch {
-			get { return false; }
-		}
-		public bool AutoCompleteEmptyMatchOnCurlyBrace {
-			get { return false; }
-		}
-		public bool CloseOnSquareBrackets {
-			get {
-				return false;
-			}
-		}
-		
-		public CompletionSelectionMode CompletionSelectionMode {
-			get; set;
-		}
-
-		static readonly List<ICompletionKeyHandler> keyHandler = new List<ICompletionKeyHandler> ();
-		public IEnumerable<ICompletionKeyHandler> KeyHandler { get { return keyHandler;} }
-
-		public void OnCompletionListClosed (EventArgs e)
-		{
-			var handler = CompletionListClosed;
-
-			if (handler != null)
-				handler (this, e);
-		}
-		
-		public event EventHandler CompletionListClosed;
 	}
 	
 	class DebugCompletionData : MonoDevelop.Ide.CodeCompletion.CompletionData

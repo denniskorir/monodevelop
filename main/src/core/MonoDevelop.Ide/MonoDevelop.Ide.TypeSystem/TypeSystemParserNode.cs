@@ -28,10 +28,13 @@ using Mono.Addins;
 using System.Collections.Generic;
 using System.Linq;
 using MonoDevelop.Core.StringParsing;
+using MonoDevelop.Core;
+using MonoDevelop.Projects;
+using Microsoft.CodeAnalysis;
 
 namespace MonoDevelop.Ide.TypeSystem
 {
-	public class TypeSystemParserNode : TypeExtensionNode
+	class TypeSystemParserNode : TypeExtensionNode
 	{
 		const string ApiDefinitionBuildAction = "ObjcBindingApiDefinition";
 
@@ -71,48 +74,15 @@ namespace MonoDevelop.Ide.TypeSystem
 		public bool CanParse (string mimeType, string buildAction)
 		{
 			if (mimeTypes == null)
-				mimeTypes  = this.mimeType != null ? new HashSet<string> (this.mimeType.Split (',').Select (s => s.Trim ())) : new HashSet<string> ();
-			if (!mimeTypes.Contains (mimeType, StringComparer.Ordinal))
+				mimeTypes  = this.mimeType != null ? new HashSet<string> (this.mimeType.Split (',').Select (s => s.Trim ()), StringComparer.Ordinal) : new HashSet<string> (StringComparer.Ordinal);
+			if (!mimeTypes.Contains (mimeType))
 				return false;
-			return buildActions.Any (action => string.Equals (action, buildAction, StringComparison.OrdinalIgnoreCase));
-		}
 
-		public static bool IsCompileBuildAction(string buildAction)
-		{
-			return
-				buildAction == MonoDevelop.Projects.BuildAction.Compile ||
-				buildAction == ApiDefinitionBuildAction || 
-				buildAction == "BMacInputs";
+			foreach (var action in buildActions) {
+ 				if (string.Equals (action, buildAction, StringComparison.OrdinalIgnoreCase) || action == "*")
+					return true;
+			}
+			return false;
 		}
 	}
-
-
-	public class TypeSystemOutputTrackingNode : ExtensionNode
-	{
-		[NodeAttribute (Description="The project type.")]
-		string projectType;
-
-		public string ProjectType {
-			get {
-				return projectType;
-			}
-			set {
-				projectType = value;
-			}
-		}
-
-		[NodeAttribute (Description="The language name.")]
-		string languageName;
-
-		public string LanguageName {
-			get {
-				return languageName;
-			}
-			set {
-				languageName = value;
-			}
-		}
-	}
-
 }
-

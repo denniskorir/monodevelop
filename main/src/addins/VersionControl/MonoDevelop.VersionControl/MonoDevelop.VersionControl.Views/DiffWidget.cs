@@ -24,19 +24,20 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 // THE SOFTWARE.
 using System;
+using System.Linq;
 using MonoDevelop.Core;
 using MonoDevelop.Ide.Gui;
 
 namespace MonoDevelop.VersionControl.Views
 {
 	[System.ComponentModel.ToolboxItem(false)]
-	public partial class DiffWidget : Gtk.Bin
+	partial class DiffWidget : Gtk.Bin
 	{
 		VersionControlDocumentInfo info;
-		Mono.TextEditor.TextEditor diffTextEditor;
+		Mono.TextEditor.MonoTextEditor diffTextEditor;
 		ComparisonWidget comparisonWidget;
-		Gtk.Button buttonNext;
-		Gtk.Button buttonPrev;
+		DocumentToolButton buttonNext;
+		DocumentToolButton buttonPrev;
 		Gtk.Button buttonDiff;
 		Gtk.Label labelOverview;
 
@@ -48,7 +49,7 @@ namespace MonoDevelop.VersionControl.Views
 		
 		string LabelText {
 			get {
-				if (comparisonWidget.Diff.Count == 0)
+				if (!comparisonWidget.Diff.Any ())
 					return GettextCatalog.GetString ("Both files are equal");
 				int added=0, removed=0;
 				foreach (var h in comparisonWidget.Diff) {
@@ -63,7 +64,7 @@ namespace MonoDevelop.VersionControl.Views
 			}
 		}
 		
-		public Mono.TextEditor.TextEditor FocusedEditor {
+		public Mono.TextEditor.MonoTextEditor FocusedEditor {
 			get {
 				return comparisonWidget.FocusedEditor;
 			}
@@ -91,13 +92,13 @@ namespace MonoDevelop.VersionControl.Views
 			};
 			comparisonWidget.SetVersionControlInfo (info);
 			this.buttonDiff.Clicked += HandleButtonDiffhandleClicked;
-			diffTextEditor = new global::Mono.TextEditor.TextEditor (new Mono.TextEditor.TextDocument (), new CommonTextEditorOptions ());
+			diffTextEditor = new global::Mono.TextEditor.MonoTextEditor (new Mono.TextEditor.TextDocument (), CommonTextEditorOptions.Instance);
 			diffTextEditor.Document.MimeType = "text/x-diff";
 			
 			diffTextEditor.Options.ShowFoldMargin = false;
 			diffTextEditor.Options.ShowIconMargin = false;
 			diffTextEditor.Options.DrawIndentationMarkers = PropertyService.Get ("DrawIndentationMarkers", false);
-			diffTextEditor.Document.ReadOnly = true;
+			diffTextEditor.Document.IsReadOnly = true;
 			scrolledwindow1.Child = diffTextEditor;
 			diffTextEditor.Show ();
 			SetButtonSensitivity ();
@@ -114,7 +115,8 @@ namespace MonoDevelop.VersionControl.Views
 		
 		void SetButtonSensitivity ()
 		{
-			this.buttonNext.Sensitive = this.buttonPrev.Sensitive = notebook1.Page == 0 &&  comparisonWidget.Diff != null && comparisonWidget.Diff.Count > 0;
+			this.buttonNext.GetNativeWidget<Gtk.Widget> ().Sensitive = this.buttonPrev.GetNativeWidget<Gtk.Widget> ().Sensitive =
+				notebook1.Page == 0 &&  comparisonWidget.Diff != null && comparisonWidget.Diff.Count > 0;
 		}
 		
 		void HandleButtonDiffhandleClicked (object sender, EventArgs e)
@@ -143,15 +145,46 @@ namespace MonoDevelop.VersionControl.Views
 			}
 		}
 		
-		static string GetRevisionText (Mono.TextEditor.TextEditor editor, Revision rev)
+		static string GetRevisionText (Mono.TextEditor.MonoTextEditor editor, Revision rev)
 		{
-			if (!editor.Document.ReadOnly)
+			if (!editor.Document.IsReadOnly)
 				return GettextCatalog.GetString ("(working copy)");
 			if (rev == null)
 				return GettextCatalog.GetString ("(base)");
 			return string.Format (GettextCatalog.GetString ("(revision {0})"), rev.ToString ());
 		}
-			
+
+		[Components.Commands.CommandUpdateHandler (Ide.Commands.ViewCommands.ShowNext)]
+		public void ShowNextUpdateHandler (Components.Commands.CommandInfo info)
+		{
+			if (!Visible)
+				info.Bypass = true;
+			else {
+				info.Text = GettextCatalog.GetString ("Show Next (Difference)");
+			}
+		}
+
+		[Components.Commands.CommandHandler (Ide.Commands.ViewCommands.ShowNext)]
+		public void ShowNextHandler ()
+		{
+			ComparisonWidget.GotoNext ();
+		}
+
+		[Components.Commands.CommandUpdateHandler (Ide.Commands.ViewCommands.ShowPrevious)]
+		public void ShowPreviousUpdateHandler (Components.Commands.CommandInfo info)
+		{
+			if (!Visible)
+				info.Bypass = true;
+			else {
+				info.Text = GettextCatalog.GetString ("Show Previous (Difference)");
+			}
+		}
+
+		[Components.Commands.CommandHandler (Ide.Commands.ViewCommands.ShowPrevious)]
+		public void ShowPreviousHandler ()
+		{
+			ComparisonWidget.GotoPrev ();
+		}
 	}
 }
 

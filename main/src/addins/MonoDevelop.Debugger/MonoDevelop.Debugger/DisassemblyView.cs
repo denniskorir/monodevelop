@@ -35,20 +35,20 @@ using MonoDevelop.Ide.Gui;
 using MonoDevelop.Ide.Gui.Content;
 using MonoDevelop.Components.Commands;
 using MonoDevelop.Ide.Commands;
-using TextEditor = Mono.TextEditor.TextEditor;
-using Mono.TextEditor;
 using Mono.Debugging.Client;
-using Mono.TextEditor.Highlighting;
+using MonoDevelop.Ide.Editor;
 using Gtk;
 using MonoDevelop.Ide.Gui.Dialogs;
 using MonoDevelop.Ide;
 using System.Security.Cryptography;
 using Gdk;
 using MonoDevelop.Components;
+using System.Threading.Tasks;
+using MonoDevelop.Ide.Editor.Highlighting;
 
 namespace MonoDevelop.Debugger
 {
-	public class DisassemblyView: AbstractViewContent, IClipboardHandler
+	public class DisassemblyView: ViewContent, IClipboardHandler
 	{
 		Gtk.ScrolledWindow sw;
 		TextEditor editor;
@@ -56,10 +56,11 @@ namespace MonoDevelop.Debugger
 		int lastLine;
 		Dictionary<string,int> addressLines = new Dictionary<string,int> ();
 		bool autoRefill;
-		CurrentDebugLineTextMarker currentDebugLineMarker;
+		ICurrentDebugLineTextMarker currentDebugLineMarker;
 		bool dragging;
 		FilePath currentFile;
-		AsmLineMarker asmMarker = new AsmLineMarker ();
+		ITextLineMarker asmMarker;
+		DebuggerSession session;
 		
 		List<AssemblyLine> cachedLines = new List<AssemblyLine> ();
 		string cachedLinesAddrSpace;
@@ -70,14 +71,13 @@ namespace MonoDevelop.Debugger
 		{
 			ContentName = GettextCatalog.GetString ("Disassembly");
 			sw = new Gtk.ScrolledWindow ();
-			editor = new TextEditor ();
-			editor.Document.ReadOnly = true;
+			editor = TextEditorFactory.CreateNewEditor ();
+			editor.IsReadOnly = true;
+			asmMarker = TextMarkerFactory.CreateAsmLineMarker (editor);
+
+			editor.Options = DefaultSourceEditorOptions.PlainEditor;
 			
-			editor.Options = new CommonTextEditorOptions {
-				ShowLineNumberMargin = false,
-			};
-			
-			sw.Add (editor);
+			sw.AddWithViewport (editor);
 			sw.HscrollbarPolicy = Gtk.PolicyType.Automatic;
 			sw.VscrollbarPolicy = Gtk.PolicyType.Automatic;
 			sw.ShowAll ();
@@ -88,71 +88,8 @@ namespace MonoDevelop.Debugger
 			sw.ShadowType = Gtk.ShadowType.In;
 			
 			sw.Sensitive = false;
-			
-			currentDebugLineMarker = new CurrentDebugLineTextMarker (editor);
+
 			DebuggingService.StoppedEvent += OnStop;
-		}
-		
-
-		OverlayMessageWindow messageOverlayWindow;
-
-		void ShowLoadSourceFile (StackFrame sf)
-		{
-			if (messageOverlayWindow != null) {
-				messageOverlayWindow.Destroy ();
-				messageOverlayWindow = null;
-			}
-			messageOverlayWindow = new OverlayMessageWindow ();
-
-			var hbox = new HBox ();
-			hbox.Spacing = 8;
-			var label = new Label (string.Format ("{0} not found. Find source file at alternative location.", Path.GetFileName (sf.SourceLocation.FileName)));
-			hbox.TooltipText = sf.SourceLocation.FileName;
-			var color = (HslColor)editor.ColorStyle.NotificationText.Foreground;
-			label.ModifyFg (StateType.Normal, color);
-
-			int w, h;
-			label.Layout.GetPixelSize (out w, out h);
-
-			hbox.PackStart (label, true, true, 0);
-			var openButton = new Button (Gtk.Stock.Open);
-			openButton.WidthRequest = 60;
-			hbox.PackEnd (openButton, false, false, 0); 
-
-			var container = new HBox ();
-			const int containerPadding = 8;
-			container.PackStart (hbox, true, true, containerPadding); 
-			messageOverlayWindow.Child = container; 
-			messageOverlayWindow.ShowOverlay (editor);
-
-			messageOverlayWindow.SizeFunc = () => openButton.SizeRequest ().Width + w + hbox.Spacing * 5 + containerPadding * 2;
-			openButton.Clicked += delegate {
-				var dlg = new OpenFileDialog (GettextCatalog.GetString ("File to Open"), Gtk.FileChooserAction.Open) {
-					TransientFor = IdeApp.Workbench.RootWindow,
-					ShowEncodingSelector = true,
-					ShowViewerSelector = true
-				};
-				if (!dlg.Run ())
-					return;
-				var newFilePath = dlg.SelectedFile;
-				try {
-					if (File.Exists (newFilePath)) {
-						if (SourceCodeLookup.CheckFileMd5 (newFilePath, sf.SourceLocation.FileHash)) {
-							SourceCodeLookup.AddLoadedFile (newFilePath, sf.SourceLocation.FileName);
-							sf.UpdateSourceFile (newFilePath);
-							if (IdeApp.Workbench.OpenDocument (newFilePath, null, sf.SourceLocation.Line, 1, OpenDocumentOptions.Debugger) != null) {
-								this.WorkbenchWindow.CloseWindow (false);
-							}
-						} else {
-							MessageService.ShowWarning ("File checksum doesn't match.");
-						}
-					} else {
-						MessageService.ShowWarning ("File not found.");
-					}
-				} catch (Exception) {
-					MessageService.ShowWarning ("Error opening file");
-				}
-			};
 		}
 
 		public override string TabPageLabel {
@@ -161,14 +98,10 @@ namespace MonoDevelop.Debugger
 			}
 		}
 		
-		public override Gtk.Widget Control {
+		public override Control Control {
 			get {
 				return sw;
 			}
-		}
-		
-		public override void Load (string fileName)
-		{
 		}
 
 		public override bool IsFile {
@@ -180,28 +113,18 @@ namespace MonoDevelop.Debugger
 		public void Update ()
 		{
 			autoRefill = false;
-			
-			editor.Document.RemoveMarker (currentDebugLineMarker);
+			if (currentDebugLineMarker != null) {
+				editor.RemoveMarker (currentDebugLineMarker);
+				currentDebugLineMarker = null;
+			}
 			
 			if (DebuggingService.CurrentFrame == null) {
-				if (messageOverlayWindow != null) {
-					messageOverlayWindow.Destroy ();
-					messageOverlayWindow = null;
-				}
 				sw.Sensitive = false;
 				return;
 			}
 			
 			sw.Sensitive = true;
 			var sf = DebuggingService.CurrentFrame;
-			if (!string.IsNullOrWhiteSpace (sf.SourceLocation.FileName) && sf.SourceLocation.Line != -1 && sf.SourceLocation.FileHash != null) {
-				ShowLoadSourceFile (sf);
-			} else {
-				if (messageOverlayWindow != null) {
-					messageOverlayWindow.Destroy ();
-					messageOverlayWindow = null;
-				}
-			}
 			if (!string.IsNullOrEmpty (sf.SourceLocation.FileName) && File.Exists (sf.SourceLocation.FileName))
 				FillWithSource ();
 			else
@@ -213,9 +136,9 @@ namespace MonoDevelop.Debugger
 			cachedLines.Clear ();
 			
 			StackFrame sf = DebuggingService.CurrentFrame;
-			
+			session = sf.DebuggerSession;
 			if (currentFile != sf.SourceLocation.FileName) {
-				AssemblyLine[] asmLines = DebuggingService.DebuggerSession.DisassembleFile (sf.SourceLocation.FileName);
+				AssemblyLine[] asmLines = sf.DebuggerSession.DisassembleFile (sf.SourceLocation.FileName);
 				if (asmLines == null) {
 					// Mixed disassemble not supported
 					Fill ();
@@ -223,25 +146,26 @@ namespace MonoDevelop.Debugger
 				}
 				currentFile = sf.SourceLocation.FileName;
 				addressLines.Clear ();
-				editor.Document.Text = string.Empty;
-				StreamReader sr = new StreamReader (sf.SourceLocation.FileName);
-				string line;
-				int sourceLine = 1;
-				int na = 0;
-				int editorLine = 1;
-				StringBuilder sb = new StringBuilder ();
-				List<int> asmLineNums = new List<int> ();
-				while ((line = sr.ReadLine ()) != null) {
-					InsertSourceLine (sb, editorLine++, line);
-					while (na < asmLines.Length && asmLines [na].SourceLine == sourceLine) {
-						asmLineNums.Add (editorLine);
-						InsertAssemblerLine (sb, editorLine++, asmLines [na++]);
+				editor.Text = string.Empty;
+				using (var sr = new StreamReader (sf.SourceLocation.FileName)) {
+					string line;
+					int sourceLine = 1;
+					int na = 0;
+					int editorLine = 1;
+					var sb = new StringBuilder ();
+					var asmLineNums = new List<int> ();
+					while ((line = sr.ReadLine ()) != null) {
+						InsertSourceLine (sb, editorLine++, line);
+						while (na < asmLines.Length && asmLines [na].SourceLine == sourceLine) {
+							asmLineNums.Add (editorLine);
+							InsertAssemblerLine (sb, editorLine++, asmLines [na++]);
+						}
+						sourceLine++;
 					}
-					sourceLine++;
+					editor.Text = sb.ToString ();
+					foreach (int li in asmLineNums)
+						editor.AddMarker (li, asmMarker);
 				}
-				editor.Document.Text = sb.ToString ();
-				foreach (int li in asmLineNums)
-					editor.Document.AddMarker (li, asmMarker);
 			}
 			int aline;
 			if (!addressLines.TryGetValue (GetAddrId (sf.Address, sf.AddressSpace), out aline))
@@ -287,8 +211,8 @@ namespace MonoDevelop.Debugger
 			firstLine = -150;
 			lastLine = 150;
 			
-			editor.Document.MimeType = "text/plain";
-			editor.Document.Text = string.Empty;
+			editor.MimeType = "text/plain";
+			editor.Text = string.Empty;
 			InsertLines (0, firstLine, lastLine, out firstLine, out lastLine);
 			
 			autoRefill = true;
@@ -298,19 +222,23 @@ namespace MonoDevelop.Debugger
 		
 		void UpdateCurrentLineMarker (bool moveCaret)
 		{
-			editor.Document.RemoveMarker (currentDebugLineMarker);
+			if (currentDebugLineMarker != null) {
+				editor.RemoveMarker (currentDebugLineMarker);
+				currentDebugLineMarker = null;
+			}
 			StackFrame sf = DebuggingService.CurrentFrame;
 			int line;
 			if (addressLines.TryGetValue (GetAddrId (sf.Address, sf.AddressSpace), out line)) {
-				editor.Document.AddMarker (line, currentDebugLineMarker);
+				var docLine = editor.GetLine (line);
+				currentDebugLineMarker = TextMarkerFactory.CreateCurrentDebugLineTextMarker (editor, docLine.Offset, docLine.Length);
+				editor.AddMarker (line, currentDebugLineMarker);
 				if (moveCaret) {
-					editor.Caret.Line = line;
+					editor.CaretLine = line;
 					GLib.Timeout.Add (100, delegate {
 						editor.CenterToCaret ();
 						return false;
 					});
 				}
-				editor.QueueDraw ();
 			}
 		}
 		
@@ -332,8 +260,9 @@ namespace MonoDevelop.Debugger
 			if (!autoRefill || dragging)
 				return;
 			
-			DocumentLocation loc = editor.PointToLocation (0, 0);
-			DocumentLocation loc2 = editor.PointToLocation (0, editor.Allocation.Height);
+			var loc = editor.PointToLocation (0, 0);
+			Gtk.Widget widget = editor;
+			var loc2 = editor.PointToLocation (0, widget.Allocation.Height);
 			//bool moveCaret = editor.Caret.Line >= loc.Line && editor.Caret.Line <= loc2.Line;
 			
 			if (firstLine != int.MinValue && loc.Line < FillMarginLines) {
@@ -348,17 +277,17 @@ namespace MonoDevelop.Debugger
 				addressLines = newLines;
 				
 				//if (moveCaret)
-					editor.Caret.Line += num;
+					editor.CaretLine += num;
 				
 				double hinc = num * editor.LineHeight;
 				sw.Vadjustment.Value += hinc;
 				
 				UpdateCurrentLineMarker (false);
 			}
-			if (lastLine != int.MinValue && loc2.Line >= editor.Document.LineCount - FillMarginLines) {
-				int num = (loc2.Line - (editor.Document.LineCount - FillMarginLines) + 1) * 2;
+			if (lastLine != int.MinValue && loc2.Line >= editor.LineCount - FillMarginLines) {
+				int num = (loc2.Line - (editor.LineCount - FillMarginLines) + 1) * 2;
 				int newFirst;
-				InsertLines (editor.Document.TextLength, lastLine + 1, lastLine + num, out newFirst, out lastLine);
+				InsertLines (editor.Length, lastLine + 1, lastLine + num, out newFirst, out lastLine);
 			}
 		}
 		
@@ -383,34 +312,34 @@ namespace MonoDevelop.Debugger
 			lines.RemoveRange (j + 1, lines.Count - j - 1);
 			
 			int lineCount = 0;
-			int editorLine = editor.GetTextEditorData ().OffsetToLineNumber (offset);
+			int editorLine = editor.OffsetToLineNumber (offset);
 			foreach (AssemblyLine li in lines) {
 				if (li.IsOutOfRange)
 					continue;
 				InsertAssemblerLine (sb, editorLine++, li);
 				lineCount++;
 			}
-			editor.Insert (offset, sb.ToString ());
-			editor.Document.CommitUpdateAll ();
+			editor.IsReadOnly = false;
+			editor.InsertText (offset, sb.ToString ());
+			editor.IsReadOnly = true;
 			if (offset == 0)
 				this.cachedLines.InsertRange (0, lines);
 			else
 				this.cachedLines.AddRange (lines);
 			return lineCount;
 		}
-		
+
 		void OnStop (object s, EventArgs args)
 		{
+			if (session != s)
+				return;
 			addressLines.Clear ();
 			currentFile = null;
-			if (messageOverlayWindow != null) {
-				messageOverlayWindow.Destroy ();
-				messageOverlayWindow = null;
-			}
 			sw.Sensitive = false;
 			autoRefill = false;
-			editor.Document.Text = string.Empty;
+			editor.Text = string.Empty;
 			cachedLines.Clear ();
+			session = null;
 		}
 		
 		public override bool IsReadOnly {
@@ -422,6 +351,7 @@ namespace MonoDevelop.Debugger
 		{
 			base.Dispose ();
 			DebuggingService.StoppedEvent -= OnStop;
+			session = null;
 		}
 		
 		[CommandHandler (DebugCommands.StepOver)]
@@ -453,7 +383,7 @@ namespace MonoDevelop.Debugger
 
 		void IClipboardHandler.Copy ()
 		{
-			editor.RunAction (ClipboardActions.Copy);
+			editor.EditorOperations.CopySelection ();
 		}
 
 		void IClipboardHandler.Paste ()
@@ -468,7 +398,7 @@ namespace MonoDevelop.Debugger
 
 		void IClipboardHandler.SelectAll ()
 		{
-			editor.RunAction (SelectionActions.SelectAll);
+			editor.EditorOperations.SelectAll ();
 		}
 
 		bool IClipboardHandler.EnableCut {
@@ -476,7 +406,7 @@ namespace MonoDevelop.Debugger
 		}
 
 		bool IClipboardHandler.EnableCopy {
-			get { return !editor.SelectionRange.IsEmpty; }
+			get { return !editor.IsSomethingSelected; }
 		}
 
 		bool IClipboardHandler.EnablePaste {
@@ -492,108 +422,5 @@ namespace MonoDevelop.Debugger
 		}
 
 		#endregion
-	}
-	
-	class AsmLineMarker: TextLineMarker
-	{
-		public override ChunkStyle GetStyle (ChunkStyle baseStyle)
-		{
-			ChunkStyle st = new ChunkStyle (baseStyle);
-			st.Foreground = new Cairo.Color (125, 125, 125);
-			return st;
-		}
-	}
-
-	//Copy pasted from SourceEditor
-	class OverlayMessageWindow : Gtk.EventBox
-	{
-		const int border = 8;
-
-		public Func<int> SizeFunc;
-
-		TextEditor textEditor;
-
-		public OverlayMessageWindow ()
-		{
-			AppPaintable = true;
-		}
-
-		public void ShowOverlay (TextEditor textEditor)
-		{
-			this.textEditor = textEditor;
-			this.ShowAll ();
-			textEditor.AddTopLevelWidget (this, 0, 0);
-			textEditor.SizeAllocated += HandleSizeAllocated;
-			var child = (TextEditor.EditorContainerChild)textEditor [this];
-			child.FixedPosition = true;
-		}
-
-		protected override void OnDestroyed ()
-		{
-			base.OnDestroyed ();
-			if (textEditor != null) {
-				textEditor.SizeAllocated -= HandleSizeAllocated;
-				textEditor = null;
-			}
-		}
-
-		protected override void OnSizeRequested (ref Requisition requisition)
-		{
-			base.OnSizeRequested (ref requisition);
-
-			if (wRequest > 0) {
-				requisition.Width = wRequest;
-			}
-		}
-
-		protected override void OnSizeAllocated (Gdk.Rectangle allocation)
-		{
-			base.OnSizeAllocated (allocation);
-			Resize (allocation);
-		}
-
-		int wRequest = -1;
-
-		void HandleSizeAllocated (object o, Gtk.SizeAllocatedArgs args)
-		{
-			if (SizeFunc != null) {
-				var req = Math.Min (SizeFunc (), textEditor.Allocation.Width - border * 2);
-				if (req != wRequest) {
-					wRequest = req;
-					QueueResize ();
-				}
-			} else {
-				if (Allocation.Width > textEditor.Allocation.Width - border * 2) {
-					if (textEditor.Allocation.Width - border * 2 > 0) {
-						QueueResize ();
-					}
-				}
-			}
-			Resize (Allocation);
-		}
-
-		void Resize (Gdk.Rectangle alloc)
-		{
-			textEditor.MoveTopLevelWidget (this, (textEditor.Allocation.Width - alloc.Width) / 2, textEditor.Allocation.Height - alloc.Height - 8);
-		}
-
-		protected override bool OnExposeEvent (Gdk.EventExpose evnt)
-		{
-			using (var cr = CairoHelper.Create (evnt.Window)) {
-				cr.LineWidth = 1;
-				cr.Rectangle (0, 0, Allocation.Width, Allocation.Height);
-				cr.SetSourceColor (textEditor.ColorStyle.NotificationText.Background);
-				cr.Fill ();
-				cr.RoundedRectangle (0, 0, Allocation.Width, Allocation.Height, 3);
-				cr.SetSourceColor (textEditor.ColorStyle.NotificationText.Background);
-				cr.FillPreserve ();
-
-				cr.SetSourceColor (textEditor.ColorStyle.NotificationBorder.Color);
-				cr.Stroke ();
-			}
-
-			return base.OnExposeEvent (evnt);
-		}
-
 	}
 }

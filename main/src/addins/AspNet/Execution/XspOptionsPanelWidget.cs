@@ -46,7 +46,7 @@ namespace MonoDevelop.AspNet.Execution
 		readonly FileEntry certLocation = new FileEntry ();
 		readonly Entry passwordEntry = new Entry { InvisibleChar = '●' };
 		
-		public XspOptionsPanelWidget (AspNetAppProject project)
+		public XspOptionsPanelWidget (AspNetAppProjectFlavor project)
 		{
 			Build ();
 
@@ -62,15 +62,19 @@ namespace MonoDevelop.AspNet.Execution
 			//index should be equivalent to XspSslProtocol enum
 			((ListStore) sslProtocol.Model).Clear ();
 			sslProtocol.AppendText (GettextCatalog.GetString ("Default"));
+#pragma warning disable MD0005
 			sslProtocol.AppendText ("TLS");
 			sslProtocol.AppendText ("SSL 2");
 			sslProtocol.AppendText ("SSL 3");
-			
+#pragma warning restore MD0005
+
 			((ListStore) keyType.Model).Clear ();
 			keyType.AppendText (GettextCatalog.GetString ("None"));
+#pragma warning disable MD0005
 			keyType.AppendText ("Pkcs12");
 			keyType.AppendText ("PVK");
-			
+#pragma warning restore MD0005
+
 			((ListStore) passwordOptions.Model).Clear ();
 			passwordOptions.AppendText (GettextCatalog.GetString ("None"));
 			passwordOptions.AppendText (GettextCatalog.GetString ("Ask"));
@@ -165,7 +169,7 @@ namespace MonoDevelop.AspNet.Execution
 			ShowAll ();
 		}
 		
-		public void Store (AspNetAppProject project)
+		public void Store (AspNetAppProjectFlavor project)
 		{
 			XspParameters xPar = project.XspParameters;
 			

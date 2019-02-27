@@ -38,6 +38,8 @@ using Gtk;
 using MonoDevelop.Ide.Projects;
 using MonoDevelop.Ide.Desktop;
 using System.Linq;
+using MonoDevelop.Components;
+using MonoDevelop.Components.Extensions;
 
 namespace MonoDevelop.Ide.Commands
 {
@@ -79,8 +81,8 @@ namespace MonoDevelop.Ide.Commands
 	{
 		protected override void Run ()
 		{
-			var dlg = new OpenFileDialog (GettextCatalog.GetString ("File to Open"), Gtk.FileChooserAction.Open) {
-				TransientFor = IdeApp.Workbench.RootWindow,
+			var dlg = new OpenFileDialog (GettextCatalog.GetString ("File to Open"), MonoDevelop.Components.FileChooserAction.Open) {
+				TransientFor = DesktopService.GetFocusedTopLevelWindow (),
 				ShowEncodingSelector = true,
 				ShowViewerSelector = true,
 			};
@@ -107,8 +109,8 @@ namespace MonoDevelop.Ide.Commands
 	{
 		protected override void Run ()
 		{
-			var dlg = new NewFileDialog (null, null); // new file seems to fail if I pass the project IdeApp.ProjectOperations.CurrentSelectedProject
-			MessageService.ShowCustomDialog (dlg, IdeApp.Workbench.RootWindow);
+			using (var dlg = new NewFileDialog (null, null)) // new file seems to fail if I pass the project IdeApp.ProjectOperations.CurrentSelectedProject
+				MessageService.ShowCustomDialog (dlg, DesktopService.GetFocusedTopLevelWindow ());
 		}
 	}
 
@@ -130,7 +132,7 @@ namespace MonoDevelop.Ide.Commands
 	{
 		protected override void Run ()
 		{
-			IdeApp.ProjectOperations.NewSolution ();
+			IdeApp.ProjectOperations.NewSolution ().Ignore ();
 		}
 	}
 	
@@ -139,22 +141,29 @@ namespace MonoDevelop.Ide.Commands
 	{
 		protected override void Run ()
 		{
-			IdeApp.ProjectOperations.NewSolution ("MonoDevelop.Workspace");
+			IdeApp.ProjectOperations.NewSolution ("MonoDevelop.Workspace").Ignore ();
 		}
 	}
 
 	// MonoDevelop.Ide.Commands.FileCommands.CloseAllFiles
 	public class CloseAllFilesHandler : CommandHandler
 	{
-		protected override void Run ()
+		static bool isRunning;
+
+		protected override async void Run ()
 		{
-			IdeApp.Workbench.CloseAllDocuments (false);
+			try {
+				isRunning = true;
+				await IdeApp.Workbench.CloseAllDocumentsAsync (false);
+			} finally {
+				isRunning = false;
+			}
 		}
 
 		protected override void Update (CommandInfo info)
 		{
 			// No point in closing all when there are no documents open
-			info.Enabled = IdeApp.Workbench.Documents.Count != 0;
+			info.Enabled = !isRunning && IdeApp.Workbench.Documents.Count != 0;
 		}
 	}
 
@@ -164,7 +173,7 @@ namespace MonoDevelop.Ide.Commands
 		protected override void Run ()
 		{
 			if (IdeApp.Workbench.ActiveDocument != null)
-				IdeApp.Workbench.ActiveDocument.Close ();
+				IdeApp.Workbench.ActiveDocument.Close ().Ignore();
 		}
 
 		protected override void Update (CommandInfo info)
@@ -179,7 +188,7 @@ namespace MonoDevelop.Ide.Commands
 	{
 		protected override void Run ()
 		{
-			IdeApp.Workspace.Close ();
+			IdeApp.Workspace.Close ().Ignore();
 		}
 
 		protected override void Update (CommandInfo info)
@@ -272,10 +281,15 @@ namespace MonoDevelop.Ide.Commands
 				return;
 			
 			int i = 0;
+			var descFormat = GettextCatalog.GetString ("Open {0}");
 			foreach (var ri in files) {
-				string acceleratorKeyPrefix = i < 10 ? "_" + ((i + 1) % 10).ToString() + " " : "";
-				var cmd = new CommandInfo (acceleratorKeyPrefix + ri.DisplayName.Replace ("_", "__")) {
-					Description = GettextCatalog.GetString ("Open {0}", ri.FileName)
+				string commandText = ri.DisplayName.Replace ("_", "__");
+				if (!Platform.IsMac) {
+					string acceleratorKeyPrefix = i < 10 ? "_" + ((i + 1) % 10).ToString() + " " : "";
+					commandText = acceleratorKeyPrefix + commandText;
+				}
+				var cmd = new CommandInfo (commandText) {
+					Description = string.Format (descFormat, ri.FileName)
 				};
 /*				Gdk.Pixbuf icon = DesktopService.GetIconForFile (ri.FileName, IconSize.Menu);
 				#pragma warning disable 618
@@ -289,7 +303,7 @@ namespace MonoDevelop.Ide.Commands
 		
 		protected override void Run (object dataItem)
 		{
-			IdeApp.Workbench.OpenDocument ((string)dataItem);
+			IdeApp.Workbench.OpenDocument ((string)dataItem, project: null);
 		}
 	}
 	
@@ -330,14 +344,16 @@ namespace MonoDevelop.Ide.Commands
 				return;
 				
 			int i = 0;
+			var solutionFormat = GettextCatalog.GetString ("Load solution {0}");
+			var ctrlModText = GettextCatalog.GetString ("Hold Control to open in current workspace.");
 			foreach (var ri in projects) {
 				//getting the icon requires probing the file, so handle IO errors
 				IconId icon;
 				try {
 					if (!File.Exists (ri.FileName))
 						continue;
-					icon = IdeApp.Services.ProjectService.FileFormats.GetFileFormats
-						(ri.FileName, typeof(Solution)).Length > 0? "md-solution": "md-workspace";
+
+					icon = IdeApp.Services.ProjectService.FileIsObjectOfType (ri.FileName, typeof(Solution)) ? "md-solution": "md-workspace";
 				}
 				catch (UnauthorizedAccessException exAccess) {
 					LoggingService.LogWarning ("Error building recent solutions list (Permissions)", exAccess);
@@ -347,13 +363,18 @@ namespace MonoDevelop.Ide.Commands
 					LoggingService.LogWarning ("Error building recent solutions list", ex);
 					continue;
 				}
-				
-				string acceleratorKeyPrefix = i < 10 ? "_" + ((i + 1) % 10).ToString() + " " : "";
-				string str = GettextCatalog.GetString ("Load solution {0}", ri.ToString ());
+
+				string commandText = ri.DisplayName.Replace ("_", "__");
+				if (!Platform.IsMac) {
+					string acceleratorKeyPrefix = i < 10 ? "_" + ((i + 1) % 10).ToString() + " " : "";
+					commandText = acceleratorKeyPrefix + commandText;
+				}
+
+				string str = string.Format (solutionFormat, ri.ToString ());
 				if (IdeApp.Workspace.IsOpen)
-					str += " - " + GettextCatalog.GetString ("Hold Control to open in current workspace.");
+					str += " - " + ctrlModText;
 				
-				var cmd = new CommandInfo (acceleratorKeyPrefix + ri.DisplayName.Replace ("_", "__")) {
+				var cmd = new CommandInfo (commandText) {
 					Icon = icon,
 					Description = str,
 				};
@@ -365,7 +386,7 @@ namespace MonoDevelop.Ide.Commands
 		protected override void Run (object dataItem)
 		{
 			string filename = (string)dataItem;
-			Gdk.ModifierType mtype = Mono.TextEditor.GtkWorkarounds.GetCurrentKeyModifiers ();
+			Gdk.ModifierType mtype = GtkWorkarounds.GetCurrentKeyModifiers ();
 			bool inWorkspace = (mtype & Gdk.ModifierType.ControlMask) != 0;
 			IdeApp.Workspace.OpenWorkspaceItem (filename, !inWorkspace);
 		}
@@ -403,7 +424,7 @@ namespace MonoDevelop.Ide.Commands
 	{
 		protected override void Run ()
 		{
-			IdeApp.Exit ();
+			IdeApp.Exit ().Ignore();
 		}
 	}
 	// MonoDevelop.Ide.Commands.FileTabCommands.CloseAllButThis    Implemented in FileTabCommands.cs

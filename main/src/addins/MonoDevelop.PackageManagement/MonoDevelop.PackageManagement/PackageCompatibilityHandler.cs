@@ -24,13 +24,11 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 // THE SOFTWARE.
 
-using System;
-using ICSharpCode.PackageManagement;
-using MonoDevelop.Ide;
+using MonoDevelop.PackageManagement.Commands;
 
 namespace MonoDevelop.PackageManagement
 {
-	public class PackageCompatibilityHandler
+	internal class PackageCompatibilityHandler
 	{
 		public void MonitorTargetFrameworkChanges (ProjectTargetFrameworkMonitor projectTargetFrameworkMonitor)
 		{
@@ -39,7 +37,14 @@ namespace MonoDevelop.PackageManagement
 
 		void ProjectTargetFrameworkChanged (object sender, ProjectTargetFrameworkChangedEventArgs e)
 		{
-			if (e.Project.HasPackages ()) {
+			if (e.Project is INuGetAwareProject) {
+				// Ignore.
+			} else if (DotNetCoreNuGetProject.CanCreate (e.Project.DotNetProject)) {
+				// Ignore - .NET Core project target framework changes are handled
+				// by the DotNetCoreProjectExtension.
+			} else if (PackageReferenceNuGetProject.CanCreate (e.Project.DotNetProject)) {
+				RestorePackagesInProjectHandler.Run (e.Project.DotNetProject);
+			} else if (e.Project.HasPackagesConfig ()) {
 				var runner = new PackageCompatibilityRunner (e.Project);
 				runner.Run ();
 			}

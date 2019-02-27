@@ -6,6 +6,9 @@
 	<ConditionType id="ItemType" type="MonoDevelop.Projects.Extensions.ItemTypeCondition">
 		<Description>Type of the item. If no namespace is provided, MonoDevelop.Projects is assumed.</Description>
 	</ConditionType>
+	<ConditionType id="FileType" type="MonoDevelop.Ide.Extensions.FileTypeCondition">
+		<Description>Type of the file.</Description>
+	</ConditionType>
 </ExtensionPoint>
 
 <Extension path = "/MonoDevelop/Ide/ContextMenu/ProjectPad">
@@ -26,7 +29,7 @@
 	<!-- Actions Section -->
 	
 	<SeparatorItem id = "ActionsSectionStart" />
-	<Condition id="ItemType" value="ProjectReference|ProjectFile|SystemFile">
+	<Condition id="ItemType" value="ProjectReference|ProjectFile|SystemFile|MonoDevelop.Ide.Gui.Pads.ProjectPad.SolutionFolderFileNode">
 		<ItemSet id = "OpenWith" _label = "Open _With" autohide="true">
 			<CommandItem id = "MonoDevelop.Ide.Commands.ViewCommands.OpenWithList" />
 		</ItemSet>
@@ -49,8 +52,15 @@
 	<Condition id="ItemType" value="Project">
 		<CommandItem id = "MonoDevelop.Ide.Commands.ProjectCommands.SetAsStartupProject" />
 	</Condition>
+	<Condition id="ItemType" value="Solution">
+		<CommandItem id="MonoDevelop.Ide.Commands.ProjectCommands.SetStartupProjects" />
+	</Condition>
 	<SeparatorItem id = "RunSectionEnd" />
-
+	
+	<!-- Publish section -->
+		
+	<ItemSet id = "Publish" _label = "Publish" autohide="True" />
+		
 	<!-- Add section -->
 					
 	<SeparatorItem id = "AddSectionStart" />
@@ -144,7 +154,7 @@
 	</Condition>
 	<Condition id="ItemType" value="IBuildTarget">
 		<CommandItem id = "MonoDevelop.Ide.Commands.ProjectCommands.Options" />
-	</Condition>
+	</Condition>	
 	<Condition id="ItemType" value="ProjectItem">
 		<CommandItem id = "MonoDevelop.Ide.Commands.FileCommands.ShowProperties" />
 	</Condition>

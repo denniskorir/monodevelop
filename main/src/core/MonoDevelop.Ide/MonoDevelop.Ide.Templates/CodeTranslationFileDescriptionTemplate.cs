@@ -65,7 +65,7 @@ namespace MonoDevelop.Ide.Templates
 			string showAutogen = filenode.GetAttribute ("ShowAutogenerationNotice");
 			if ((showAutogen != null) && (showAutogen.Length > 0)) {
 				try {
-					showAutogenerationNotice = bool.Parse (showAutogen.ToLower());
+					showAutogenerationNotice = bool.Parse (showAutogen);
 				} catch (FormatException) {
 					throw new InvalidOperationException ("Invalid value for ShowAutogenerationNotice in template.");
 				}
@@ -84,21 +84,20 @@ namespace MonoDevelop.Ide.Templates
 		{
 			//get target language's ICodeGenerator
 			if (language == null || language == "")
-				throw new InvalidOperationException ("Language not defined in CodeDom based template.");
+				throw new InvalidOperationException (GettextCatalog.GetString ("Language not defined in CodeDom based template."));
 			
 			CodeDomProvider provider = GetCodeDomProvider (language);
 			
 			//parse the source code
 			if (tempSubstitutedContent == null)
-				throw new Exception ("Expected ModifyTags to be called before CreateContent");
+				throw new Exception (GettextCatalog.GetString ("Expected ModifyTags to be called before CreateContent"));
 			
 			CodeCompileUnit ccu;
 			using (StringReader sr = new StringReader (tempSubstitutedContent)) {
 				try {
 					ccu = parserProvider.Parse (sr);
 				} catch (NotImplementedException) {
-					throw new InvalidOperationException ("Invalid Code Translation template: the CodeDomProvider of the source language '"
-					                                     + language + "' has not implemented the Parse method.");
+					throw new InvalidOperationException (GettextCatalog.GetString ("Invalid Code Translation template: the CodeDomProvider of the source language '{0}' has not implemented the Parse method.", language));
 				} catch (Exception ex) {
 					LoggingService.LogError ("Unparseable template: '" + tempSubstitutedContent + "'.", ex);
 					throw;
@@ -134,7 +133,7 @@ namespace MonoDevelop.Ide.Templates
 			return txt.Substring (i+1);
 		}
 		
-		public override void ModifyTags (SolutionItem policyParent, Project project, string language, string identifier, string fileName, ref Dictionary<string,string> tags)
+		public override void ModifyTags (SolutionFolderItem policyParent, Project project, string language, string identifier, string fileName, ref Dictionary<string,string> tags)
 		{
 			//prevent parser breakage from missing tags, which SingleFile only provides for DotNetProject
 			//if ((project as DotNetProject) == null)
@@ -156,13 +155,13 @@ namespace MonoDevelop.Ide.Templates
 		private System.CodeDom.Compiler.CodeDomProvider GetCodeDomProvider (string language)
 		{
 			System.CodeDom.Compiler.CodeDomProvider provider = null;
-			IDotNetLanguageBinding binding = GetLanguageBinding (language) as IDotNetLanguageBinding;
+			var binding = GetLanguageBinding (language);
 			if (binding == null)
-				throw new InvalidOperationException ("No LanguageBinding was found for the language '" + language + "'.");
+				throw new InvalidOperationException (GettextCatalog.GetString ("No LanguageBinding was found for the language '{0}'.", language));
 			
 			provider = binding.GetCodeDomProvider ();
 			if (provider == null)
-				throw new InvalidOperationException ("No CodeDomProvider was found for the language '" + language + "'.");
+				throw new InvalidOperationException (GettextCatalog.GetString ("No CodeDomProvider was found for the language '{0}'.", language));
 			return provider;
 		}
 		

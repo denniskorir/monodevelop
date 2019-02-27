@@ -40,7 +40,7 @@ namespace MonoDevelop.Ide.Gui.Pads.ProjectPad
 	{
 		public ProjectSolutionPad ()
 		{
-			IdeApp.Workbench.ActiveDocumentChanged += new EventHandler (OnWindowChanged);
+			IdeApp.Workbench.ActiveDocumentChanged += OnWindowChanged;
 		}
 		
 		public override void Initialize (NodeBuilder[] builders, TreePadOption[] options, string contextMenuPath)
@@ -57,7 +57,6 @@ namespace MonoDevelop.Ide.Gui.Pads.ProjectPad
 				}
 				return null;
 			});
-			TreeView.ShowSelectionPopupButton = true;
 		}
 		
 		protected override void OnSelectionChanged (object sender, EventArgs args)
@@ -67,7 +66,7 @@ namespace MonoDevelop.Ide.Gui.Pads.ProjectPad
 			if (nav != null) {
 				WorkspaceItem c = (WorkspaceItem) nav.GetParentDataItem (typeof(WorkspaceItem), true);
 				IdeApp.ProjectOperations.CurrentSelectedWorkspaceItem = c;
-				SolutionItem ce = (SolutionItem) nav.GetParentDataItem (typeof(SolutionItem), true);
+				SolutionFolderItem ce = (SolutionFolderItem) nav.GetParentDataItem (typeof(SolutionFolderItem), true);
 				IdeApp.ProjectOperations.CurrentSelectedSolutionItem = ce;
 				IdeApp.ProjectOperations.CurrentSelectedItem = nav.DataItem;
 			}
@@ -83,7 +82,7 @@ namespace MonoDevelop.Ide.Gui.Pads.ProjectPad
 		
 		void OnWindowChanged (object ob, EventArgs args)
 		{
-			Gtk.Application.Invoke (delegate {
+			Gtk.Application.Invoke ((o2, a2) => {
 				SelectActiveFile ();
 			});
 		}
@@ -91,24 +90,30 @@ namespace MonoDevelop.Ide.Gui.Pads.ProjectPad
 		void SelectActiveFile ()
 		{
 			Document doc = IdeApp.Workbench.ActiveDocument;
-			if (doc != null && doc.Project != null) {
+			if (doc != null) {
 				string file = doc.FileName;
-				if (file != null) {
+				if (file != null && doc.Project != null) {
 					if (!SelectFile (doc.Project, file)) {
 						foreach (var project in IdeApp.Workspace.GetAllProjects ()) {
 							if (project is SharedAssetsProject && SelectFile (project, file))
 								return;
 						}
 					}
-				}
+				} else
+					SelectObject (doc.GetDocumentObject ());
 			}
 		}
 
 		bool SelectFile (Project project, string file)
 		{
 			var pf = project.Files.GetFile (file);
-			if (pf != null) {
-				var nav = treeView.GetNodeAtObject (pf, true);
+			return SelectObject (pf);
+		}
+
+		bool SelectObject (object dataObject)
+		{
+			if (dataObject != null) {
+				var nav = treeView.GetNodeAtObject (dataObject, true);
 				if (nav != null) {
 					nav.ExpandToNode ();
 					nav.Selected = true;

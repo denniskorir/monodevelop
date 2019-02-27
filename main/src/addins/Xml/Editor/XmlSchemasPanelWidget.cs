@@ -59,7 +59,8 @@ namespace MonoDevelop.Xml.Editor
 			var textRenderer = new CellRendererText ();
 			registeredSchemasStore = new ListStore (typeof (XmlSchemaCompletionData));
 			registeredSchemasView.Model = registeredSchemasStore;
-			
+			registeredSchemasView.SearchColumn = -1; // disable the interactive search
+
 			registeredSchemasView.AppendColumn (GettextCatalog.GetString ("Namespace"), textRenderer,
 				(TreeViewColumn col, CellRenderer cell, TreeModel model, TreeIter iter) => {
 					((CellRendererText)cell).Text = GetSchema (iter).NamespaceUri;
@@ -73,8 +74,7 @@ namespace MonoDevelop.Xml.Editor
 						: GettextCatalog.GetString ("User schema");
 			});
 			
-			registeredSchemasStore.SetSortFunc (0,
-				(model, a, b) => string.Compare (GetSchema (a).NamespaceUri, GetSchema (b).NamespaceUri, StringComparison.Ordinal));
+			registeredSchemasStore.SetSortFunc (0, SortSchemas);
 			
 			registeredSchemasStore.SetSortColumnId (0, SortType.Ascending);
 			
@@ -114,6 +114,7 @@ namespace MonoDevelop.Xml.Editor
 			//set up tree view for associations
 			defaultAssociationsStore = new ListStore (typeof (string), typeof (string), typeof (string), typeof (bool));
 			defaultAssociationsView.Model = defaultAssociationsStore;
+			defaultAssociationsView.SearchColumn = -1; // disable the interactive search
 			defaultAssociationsView.AppendColumn (GettextCatalog.GetString ("File Extension"), extensionTextRenderer, "text", COL_EXT);
 			defaultAssociationsView.AppendColumn (GettextCatalog.GetString ("Namespace"), comboEditor, "text", COL_NS);
 			defaultAssociationsView.AppendColumn (GettextCatalog.GetString ("Prefix"), prefixTextRenderer, "text", COL_PREFIX);
@@ -183,6 +184,11 @@ namespace MonoDevelop.Xml.Editor
 		
 		XmlSchemaCompletionData GetSchema (TreeIter iter)
 		{
+			return GetSchema (registeredSchemasStore, iter);
+		}
+
+		static XmlSchemaCompletionData GetSchema (ListStore registeredSchemasStore, TreeIter iter)
+		{
 			return (XmlSchemaCompletionData) registeredSchemasStore.GetValue (iter, 0);
 		}
 		
@@ -200,6 +206,12 @@ namespace MonoDevelop.Xml.Editor
 				yield return iter;
 				valid = model.IterNext (ref iter);
 			}
+		}
+
+		static int SortSchemas (TreeModel model, TreeIter a, TreeIter b)
+		{
+			var listStore = (ListStore)model;
+			return string.Compare (GetSchema (listStore, a).NamespaceUri, GetSchema (listStore, b).NamespaceUri, StringComparison.Ordinal);
 		}
 		
 		#region Schema accessors
@@ -409,6 +421,10 @@ namespace MonoDevelop.Xml.Editor
 		protected virtual void addRegisteredSchema (object sender, EventArgs args)
 		{
 			string fileName = XmlEditorService.BrowseForSchemaFile ();
+
+			// We need to present the window so that the keyboard focus returns to the correct parent window
+			((Gtk.Window)Toplevel).Present();
+
 			if (string.IsNullOrEmpty (fileName))
 				return;
 			

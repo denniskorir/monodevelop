@@ -25,30 +25,35 @@
 // THE SOFTWARE.
 using System;
 using MonoDevelop.Core;
+using MonoDevelop.Components;
+using MonoDevelop.Components.AtkCocoaHelper;
 using Gtk;
 
 namespace MonoDevelop.Ide.WelcomePage
 {
-	public class DefaultWelcomePage: WelcomePageWidget
+	class DefaultWelcomePage: WelcomePageWidget
 	{
 		protected override void BuildContent (Container parent)
 		{
-			LogoImage = Xwt.Drawing.Image.FromResource ("WelcomePage_Logo.png");
-			TopBorderImage = Xwt.Drawing.Image.FromResource ("WelcomePage_TopBorderRepeat.png");
+			LogoImage = Xwt.Drawing.Image.FromResource ("welcome-logo.png");
+			TopBorderImage = Xwt.Drawing.Image.FromResource ("welcome-tile.png");
 
 			var mainAlignment = new Gtk.Alignment (0.5f, 0.5f, 0f, 1f);
+			mainAlignment.Accessible.SetShouldIgnore (true);
 
 			var mainCol = new WelcomePageColumn ();
+			mainCol.Accessible.SetShouldIgnore (true);
 			mainAlignment.Add (mainCol);
 
 			var row1 = new WelcomePageRow ();
 			row1.PackStart (new WelcomePageButtonBar (
-				new WelcomePageBarButton ("MonoDevelop.com", "http://www.monodevelop.com", "link-cloud.png"),
-				new WelcomePageBarButton (GettextCatalog.GetString ("Documentation"), "http://www.go-mono.com/docs", "link-info.png"),
-				new WelcomePageBarButton (GettextCatalog.GetString ("Support"), "http://monodevelop.com/index.php?title=Help_%26_Contact", "link-heart.png"),
-				new WelcomePageBarButton (GettextCatalog.GetString ("Q&A"), "http://stackoverflow.com/questions/tagged/monodevelop", "link-chat.png")
+				new WelcomePageBarButton ("MonoDevelop.com", "http://www.monodevelop.com", "welcome-link-md-16.png"),
+				new WelcomePageBarButton (GettextCatalog.GetString ("Documentation"), "http://www.go-mono.com/docs", "welcome-link-info-16.png"),
+				new WelcomePageBarButton (GettextCatalog.GetString ("Support"), "http://monodevelop.com/index.php?title=Help_%26_Contact", "welcome-link-support-16.png"),
+				new WelcomePageBarButton (GettextCatalog.GetString ("Q&A"), "http://stackoverflow.com/questions/tagged/monodevelop", "welcome-link-chat-16.png")
 				)
 			);
+			row1.Accessible.SetShouldIgnore (true);
 			mainCol.PackStart (row1, false, false, 0);
 
 			var row2 = new WelcomePageRow (
@@ -62,6 +67,7 @@ namespace MonoDevelop.Ide.WelcomePage
 					new WelcomePageTipOfTheDaySection ()
 				)
 			);
+			row2.Accessible.SetShouldIgnore (true);
 			mainCol.PackStart (row2, false, false, 0);
 
 			parent.Add (mainAlignment);

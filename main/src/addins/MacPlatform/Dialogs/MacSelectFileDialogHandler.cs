@@ -34,6 +34,7 @@ using Foundation;
 using CoreGraphics;
 using AppKit;
 
+using MonoDevelop.Components;
 using MonoDevelop.Core;
 using MonoDevelop.Ide;
 using MonoDevelop.Components.Extensions;
@@ -41,47 +42,35 @@ using MonoDevelop.MacInterop;
 
 namespace MonoDevelop.MacIntegration
 {
-	class MacSelectFileDialogHandler : ISelectFileDialogHandler
+	class MacSelectFileDialogHandler : MacCommonFileDialogHandler<SelectFileDialogData, object>, ISelectFileDialogHandler
 	{
+		protected override NSSavePanel OnCreatePanel (SelectFileDialogData data)
+		{
+			if (data.Action == FileChooserAction.Save)
+				return new NSSavePanel ();
+
+			return new NSOpenPanel {
+				CanChooseDirectories = (data.Action & FileChooserAction.FolderFlags) != 0,
+				CanChooseFiles = (data.Action & FileChooserAction.FileFlags) != 0,
+				CanCreateDirectories = (data.Action & FileChooserAction.CreateFolder) != 0,
+				ResolvesAliases = false,
+			};
+		}
+
 		public bool Run (SelectFileDialogData data)
 		{
-			NSSavePanel panel = null;
-			
-			try {
-				bool directoryMode = data.Action != Gtk.FileChooserAction.Open;
-				
-				if (data.Action == Gtk.FileChooserAction.Save) {
-					panel = new NSSavePanel ();
-				} else {
-					panel = new NSOpenPanel {
-						CanChooseDirectories = directoryMode,
-						CanChooseFiles = !directoryMode,
-					};
-				}
-				
-				SetCommonPanelProperties (data, panel);
-				
-				if (!directoryMode) {
-					var popup = CreateFileFilterPopup (data, panel);
-					if (popup != null) {
-						panel.AccessoryView = popup;
-					}
-				}
-				
+			using (var panel = CreatePanel (data, out var saveState)) {
 				if (panel.RunModal () == 0) {
-					GtkQuartz.FocusWindow (data.TransientFor ?? MessageService.RootWindow);
+					DesktopService.FocusWindow (data.TransientFor ?? MessageService.RootWindow);
 					return false;
 				}
 
 				data.SelectedFiles = GetSelectedFiles (panel);
-				GtkQuartz.FocusWindow (data.TransientFor ?? MessageService.RootWindow);
+				DesktopService.FocusWindow (data.TransientFor ?? MessageService.RootWindow);
 				return true;
-			} finally {
-				if (panel != null)
-					panel.Dispose ();
 			}
 		}
-		
+
 		internal static FilePath[] GetSelectedFiles (NSSavePanel panel)
 		{
 			var openPanel = panel as NSOpenPanel;
@@ -92,26 +81,7 @@ namespace MonoDevelop.MacIntegration
 				return url != null ? new FilePath[] { panel.Url.Path } : new FilePath[0];
 			}
 		}
-		
-		internal static void SetCommonPanelProperties (SelectFileDialogData data, NSSavePanel panel)
-		{
-			panel.TreatsFilePackagesAsDirectories = true;
-			
-			if (!string.IsNullOrEmpty (data.Title))
-				panel.Title = data.Title;
 
-			if (!string.IsNullOrEmpty (data.InitialFileName))
-				panel.NameFieldStringValue = data.InitialFileName;
-			
-			if (!string.IsNullOrEmpty (data.CurrentFolder))
-				panel.DirectoryUrl = new NSUrl (data.CurrentFolder, true);
-			
-			var openPanel = panel as NSOpenPanel;
-			if (openPanel != null) {
-				openPanel.AllowsMultipleSelection = data.SelectMultiple;
-				openPanel.ShowsHiddenFiles = data.ShowHidden;
-			}
-		}
 		
 		static NSOpenSavePanelUrl GetFileFilter (SelectFileDialogFilter filter)
 		{
@@ -200,48 +170,6 @@ namespace MonoDevelop.MacIntegration
 			};
 			
 			return popup;
-		}
-		
-		internal static NSView CreateLabelledDropdown (string label, float popupWidth, out NSPopUpButton popup)
-		{
-			popup = new NSPopUpButton (new CGRect (0, 6, popupWidth, 18), false) {
-				AutoresizingMask = NSViewResizingMask.WidthSizable | NSViewResizingMask.MaxXMargin,
-			};
-			return LabelControl (label, 200, popup);
-		}
-		
-		internal static NSView LabelControl (string label, float controlWidth, NSControl control)
-		{
-			var view = new NSView (new CGRect (0, 0, controlWidth, 28)) {
-				AutoresizesSubviews = true,
-				AutoresizingMask = NSViewResizingMask.WidthSizable | NSViewResizingMask.MaxXMargin,
-			};
-			
-			var text = new NSTextField (new CGRect (0, 6, 100, 20)) {
-				StringValue = label,
-				DrawsBackground = false,
-				Bordered = false,
-				Editable = false,
-				Selectable = false
-			};
-			text.SizeToFit ();
-			var textWidth = text.Frame.Width;
-			var textHeight = text.Frame.Height;
-			
-			control.SizeToFit ();
-			var rect = control.Frame;
-			var controlHeight = rect.Height;
-			control.Frame = new CGRect (textWidth + 5, 0, controlWidth, rect.Height);
-			
-			rect = view.Frame;
-			rect.Width = control.Frame.Width + textWidth + 5;
-			rect.Height = NMath.Max (controlHeight, textHeight);
-			view.Frame = rect;
-			
-			view.AddSubview (text);
-			view.AddSubview (control);
-			
-			return view;
 		}
 	}
 }

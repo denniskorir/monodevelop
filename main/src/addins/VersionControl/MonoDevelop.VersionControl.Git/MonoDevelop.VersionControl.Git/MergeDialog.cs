@@ -33,7 +33,7 @@ using LibGit2Sharp;
 
 namespace MonoDevelop.VersionControl.Git
 {
-	partial class MergeDialog : Dialog
+	partial class MergeDialog : Gtk.Dialog
 	{
 		readonly TreeStore store;
 		readonly GitRepository repo;
@@ -46,11 +46,14 @@ namespace MonoDevelop.VersionControl.Git
 		{
 			this.Build ();
 
+			this.UseNativeContextMenus ();
+
 			this.repo = repo;
 			this.rebasing = rebasing;
 
 			store = new TreeStore (typeof(string), typeof(Xwt.Drawing.Image), typeof (string), typeof(string));
 			tree.Model = store;
+			tree.SearchColumn = -1; // disable the interactive search
 
 			var crp = new CellRendererImage ();
 			var col = new TreeViewColumn ();
@@ -114,7 +117,7 @@ namespace MonoDevelop.VersionControl.Git
 			store.Clear ();
 
 			foreach (Branch b in repo.GetBranches ())
-				store.AppendValues (b.Name, ImageService.GetIcon ("vc-branch", IconSize.Menu), b.Name, "branch");
+				store.AppendValues (b.FriendlyName, ImageService.GetIcon ("vc-branch", IconSize.Menu), b.FriendlyName, "branch");
 
 			foreach (string t in repo.GetTags ())
 				store.AppendValues (t, ImageService.GetIcon ("vc-tag", IconSize.Menu), t, "tag");

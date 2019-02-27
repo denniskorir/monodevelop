@@ -58,11 +58,15 @@ namespace MonoDevelop.GtkCore.GuiBuilder
 			}
 			
 			List<ItemToolboxNode> list = new List<ItemToolboxNode> ();
-			ComponentType[] types = null;
-			DispatchService.GuiSyncDispatch (delegate {
+
+			if (ctx.CancellationToken.IsCancellationRequested)
+				return list;
+			
+			var types = Runtime.RunInMainThread (delegate {
 				// Stetic is not thread safe, it has to be used from the gui thread
-				types = GuiBuilderService.SteticApp.GetComponentTypes (filename);
-			});
+				return GuiBuilderService.SteticApp.GetComponentTypes (filename);
+			}).WaitAndGetResult (ctx.CancellationToken);
+
 			foreach (ComponentType ct in types) {
 				if (ct.Category == "window")
 					continue;

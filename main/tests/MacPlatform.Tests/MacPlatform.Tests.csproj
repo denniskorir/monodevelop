@@ -1,42 +1,20 @@
-<?xml version="1.0" encoding="utf-8"?>
 <Project DefaultTargets="Build" ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <Import Project="..\..\MonoDevelop.props" />
   <PropertyGroup>
     <Configuration Condition=" '$(Configuration)' == '' ">Debug</Configuration>
     <Platform Condition=" '$(Platform)' == '' ">AnyCPU</Platform>
-    <ProductVersion>8.0.30703</ProductVersion>
-    <SchemaVersion>2.0</SchemaVersion>
     <ProjectGuid>{C05AAB7A-523F-4109-966B-6675BE0975BA}</ProjectGuid>
-    <OutputType>Library</OutputType>
-    <RootNamespace>MacPlatform.Tests</RootNamespace>
-    <AssemblyName>MacPlatform.Tests</AssemblyName>
     <TestRunnerCommand>..\..\build\bin\mdtool.exe</TestRunnerCommand>
     <TestRunnerArgs>run-md-tests</TestRunnerArgs>
-    <TargetFrameworkVersion>v4.5</TargetFrameworkVersion>
-  </PropertyGroup>
-  <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Debug|AnyCPU' ">
-    <DebugSymbols>True</DebugSymbols>
-    <DebugType>full</DebugType>
-    <Optimize>False</Optimize>
+    <TargetFrameworkVersion>$(MDFrameworkVersion)</TargetFrameworkVersion>
     <OutputPath>..\..\build\tests</OutputPath>
-    <DefineConstants>DEBUG</DefineConstants>
-    <ErrorReport>prompt</ErrorReport>
-    <WarningLevel>4</WarningLevel>
-    <ConsolePause>False</ConsolePause>
   </PropertyGroup>
-  <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Release|AnyCPU' ">
-    <DebugType>pdbonly</DebugType>
-    <Optimize>True</Optimize>
-    <OutputPath>..\..\build\tests</OutputPath>
-    <ErrorReport>prompt</ErrorReport>
-    <WarningLevel>4</WarningLevel>
-    <ConsolePause>False</ConsolePause>
-    <DebugSymbols>true</DebugSymbols>
-  </PropertyGroup>
+  <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Debug|AnyCPU' " />
+  <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Release|AnyCPU' " />
   <ItemGroup>
     <Reference Include="System" />
-    <Reference Include="MonoMac">
-      <HintPath>..\..\external\monomac\src\MonoMac.dll</HintPath>
-      <Private>False</Private>
+    <Reference Include="Xamarin.Mac">
+      <HintPath>..\..\external\Xamarin.Mac.dll</HintPath>
     </Reference>
   </ItemGroup>
   <ItemGroup>
@@ -44,8 +22,14 @@
     <Compile Include="MacPlatformTest.cs" />
     <Compile Include="KeychainTests.cs" />
     <Compile Include="CredentialsProviderTests.cs" />
+    <Compile Include="CoreFoundationTests.cs" />
+    <Compile Include="LaunchServicesTests.cs" />
+    <Compile Include="AppleScriptTests.cs" />
+    <Compile Include="CarbonTests.cs" />
+    <Compile Include="MimeMapLoaderTests.cs" />
+    <Compile Include="MemoryMonitorTests.cs" />
+    <Compile Include="ThermalMonitorTests.cs" />
   </ItemGroup>
-  <Import Project="$(MSBuildBinPath)\Microsoft.CSharp.targets" />
   <ItemGroup>
     <ProjectReference Include="..\..\src\addins\MacPlatform\MacPlatform.csproj">
       <Project>{50D6768C-C072-4E79-AFC5-C1C40767EF45}</Project>
@@ -69,6 +53,18 @@
     <ProjectReference Include="..\UnitTests\UnitTests.csproj">
       <Project>{1497D0A8-AFF1-4938-BC22-BE79B358BA5B}</Project>
       <Name>UnitTests</Name>
+      <Private>False</Private>
+    </ProjectReference>
+    <ProjectReference Include="..\MonoDevelop.Core.Tests\MonoDevelop.Core.Tests.csproj">
+      <Project>{FDA43CAA-1C2A-4593-8601-3E2EE06D9E03}</Project>
+      <Name>MonoDevelop.Core.Tests</Name>
+      <Private>False</Private>
+    </ProjectReference>
+    <ProjectReference Include="..\IdeUnitTests\IdeUnitTests.csproj">
+      <Project>{F7B2B155-7CF4-42C4-B5AF-63C0667D2E4F}</Project>
+      <Name>IdeUnitTests</Name>
+      <Private>False</Private>
     </ProjectReference>
   </ItemGroup>
+  <Import Project="$(MSBuildBinPath)\Microsoft.CSharp.targets" />
 </Project>

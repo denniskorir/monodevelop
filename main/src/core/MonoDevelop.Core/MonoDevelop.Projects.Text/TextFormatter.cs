@@ -26,6 +26,7 @@
 
 using System;
 using System.Text;
+using MonoDevelop.Core;
 
 namespace MonoDevelop.Projects.Text
 {
@@ -112,6 +113,10 @@ namespace MonoDevelop.Projects.Text
 					wrap = value;
 				}
 			}
+		}
+
+		public bool KeepLines {
+			get; set;
 		}
 		
 		public bool TabsAsSpaces {
@@ -201,7 +206,7 @@ namespace MonoDevelop.Projects.Text
 				}
 				
 				if (n != sn)
-					currentWord.Append (text.Substring (sn, n - sn));
+					currentWord.Append (text, sn, n - sn);
 				if (foundSpace) {
 					AppendCurrentWord (text[n]);
 					n++;
@@ -304,8 +309,12 @@ namespace MonoDevelop.Projects.Text
 		
 		void AppendCurrentWord (char separatorChar)
 		{
-			if (currentWord.Length == 0)
+			if (currentWord.Length == 0) {
+				if (KeepLines && lineStart && separatorChar == '\n') {
+					AppendChar (separatorChar, true);
+				}
 				return;
+			}
 			if (Wrap == WrappingType.Word || Wrap == WrappingType.WordChar) {
 				if (curCol + currentWord.Length > MaxColumns) {
 					// If the last char was a word separator, remove it
@@ -335,17 +344,17 @@ namespace MonoDevelop.Projects.Text
 		
 		void CreateIndentString ()
 		{
-			StringBuilder sb = new StringBuilder ();
+			StringBuilder sb = StringBuilderCache.Allocate ();
 			indentColumnWidth = AddIndentString (sb, indentString);
-			
-			paragFormattedIndentString = sb.ToString () + new string (' ', paragraphStartMargin);
+			sb.Append (new string (' ', paragraphStartMargin));
+			paragFormattedIndentString = sb.ToString ();
 			paragIndentColumnWidth = indentColumnWidth + paragraphStartMargin;
 			
 			if (LeftMargin > 0) {
 				sb.Append (' ', LeftMargin);
 				indentColumnWidth += LeftMargin;
 			}
-			formattedIndentString = sb.ToString ();
+			formattedIndentString = StringBuilderCache.ReturnAndFree (sb);
 
 			if (paragraphStart)
 				curCol = paragIndentColumnWidth;

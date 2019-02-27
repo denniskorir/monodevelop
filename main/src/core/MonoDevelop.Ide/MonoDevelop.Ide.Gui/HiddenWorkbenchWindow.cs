@@ -26,6 +26,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Threading.Tasks;
 using Mono.Addins;
 
 namespace MonoDevelop.Ide.Gui
@@ -61,22 +62,22 @@ namespace MonoDevelop.Ide.Gui
 			get { return AddinManager.AddinEngine; }
 		}
 		
-		MonoDevelop.Ide.Gui.IViewContent viewContent;
-		public MonoDevelop.Ide.Gui.IViewContent ViewContent {
+		MonoDevelop.Ide.Gui.ViewContent viewContent;
+		public MonoDevelop.Ide.Gui.ViewContent ViewContent {
 			get { return viewContent; }
 			set { viewContent = value; }
 		}
 		
-		public IEnumerable<IAttachableViewContent> SubViewContents { get { return new IAttachableViewContent[0]; } }
+		public IEnumerable<BaseViewContent> SubViewContents { get { return new BaseViewContent[0]; } }
 		
-		public MonoDevelop.Ide.Gui.IBaseViewContent ActiveViewContent {
+		public MonoDevelop.Ide.Gui.BaseViewContent ActiveViewContent {
 			get { return ViewContent;}
 			set {}
 		}
 		
-		public bool CloseWindow (bool force)
+		public Task<bool> CloseWindow (bool force)
 		{
-			return true;
+			return Task.FromResult (true);
 		}
 		
 		public void SelectWindow ()
@@ -86,7 +87,7 @@ namespace MonoDevelop.Ide.Gui
 		public void SwitchView (int viewNumber)
 		{
 		}
-		public void SwitchView (MonoDevelop.Ide.Gui.IAttachableViewContent subViewContent)
+		public void SwitchView (MonoDevelop.Ide.Gui.BaseViewContent subViewContent)
 		{
 		}
 
@@ -95,26 +96,26 @@ namespace MonoDevelop.Ide.Gui
 			return -1;
 		}
 		
-		public void AttachViewContent (MonoDevelop.Ide.Gui.IAttachableViewContent subViewContent)
+		public void AttachViewContent (MonoDevelop.Ide.Gui.BaseViewContent subViewContent)
 		{
 			
 		}
 
-		public void InsertViewContent (int index, MonoDevelop.Ide.Gui.IAttachableViewContent subViewContent)
+		public void InsertViewContent (int index, MonoDevelop.Ide.Gui.BaseViewContent subViewContent)
 		{
 			
 		}
 
-		public DocumentToolbar GetToolbar (IBaseViewContent targetView)
+		public DocumentToolbar GetToolbar (BaseViewContent targetView)
 		{
 			return null;
 		}
 
 		public event EventHandler TitleChanged { add {} remove {} }
-		public event EventHandler DocumentChanged;
-		public event MonoDevelop.Ide.Gui.WorkbenchWindowEventHandler Closing;
-		public event MonoDevelop.Ide.Gui.WorkbenchWindowEventHandler Closed;
-		public event MonoDevelop.Ide.Gui.ActiveViewContentEventHandler ActiveViewContentChanged;
-		public event EventHandler ViewsChanged;
+		public event EventHandler DocumentChanged { add {} remove {} }
+		public event MonoDevelop.Ide.Gui.WorkbenchWindowAsyncEventHandler Closing { add {} remove {} }
+		public event MonoDevelop.Ide.Gui.WorkbenchWindowEventHandler Closed { add {} remove {} }
+		public event MonoDevelop.Ide.Gui.ActiveViewContentEventHandler ActiveViewContentChanged { add {} remove {} }
+		public event EventHandler ViewsChanged { add {} remove {} }
 	}
 }

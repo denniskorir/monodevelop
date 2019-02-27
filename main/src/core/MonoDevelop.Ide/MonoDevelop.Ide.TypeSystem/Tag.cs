@@ -51,7 +51,9 @@
 // WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 //
 using System;
-using ICSharpCode.NRefactory.TypeSystem;
+using MonoDevelop.Ide.Editor;
+using MonoDevelop.Core.Text;
+using Microsoft.CodeAnalysis.Editor;
 
 namespace MonoDevelop.Ide.TypeSystem
 {
@@ -66,16 +68,44 @@ namespace MonoDevelop.Ide.TypeSystem
 			}
 		}
 		
-		public Tag (string key, DomRegion region)
+		public Tag (string key, DocumentRegion region)
 		{
 			this.key = key;
 			base.Region = region;
 		}
-		
-		public Tag (string key, string comment, DomRegion region)  : base (comment)
+
+		public Tag (string key, string comment, DocumentRegion region)  : base (comment)
 		{
 			this.key = key;
 			base.Region = region;
+		}
+	}
+
+	internal static class TodoItemExtensions
+	{
+		public static Tag ToTag (this TodoItem item)
+		{
+			var message = item.Message;
+			var index = message.IndexOf (':');
+
+			string tag = string.Empty;
+
+			// Slow path if we don't have a colon
+			if (index == -1) {
+				foreach (var tagComment in Tasks.CommentTag.SpecialCommentTags) {
+					if (message.StartsWith (tagComment.Tag, StringComparison.OrdinalIgnoreCase)) {
+						tag = message;
+						break;
+					}
+				}
+			} else {
+				tag = message.Substring (0, index);
+			}
+
+			int line = item.MappedLine + 1;
+			int column = item.MappedColumn + 1;
+
+			return new Tag (tag, message, new Editor.DocumentRegion (line, column, line, column));
 		}
 	}
 }

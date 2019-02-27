@@ -56,11 +56,11 @@ namespace MonoDevelop.Ide.Commands
 		RemoveTrailingWhiteSpaces,
 		
 		JoinWithNextLine,
-		WordCount,
 		MonodevelopPreferences,
 		DefaultPolicies,
 		InsertStandardHeader,
 		
+		EnableDisableFolding,
 		ToggleFolding,
 		ToggleAllFoldings,
 		FoldDefinitions,
@@ -155,8 +155,21 @@ namespace MonoDevelop.Ide.Commands
 	
 	internal class DefaultCopyHandler: CommandHandler
 	{
+		#if MAC
+		static readonly ObjCRuntime.Selector copySelector = new ObjCRuntime.Selector ("copy:");
+		#endif
+
 		protected override void Run ()
 		{
+			#if WIN32
+			var wintv = System.Windows.Input.Keyboard.FocusedElement;
+			var cmd = System.Windows.Input.ApplicationCommands.Copy;
+			if (wintv != null && cmd.CanExecute (null, wintv)) {
+				cmd.Execute (null, wintv);
+				return;
+			}
+			#endif
+
 			if (IdeApp.Workbench.RootWindow.HasToplevelFocus) {
 				Gtk.Editable editable = IdeApp.Workbench.RootWindow.Focus as Gtk.Editable;
 				if (editable != null) {
@@ -169,32 +182,55 @@ namespace MonoDevelop.Ide.Commands
 					tv.Buffer.CopyClipboard (clipboard);
 					return;
 				}
-				#if MAC
-				var mactv = AppKit.NSApplication.SharedApplication.KeyWindow.FirstResponder as AppKit.NSText;
-				if (mactv != null) {
-					mactv.Copy (mactv);
-					return;
-				}
-				#endif
 			}
+
+			#if MAC
+			var keyWindow = AppKit.NSApplication.SharedApplication.KeyWindow;
+			var focusView = keyWindow?.FirstResponder;
+			if (focusView != null) {
+				var mactv = focusView as AppKit.NSText;
+				if (mactv != null)
+					mactv.Copy (mactv);
+				else 
+					AppKit.NSApplication.SharedApplication.SendAction(copySelector, focusView, keyWindow);
+				return;
+			}
+			#endif
 		}
-		
+
 		protected override void Update (CommandInfo info)
 		{
 			object focus = IdeApp.Workbench.RootWindow.HasToplevelFocus ? IdeApp.Workbench.RootWindow.Focus : null;
 			info.Enabled = (focus is Gtk.Editable || focus is Gtk.TextView);
-			#if MAC
-			var macfocus = AppKit.NSApplication.SharedApplication.KeyWindow.FirstResponder;
-			info.Enabled |= macfocus is AppKit.NSText;
-			#endif
+#if MAC
+			var macfocus = AppKit.NSApplication.SharedApplication?.KeyWindow?.FirstResponder;
+			info.Enabled |= macfocus is AppKit.NSText || macfocus?.RespondsToSelector (copySelector) == true;
+#endif
+#if WIN32
+			var winfocus = System.Windows.Input.Keyboard.FocusedElement;
+			info.Enabled |= winfocus != null;
+#endif
 			info.Bypass = !info.Enabled;
 		}
 	}	
 	
 	internal class DefaultCutHandler: CommandHandler
 	{
+		#if MAC
+		static readonly ObjCRuntime.Selector cutSelector = new ObjCRuntime.Selector ("cut:");
+		#endif
+
 		protected override void Run ()
 		{
+			#if WIN32
+			var wintv = System.Windows.Input.Keyboard.FocusedElement;
+			var cmd = System.Windows.Input.ApplicationCommands.Cut;
+			if (wintv != null && cmd.CanExecute(null, wintv)) {
+				cmd.Execute(null, wintv);
+				return;
+			}
+			#endif
+
 			if (IdeApp.Workbench.RootWindow.HasToplevelFocus) {
 				Gtk.Editable editable = IdeApp.Workbench.RootWindow.Focus as Gtk.Editable;
 				if (editable != null) {
@@ -207,16 +243,22 @@ namespace MonoDevelop.Ide.Commands
 					tv.Buffer.CutClipboard (clipboard, true);
 					return;
 				}
-				#if MAC
-				var mactv = AppKit.NSApplication.SharedApplication.KeyWindow.FirstResponder as AppKit.NSText;
-				if (mactv != null) {
-					mactv.Cut (mactv);
-					return;
-				}
-				#endif
 			}
+
+			#if MAC
+			var keyWindow = AppKit.NSApplication.SharedApplication.KeyWindow;
+			var focusView = keyWindow?.FirstResponder;
+			if (focusView != null) {
+				var mactv = focusView as AppKit.NSText;
+				if (mactv != null)
+					mactv.Cut (mactv);
+				else
+					AppKit.NSApplication.SharedApplication.SendAction (cutSelector, focusView, keyWindow);
+				return;
+			}
+			#endif
 		}
-		
+
 		protected override void Update (CommandInfo info)
 		{
 			object focus = IdeApp.Workbench.RootWindow.HasToplevelFocus ? IdeApp.Workbench.RootWindow.Focus : null;
@@ -227,10 +269,15 @@ namespace MonoDevelop.Ide.Commands
 			else
 				info.Enabled = false;
 
-			#if MAC
-			var macfocus = AppKit.NSApplication.SharedApplication.KeyWindow.FirstResponder;
-			info.Enabled |= macfocus is AppKit.NSText;
-			#endif
+#if MAC
+			var macfocus = AppKit.NSApplication.SharedApplication?.KeyWindow?.FirstResponder;
+			info.Enabled |= macfocus is AppKit.NSText || macfocus?.RespondsToSelector (cutSelector) == true;
+#endif
+
+#if WIN32
+			var winfocus = System.Windows.Input.Keyboard.FocusedElement;
+			info.Enabled |= winfocus != null;
+#endif
 
 			info.Bypass = !info.Enabled;
 		}
@@ -238,8 +285,20 @@ namespace MonoDevelop.Ide.Commands
 	
 	internal class DefaultPasteHandler: CommandHandler
 	{
+		#if MAC
+		static readonly ObjCRuntime.Selector pasteSelector = new ObjCRuntime.Selector ("paste:");
+		#endif
+
 		protected override void Run ()
 		{
+			#if WIN32
+			var wintv = System.Windows.Input.Keyboard.FocusedElement;
+			var cmd = System.Windows.Input.ApplicationCommands.Paste;
+			if (wintv != null && cmd.CanExecute (null, wintv)) {
+				cmd.Execute (null, wintv);
+				return;
+			}
+			#endif
 			if (IdeApp.Workbench.RootWindow.HasToplevelFocus) {
 				Gtk.Editable editable = IdeApp.Workbench.RootWindow.Focus as Gtk.Editable;
 				if (editable != null) {
@@ -252,16 +311,22 @@ namespace MonoDevelop.Ide.Commands
 					tv.Buffer.PasteClipboard (clipboard);
 					return;
 				}
-				#if MAC
-				var mactv = AppKit.NSApplication.SharedApplication.KeyWindow.FirstResponder as AppKit.NSText;
-				if (mactv != null) {
-					mactv.Paste (mactv);
-					return;
-				}
-				#endif
 			}
+
+			#if MAC
+			var keyWindow = AppKit.NSApplication.SharedApplication.KeyWindow;
+			var focusView = keyWindow?.FirstResponder;
+			if (focusView != null) {
+				var mactv = focusView as AppKit.NSText;
+				if (mactv != null)
+					mactv.Paste (mactv);
+				else
+					AppKit.NSApplication.SharedApplication.SendAction (pasteSelector, focusView, keyWindow);
+				return;
+			}
+			#endif
 		}
-		
+
 		protected override void Update (CommandInfo info)
 		{
 			object focus = IdeApp.Workbench.RootWindow.HasToplevelFocus ? IdeApp.Workbench.RootWindow.Focus : null;
@@ -272,10 +337,15 @@ namespace MonoDevelop.Ide.Commands
 			else
 				info.Enabled = false;
 
-			#if MAC
-			var macfocus = AppKit.NSApplication.SharedApplication.KeyWindow.FirstResponder;
-			info.Enabled |= macfocus is AppKit.NSText;
-			#endif
+#if MAC
+			var macfocus = AppKit.NSApplication.SharedApplication?.KeyWindow?.FirstResponder;
+			info.Enabled |= macfocus is AppKit.NSText || macfocus?.RespondsToSelector (pasteSelector) == true;
+#endif
+
+#if WIN32
+			var winfocus = System.Windows.Input.Keyboard.FocusedElement;
+			info.Enabled |= winfocus != null;
+#endif
 
 			info.Bypass = !info.Enabled;
 		}
@@ -287,7 +357,7 @@ namespace MonoDevelop.Ide.Commands
 		{
 			Document doc = IdeApp.Workbench.ActiveDocument;
 			string header = MonoDevelop.Ide.StandardHeader.StandardHeaderService.GetHeader (doc.Project, doc.Name, false);
-			doc.Editor.Insert (0, header + "\n");
+			doc.Editor.InsertText (0, header + "\n");
 		}
 		
 		protected override void Update (CommandInfo info)
@@ -302,8 +372,20 @@ namespace MonoDevelop.Ide.Commands
 	
 	internal class DefaultSelectAllHandler: CommandHandler
 	{
+		#if MAC
+		static readonly ObjCRuntime.Selector selectAllSelector = new ObjCRuntime.Selector ("selectAll:");
+		#endif
+
 		protected override void Run ()
 		{
+			#if WIN32
+			var wintv = System.Windows.Input.Keyboard.FocusedElement;
+			var cmd = System.Windows.Input.ApplicationCommands.SelectAll;
+			if (wintv != null && cmd.CanExecute (null, wintv)) {
+				cmd.Execute (null, wintv);
+				return;
+			}
+			#endif
 			if (IdeApp.Workbench.RootWindow.HasToplevelFocus) {
 				Gtk.Editable editable = IdeApp.Workbench.RootWindow.Focus as Gtk.Editable;
 				if (editable != null) {
@@ -315,25 +397,39 @@ namespace MonoDevelop.Ide.Commands
 					tv.Buffer.SelectRange (tv.Buffer.StartIter, tv.Buffer.EndIter);
 					return;
 				}
-				#if MAC
-				var mactv = AppKit.NSApplication.SharedApplication.KeyWindow.FirstResponder as AppKit.NSText;
-				if (mactv != null) {
-					mactv.SelectAll (mactv);
-					return;
-				}
-				#endif
 			}
+
+			#if MAC
+			var keyWindow = AppKit.NSApplication.SharedApplication.KeyWindow;
+			var focusView = keyWindow?.FirstResponder;
+			if (focusView != null) {
+				var mactv = focusView as AppKit.NSText;
+				if (mactv != null)
+					mactv.SelectAll (mactv);
+				else
+					AppKit.NSApplication.SharedApplication.SendAction (selectAllSelector, focusView, keyWindow);
+				return;
+			}
+			#endif
 		}
-		
+
 		protected override void Update (CommandInfo info)
 		{
 			object focus = IdeApp.Workbench.RootWindow.HasToplevelFocus ? IdeApp.Workbench.RootWindow.Focus : null;
-			info.Enabled = (focus is Gtk.Editable || focus is Gtk.TextView); 
+			info.Enabled = (focus is Gtk.Editable || focus is Gtk.TextView);
 
-			#if MAC
-			var macfocus = AppKit.NSApplication.SharedApplication.KeyWindow.FirstResponder;
-			info.Enabled |= macfocus is AppKit.NSText;
-			#endif
+#if MAC
+			var macfocus = AppKit.NSApplication.SharedApplication?.KeyWindow?.FirstResponder;
+			// HACK: GdkQuartzView always responds to "selectAll:" without handling it
+			info.Enabled |= macfocus is AppKit.NSText || (macfocus.Class.Name != "GdkQuartzView" && macfocus?.RespondsToSelector (selectAllSelector) == true);
+#endif
+
+#if WIN32
+			var winfocus = System.Windows.Input.Keyboard.FocusedElement;
+			info.Enabled |= winfocus != null;
+#endif
+
+			info.Bypass = !info.Enabled;
 		}
 	}	
 }

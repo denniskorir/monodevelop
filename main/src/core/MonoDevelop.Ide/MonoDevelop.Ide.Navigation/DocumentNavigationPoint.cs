@@ -28,6 +28,7 @@
 //
 
 using System;
+using System.Threading.Tasks;
 using MonoDevelop.Core;
 using MonoDevelop.Ide.Gui;
 
@@ -36,10 +37,22 @@ namespace MonoDevelop.Ide.Navigation
 	public class DocumentNavigationPoint : NavigationPoint
 	{
 		Document doc;
+
+		public Document Document {
+			get {
+				return doc;
+			}
+		}
+
 		FilePath fileName;
 		string project;
 		
 		public DocumentNavigationPoint (Document doc)
+		{
+			SetDocument (doc);
+		}
+
+		protected void SetDocument (Document doc)
 		{
 			this.doc = doc;
 			doc.Closed += HandleClosed;
@@ -58,10 +71,14 @@ namespace MonoDevelop.Ide.Navigation
 			}
 			base.Dispose ();
 		}
-		
+
+		protected virtual void OnDocumentClosing ()
+		{
+		}
 
 		void HandleClosed (object sender, EventArgs e)
 		{
+			OnDocumentClosing ();
 			fileName = doc.FileName;
 			project = doc.HasProject ? doc.Project.ItemId : null;
 			if (fileName == FilePath.Null) {
@@ -73,16 +90,16 @@ namespace MonoDevelop.Ide.Navigation
 			}
 		}
 		
-		FilePath FileName {
+		public FilePath FileName {
 			get { return doc != null? doc.FileName : fileName; }
 		}
 
-		public override Document ShowDocument ()
+		public override Task<Document> ShowDocument ()
 		{
 			return DoShow ();
 		}
 		
-		protected virtual Document DoShow ()
+		protected virtual async Task<Document> DoShow ()
 		{
 			if (doc != null) {
 				doc.Select ();
@@ -95,7 +112,7 @@ namespace MonoDevelop.Ide.Navigation
 					break;
 				}
 			}
-			return IdeApp.Workbench.OpenDocument (new FileOpenInformation (fileName, p, true));
+			return await IdeApp.Workbench.OpenDocument (new FileOpenInformation (fileName, p, true));
 		}
 		
 		public override string DisplayName {

@@ -33,6 +33,7 @@ using System.ComponentModel;
 using Mono.Addins;
 using MonoDevelop.Core;
 using MonoDevelop.Projects;
+using MonoDevelop.Components;
 using MonoDevelop.Components.Commands;
 using MonoDevelop.Ide.Gui.Dialogs;
 
@@ -43,9 +44,9 @@ namespace MonoDevelop.Ide.Projects
 	/// </summary>
 	public class ProjectOptionsDialog : MultiConfigItemOptionsDialog
 	{
-		public ProjectOptionsDialog (Gtk.Window parentWindow, SolutionEntityItem project) : base (parentWindow, project)
+		public ProjectOptionsDialog (Window parentWindow, SolutionItem project) : base (parentWindow, project)
 		{
-			this.Title = GettextCatalog.GetString ("Project Options") + " - " + project.Name;
+			this.Title = GettextCatalog.GetString ("Project Options") + " – " + project.Name;
 			this.DefaultWidth = 960;
 			this.DefaultHeight = 680;
 		}
@@ -97,7 +98,7 @@ namespace MonoDevelop.Ide.Projects
 		
 		static bool RenameItemFile (FilePath oldFile, FilePath newFile)
 		{
-			if (File.Exists (newFile)) {
+			if (File.Exists (newFile) && FileService.GetPhysicalFileName (newFile) != FileService.GetPhysicalFileName (oldFile)) {
 				string msg = GettextCatalog.GetString ("The file '{0}' already exist. Do you want to replace it?", newFile.FileName);
 				if (!MessageService.Confirm (msg, AlertButton.Replace))
 				    return false;

@@ -26,8 +26,8 @@
 // WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 //
 
-using ICSharpCode.NRefactory.TypeSystem;
 using MonoDevelop.Xml.Dom;
+using MonoDevelop.Ide.Editor;
 
 namespace MonoDevelop.Xml.Parser
 {
@@ -106,7 +106,7 @@ namespace MonoDevelop.Xml.Parser
 			if (c == '<') {
 				if (context.StateTag != FREE)
 					context.LogError ("Incomplete tag opening; encountered unexpected '<'.",
-						new DomRegion (
+						new DocumentRegion (
 							context.LocationMinus (LengthFromOpenBracket (context) + 1),
 							context.LocationMinus (1)));
 				context.StateTag = BRACKET;
@@ -127,7 +127,7 @@ namespace MonoDevelop.Xml.Parser
 					return null;
 				} else if (c == '/') {
 					return this.ClosingTagState;
-				} else if (char.IsLetter (c) || c == '_') {
+				} else if (char.IsLetter (c) || c == '_' || char.IsWhiteSpace (c)) {
 					rollback = string.Empty;
 					return TagState;
 				}
@@ -176,7 +176,7 @@ namespace MonoDevelop.Xml.Parser
 			}
 			
 			context.LogError ("Incomplete tag opening; encountered unexpected character '" + c + "'.",
-				new DomRegion (
+				new DocumentRegion (
 					context.LocationMinus (LengthFromOpenBracket (context)),
 					context.Location));
 			

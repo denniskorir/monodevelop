@@ -26,6 +26,7 @@
 using System;
 using System.Collections.Generic;
 using MonoDevelop.Core;
+using MonoDevelop.Components.AtkCocoaHelper;
 using Gtk;
 using System.Diagnostics;
 
@@ -73,19 +74,23 @@ namespace MonoDevelop.Ide.Fonts
 
 			foreach (var desc in FontService.FontDescriptions) {
 				selectedFonts [desc.Name] = FontService.GetUnderlyingFontName (desc.Name);
-				var fontNameLabel = new Label (GettextCatalog.GetString (desc.DisplayName));
+				var fontNameLabel = new Label (desc.DisplayName);
 				fontNameLabel.Justify = Justification.Left;
 				fontNameLabel.Xalign = 0;
 				mainBox.PackStart (fontNameLabel, false, false, 0);
 				var hBox = new HBox ();
 				var setFontButton = new Button ();
 				setFontButton.Label = FontService.FilterFontName (GetFont (desc.Name));
+
+				var descStr = GettextCatalog.GetString ("Set the font options for {0}", desc.DisplayName);
+				setFontButton.Accessible.Description = descStr;
 				setFontButton.Clicked += delegate {
 					var selectionDialog = new FontSelectionDialog (GettextCatalog.GetString ("Select Font")) {
 						Modal = true,
 						DestroyWithParent = true,
 						TransientFor = this.Toplevel as Gtk.Window
 					};
+					MonoDevelop.Components.IdeTheme.ApplyTheme (selectionDialog);
 					try {
 						string fontValue = FontService.FilterFontName (GetFont (desc.Name));
 						selectionDialog.SetFontName (fontValue);
@@ -99,6 +104,7 @@ namespace MonoDevelop.Ide.Fonts
 						setFontButton.Label = selectionDialog.FontName;
 					} finally {
 						selectionDialog.Destroy ();
+						selectionDialog.Dispose ();
 					}
 				};
 				hBox.PackStart (setFontButton, true, true, 0);

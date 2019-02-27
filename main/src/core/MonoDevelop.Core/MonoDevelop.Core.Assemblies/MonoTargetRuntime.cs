@@ -109,13 +109,6 @@ namespace MonoDevelop.Core.Assemblies
 
 		public override IEnumerable<FilePath> GetReferenceFrameworkDirectories ()
 		{
-			//during initializion, only return the global directory once (for the running runtime) so that it doesn't
-			//get scanned multiple times
-			return GetReferenceFrameworkDirectories (IsInitialized || IsRunning);
-		}
-
-		IEnumerable<FilePath> GetReferenceFrameworkDirectories (bool includeGlobalDirectories)
-		{
 			//duplicate xbuild's framework folders path logic
 			//see xbuild man page
 			string env;
@@ -124,7 +117,7 @@ namespace MonoDevelop.Core.Assemblies
 					yield return (FilePath) dir;
 			}
 
-			if (includeGlobalDirectories && Platform.IsMac) {
+			if (Platform.IsMac) {
 				yield return "/Library/Frameworks/Mono.framework/External/xbuild-frameworks";
 			}
 
@@ -133,9 +126,12 @@ namespace MonoDevelop.Core.Assemblies
 		}
 
 		public bool UserDefined { get; internal set; }
-		
+
+		[Obsolete("Use DotNetProject.GetAssemblyDebugInfoFile()")]
 		public override string GetAssemblyDebugInfoFile (string assemblyPath)
 		{
+			if (monoRuntimeInfo.RuntimeVersion != null && monoRuntimeInfo.RuntimeVersion >= new Version (4,9,0))
+				return Path.ChangeExtension (assemblyPath, ".pdb");
 			return assemblyPath + ".mdb";
 		}
 		
@@ -148,8 +144,7 @@ namespace MonoDevelop.Core.Assemblies
 		public override IExecutionHandler GetExecutionHandler ()
 		{
 			if (execHandler == null) {
-				string monoPath = Path.Combine (Path.Combine (MonoRuntimeInfo.Prefix, "bin"), "mono");
-				execHandler = new MonoPlatformExecutionHandler (monoPath, environmentVariables);
+				execHandler = new MonoPlatformExecutionHandler (this);
 			}
 			return execHandler;
 		}
@@ -162,7 +157,9 @@ namespace MonoDevelop.Core.Assemblies
 
 		public override string GetToolPath (TargetFramework fx, string toolName)
 		{
+#pragma warning disable CS0618 // Type or member is obsolete
 			if (fx.ClrVersion == ClrVersion.Net_2_0 && toolName == "al")
+#pragma warning restore CS0618 // Type or member is obsolete
 				toolName = "al2";
 			return base.GetToolPath (fx, toolName);
 		}
@@ -182,15 +179,24 @@ namespace MonoDevelop.Core.Assemblies
 		
 		public override string GetMSBuildBinPath (string toolsVersion)
 		{
-			var path = Path.Combine (monoDir, toolsVersion);
-			if (File.Exists (Path.Combine (path, "xbuild.exe")))
+			var path = Path.Combine (monoDir, "msbuild", toolsVersion, "bin");
+			if (File.Exists (Path.Combine (path, "MSBuild.exe")) ||
+			    File.Exists (Path.Combine (path, "MSBuild.dll"))) {
 				return path;
-			//HACK: Mono puts xbuild 4.0 in 4.5 directory, even though there is no such thing as ToolsVersion 4.5
-			if (toolsVersion == "4.0")
-				return GetMSBuildBinPath ("4.5");
+			}
+
 			return null;
 		}
 		
+		public override string GetMSBuildToolsPath (string toolsVersion)
+		{
+			var path = Path.Combine (monoDir, "msbuild", toolsVersion, "bin");
+			if (Directory.Exists (path))
+				return path;
+
+			return null;
+		}
+
 		public override string GetMSBuildExtensionsPath ()
 		{
 			return Path.Combine (monoDir, "xbuild");
@@ -216,13 +222,13 @@ namespace MonoDevelop.Core.Assemblies
 		{
 			var packageNames = new HashSet<string> ();
 			foreach (string pcdir in PkgConfigDirs) {
-				string[] files;
+				IEnumerable<string> files;
 
 				if (!Directory.Exists (pcdir))
 					continue;
 
 				try {
-					files = Directory.GetFiles (pcdir, "*.pc");
+					files = Directory.EnumerateFiles (pcdir, "*.pc");
 				} catch (Exception ex) {
 					LoggingService.LogError (string.Format (
 						"Runtime '{0}' error in pc file scan of directory '{1}'", DisplayName, pcdir), ex);
@@ -241,7 +247,10 @@ namespace MonoDevelop.Core.Assemblies
 				return;
 			foreach (string pcfile in GetAllPkgConfigFiles ()) {
 				try {
-					ParsePCFile (new FilePath (pcfile).ResolveLinks ());
+					var pc = new FilePath (pcfile).ResolveLinks ();
+					if (!string.IsNullOrEmpty (pc))
+						ParsePCFile (pc);
+
 					if (ShuttingDown)
 						return;
 				}
@@ -284,8 +293,39 @@ namespace MonoDevelop.Core.Assemblies
 		{
 			return new ExecutionEnvironment (EnvironmentVariables);
 		}
+
+		/// <summary>
+		/// Get the Mono executable best matching the assembly architecture flags.
+		/// </summary>
+		/// <remarks>Returns a fallback Mono executable, if a match cannot be found.</remarks>
+		/// <returns>The Mono executable that should be used to execute the assembly.</returns>
+		/// <param name="assemblyPath">Assembly path.</param>
+		public string GetMonoExecutableForAssembly (string assemblyPath)
+		{
+			return GetMonoExecutable (AssemblyUtilities.GetProcessExecutionArchitectureForAssembly (assemblyPath));
+		}
+
+		internal string GetMonoExecutable (ProcessExecutionArchitecture use64Bit)
+		{
+			string monoPath;
+			switch (use64Bit) {
+			case ProcessExecutionArchitecture.X64:
+				monoPath = Path.Combine (MonoRuntimeInfo.Prefix, "bin", "mono64");
+				if (File.Exists (monoPath))
+					return monoPath;
+				break;
+			case ProcessExecutionArchitecture.X86:
+				monoPath = Path.Combine (MonoRuntimeInfo.Prefix, "bin", "mono32");
+				if (File.Exists (monoPath))
+					return monoPath;
+				break;
+			}
+
+			return monoPath = Path.Combine (MonoRuntimeInfo.Prefix, "bin", "mono");
+		}
+
 	}
-	
+
 	class PcFileCacheContext: Mono.PkgConfig.IPcFileCacheContext<LibraryPackageInfo>
 	{
 		public void ReportError (string message, System.Exception ex)

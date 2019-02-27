@@ -26,24 +26,24 @@
 
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
 using System.Linq;
-using System.Diagnostics;
-using System.Text.RegularExpressions;
 using System.Text;
-
-using MonoDevelop.Projects;
-using MonoDevelop.Core;
-using MonoDevelop.Core.Execution;
-using MonoDevelop.Core.Assemblies;
-using MonoDevelop.CSharp.Project;
+using System.Text.RegularExpressions;
 using System.Threading;
+
+using MonoDevelop.Core;
+using MonoDevelop.Core.Assemblies;
+using MonoDevelop.Core.Execution;
+using MonoDevelop.CSharp.Project;
 using MonoDevelop.Ide;
-using MonoDevelop.Core.ProgressMonitoring;
+using MonoDevelop.Projects;
 
 
 namespace MonoDevelop.CSharp
 {
+	[Obsolete]
 	static class CSharpBindingCompilerManager
 	{	
 		static void AppendQuoted (StringBuilder sb, string option, string val)
@@ -55,10 +55,10 @@ namespace MonoDevelop.CSharp
 			sb.AppendLine ();
 		}
 
-		public static BuildResult Compile (ProjectItemCollection projectItems, DotNetProjectConfiguration configuration, ConfigurationSelector configSelector, IProgressMonitor monitor)
+		public static BuildResult Compile (ProjectItemCollection projectItems, DotNetProjectConfiguration configuration, ConfigurationSelector configSelector, ProgressMonitor monitor)
 		{
 			var compilerParameters = (CSharpCompilerParameters)configuration.CompilationParameters ?? new CSharpCompilerParameters ();
-			var projectParameters = (CSharpProjectParameters)configuration.ProjectParameters ?? new CSharpProjectParameters ();
+			var projectParameters = (CSharpProject) configuration.ParentItem;
 			
 			FilePath outputName = configuration.CompiledOutputName;
 			string responseFileName = Path.GetTempFileName ();
@@ -99,7 +99,7 @@ namespace MonoDevelop.CSharp
 				return null;
 			}
 
-			var sb = new StringBuilder ();
+			var sb = StringBuilderCache.Allocate ();
 
 			HashSet<string> alreadyAddedReference = new HashSet<string> ();
 
@@ -119,7 +119,7 @@ namespace MonoDevelop.CSharp
 			}
 
 			List<string> gacRoots = new List<string> ();
-			sb.AppendFormat ("\"/out:{0}\"", outputName);
+			sb.AppendFormat ("\"/out:{0}\"", outputName.ToString ());
 			sb.AppendLine ();
 			
 			foreach (ProjectReference lib in projectItems.GetAll <ProjectReference> ()) {
@@ -127,7 +127,7 @@ namespace MonoDevelop.CSharp
 					var ownerProject = lib.OwnerProject;
 					if (ownerProject != null) {
 						var parentSolution = ownerProject.ParentSolution;
-						if (parentSolution != null && !(parentSolution.FindProjectByName (lib.Reference) is DotNetProject))
+						if (parentSolution != null && !(lib.ResolveProject (parentSolution) is DotNetProject))
 							continue;
 					}
 				} 
@@ -167,7 +167,7 @@ namespace MonoDevelop.CSharp
 				}
 			}
 
-			if (alreadyAddedReference.Any (reference => SystemAssemblyService.ContainsReferenceToSystemRuntime (reference))) {
+			if (alreadyAddedReference.Any (reference => SystemAssemblyService.RequiresFacadeAssembliesAsync (reference).WaitAndGetResult (monitor.CancellationToken))) {
 				LoggingService.LogInfo ("Found PCLv2 assembly.");
 				var facades = runtime.FindFacadeAssembliesForPCL (project.TargetFramework);
 				foreach (var facade in facades)
@@ -192,27 +192,27 @@ namespace MonoDevelop.CSharp
 					sb.AppendLine ("/delaySign");
 			}
 
-			var debugType = compilerParameters.DebugType;
+			var debugType = configuration.DebugType;
 			if (string.IsNullOrEmpty (debugType)) {
-				debugType = configuration.DebugMode ? "full" : "none";
+				debugType = configuration.DebugSymbols ? "full" : "none";
 			} else if (string.Equals (debugType, "pdbonly", StringComparison.OrdinalIgnoreCase)) {
 				//old Mono compilers don't support pdbonly
 				if (monoRuntime != null && !monoRuntime.HasMultitargetingMcs)
 					debugType = "full";
 			}
 			if (!string.Equals (debugType, "none", StringComparison.OrdinalIgnoreCase)) {
-					sb.AppendLine ("/debug:" + debugType);
+				sb.Append ("/debug:").AppendLine (debugType);
 			}
 
-			if (compilerParameters.LangVersion != LangVersion.Default) {
-				var langVersionString = CSharpCompilerParameters.TryLangVersionToString (compilerParameters.LangVersion);
+			if (compilerParameters.LangVersion != Microsoft.CodeAnalysis.CSharp.LanguageVersion.Default) {
+				var langVersionString = CSharpCompilerParameters.LanguageVersionToString (compilerParameters.LangVersion);
 				if (langVersionString == null) {
 					string message = "Invalid LangVersion enum value '" + compilerParameters.LangVersion.ToString () + "'";
 					monitor.ReportError (message, null);
 					LoggingService.LogError (message);
 					return null;
 				}
-				sb.AppendLine ("/langversion:" + langVersionString);
+				sb.Append ("/langversion:").AppendLine (langVersionString);
 			}
 			
 			// mcs default is + but others might not be
@@ -234,7 +234,7 @@ namespace MonoDevelop.CSharp
 			}
 			
 			if (projectParameters.CodePage != 0)
-				sb.AppendLine ("/codepage:" + projectParameters.CodePage);
+				sb.Append ("/codepage:").AppendLine (projectParameters.CodePage.ToString ());
 			else if (runtime is MonoTargetRuntime)
 				sb.AppendLine ("/codepage:utf8");
 			
@@ -243,20 +243,20 @@ namespace MonoDevelop.CSharp
 			if (compilerParameters.NoStdLib) 
 				sb.AppendLine ("-nostdlib");
 			
-			if (!string.IsNullOrEmpty (compilerParameters.PlatformTarget) && compilerParameters.PlatformTarget.ToLower () != "anycpu") {
+			if (!string.IsNullOrEmpty (compilerParameters.PlatformTarget) && !string.Equals (compilerParameters.PlatformTarget, "anycpu", StringComparison.OrdinalIgnoreCase)) {
 				//HACK: to ignore the platform flag for Mono <= 2.4, because gmcs didn't support it
 				if (runtime.RuntimeId == "Mono" && runtime.AssemblyContext.GetAssemblyLocation ("Mono.Debugger.Soft", null) == null) {
 					LoggingService.LogWarning ("Mono runtime '" + runtime.DisplayName + 
 					                           "' appears to be too old to support the 'platform' C# compiler flag.");
 				} else {
-					sb.AppendLine ("/platform:" + compilerParameters.PlatformTarget);
+					sb.Append ("/platform:").AppendLine (compilerParameters.PlatformTarget);
 				}
 			}
 
 			if (compilerParameters.TreatWarningsAsErrors) {
 				sb.AppendLine ("-warnaserror");
 				if (!string.IsNullOrEmpty (compilerParameters.WarningsNotAsErrors))
-					sb.AppendLine ("-warnaserror-:" + compilerParameters.WarningsNotAsErrors);
+					sb.Append ("-warnaserror-:").AppendLine (compilerParameters.WarningsNotAsErrors);
 			}
 
 			foreach (var define in configuration.GetDefineSymbols ()) {
@@ -267,7 +267,7 @@ namespace MonoDevelop.CSharp
 			CompileTarget ctarget = configuration.CompileTarget;
 			
 			if (!string.IsNullOrEmpty (projectParameters.MainClass)) {
-				sb.AppendLine ("/main:" + projectParameters.MainClass);
+				sb.Append ("/main:").AppendLine (projectParameters.MainClass);
 				// mcs does not allow providing a Main class when compiling a dll
 				// As a workaround, we compile as WinExe (although the output will still
 				// have a .dll extension).
@@ -332,7 +332,7 @@ namespace MonoDevelop.CSharp
 				workingDir = configuration.ParentItem.BaseDirectory;
 
 			LoggingService.LogInfo (compilerName + " " + sb);
-
+			StringBuilderCache.Free (sb);
 			ExecutionEnvironment envVars = runtime.GetToolsExecutionEnvironment (project.TargetFramework);
 			string cargs = "/noconfig @\"" + responseFileName + "\"";
 
@@ -375,7 +375,7 @@ namespace MonoDevelop.CSharp
 		{
 			BuildResult result = new BuildResult ();
 			
-			StringBuilder compilerOutput = new StringBuilder ();
+			StringBuilder compilerOutput = StringBuilderCache.Allocate ();
 			bool typeLoadException = false;
 			foreach (string s in new string[] { stdout, stderr }) {
 				StreamReader sr = File.OpenText (s);
@@ -414,11 +414,11 @@ namespace MonoDevelop.CSharp
 				else
 					result.AddError ("", 0, 0, "", "Error: A dependency of a referenced assembly may be missing, or you may be referencing an assembly created with a newer CLR version. See the compilation output for more details.");
 			}
-			result.CompilerOutput = compilerOutput.ToString ();
+			result.CompilerOutput = StringBuilderCache.ReturnAndFree (compilerOutput);
 			return result;
 		}
 		
-		static int DoCompilation (IProgressMonitor monitor, string compilerName, string compilerArgs, string working_dir, ExecutionEnvironment envVars, List<string> gacRoots, ref string output, ref string error)
+		static int DoCompilation (ProgressMonitor monitor, string compilerName, string compilerArgs, string working_dir, ExecutionEnvironment envVars, List<string> gacRoots, ref string output, ref string error)
 		{
 			output = Path.GetTempFileName ();
 			error = Path.GetTempFileName ();
@@ -448,9 +448,9 @@ namespace MonoDevelop.CSharp
 			pinfo.RedirectStandardOutput = true;
 			pinfo.RedirectStandardError = true;
 
-			MonoDevelop.Core.Execution.ProcessWrapper pw = Runtime.ProcessService.StartProcess (pinfo, outwr, errwr, null);
-			using (var mon = new AggregatedOperationMonitor (monitor, pw)) {
-				pw.WaitForOutput ();
+			ProcessWrapper pw = Runtime.ProcessService.StartProcess (pinfo, outwr, errwr, null);
+			using (monitor.CancellationToken.Register (pw.Cancel)) {
+				pw.Task.Wait ();
 			}
 			int exitCode = pw.ExitCode;
 			bool cancelRequested = pw.CancelRequested;

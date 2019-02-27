@@ -36,6 +36,7 @@ using System.Web.UI;
 using MonoDevelop.Core;
 using MonoDevelop.Ide.CodeCompletion;
 using MonoDevelop.AspNet.Projects;
+using MonoDevelop.Projects;
 
 namespace MonoDevelop.AspNet.WebForms
 {
@@ -65,36 +66,36 @@ namespace MonoDevelop.AspNet.WebForms
 			CompletionDataList list = new CompletionDataList ();
 			
 			if (type == WebSubtype.WebForm) {
-				list.Add ("Implements", null, "Declare that this page implements an interface.");
-				list.Add ("Page", null, "Define properties of this page.");
-				list.Add ("PreviousPageType", null, "Strongly type the page's PreviousPage property.");
-				list.Add ("MasterType", null, "Strongly type the page's Master property.");
+				list.Add ("Implements", null, GettextCatalog.GetString ("Declare that this page implements an interface."));
+				list.Add ("Page", null, GettextCatalog.GetString ("Define properties of this page."));
+				list.Add ("PreviousPageType", null, GettextCatalog.GetString ("Strongly type the page's PreviousPage property."));
+				list.Add ("MasterType", null, GettextCatalog.GetString ("Strongly type the page's Master property."));
 			} else if (type == WebSubtype.MasterPage) {
-				list.Add ("Implements", null, "Declare that this master page implements an interface.");
-				list.Add ("Master", null, "Define properties of this master page.");
-				list.Add ("MasterType", null, "Strongly type the page's Master property.");
+				list.Add ("Implements", null, GettextCatalog.GetString ("Declare that this master page implements an interface."));
+				list.Add ("Master", null, GettextCatalog.GetString ("Define properties of this master page."));
+				list.Add ("MasterType", null, GettextCatalog.GetString ("Strongly type the page's Master property."));
 			} else if (type == WebSubtype.WebControl) {
-				list.Add ("Control", null, "Define properties of this user control.");
-				list.Add ("Implements", null, "Declare that this control implements an interface.");
+				list.Add ("Control", null, GettextCatalog.GetString ("Define properties of this user control."));
+				list.Add ("Implements", null, GettextCatalog.GetString ("Declare that this control implements an interface."));
 			} else {
 				return null;
 			}
 			
-			list.Add ("Assembly", null, "Reference an assembly.");
-			list.Add ("Import", null, "Import a namespace.");
+			list.Add ("Assembly", null, GettextCatalog.GetString ("Reference an assembly."));
+			list.Add ("Import", null, GettextCatalog.GetString ("Import a namespace."));
 			
 			if (type != WebSubtype.MasterPage) {
-				list.Add ("OutputCache", null, "Set output caching behaviour.");
+				list.Add ("OutputCache", null, GettextCatalog.GetString ("Set output caching behaviour."));
 			}
 			
-			list.Add ("Reference", null, "Reference a page or user control.");
-			list.Add ("Register", null, "Register a user control or custom web controls.");
+			list.Add ("Reference", null, GettextCatalog.GetString ("Reference a page or user control."));
+			list.Add ("Register", null, GettextCatalog.GetString ("Register a user control or custom web controls."));
 			
 			return list.Count > 0? list : null;
 		}
 		
 
-		public static CompletionDataList GetAttributeValues (AspNetAppProject project, FilePath fromFile, string directiveName, string attribute)
+		public static CompletionDataList GetAttributeValues (DotNetProject project, FilePath fromFile, string directiveName, string attribute)
 		{
 			switch (directiveName.ToLowerInvariant ()) {
 			case "page":
@@ -105,7 +106,7 @@ namespace MonoDevelop.AspNet.WebForms
 			return null;
 		}
 		
-		public static CompletionDataList GetAttributes (AspNetAppProject project, string directiveName,
+		public static CompletionDataList GetAttributes (DotNetProject project, string directiveName,
 			Dictionary<string, string> existingAtts)
 		{
 			var list = new CompletionDataList ();
@@ -199,7 +200,7 @@ namespace MonoDevelop.AspNet.WebForms
 				list.Add (s);
 		}
 		
-		static CompletionDataList GetPageAttributeValues (AspNetAppProject project, FilePath fromFile, string attribute)
+		static CompletionDataList GetPageAttributeValues (Project project, FilePath fromFile, string attribute)
 		{
 			var list = new CompletionDataList ();
 			switch (attribute.ToLowerInvariant ()) {
@@ -346,7 +347,7 @@ namespace MonoDevelop.AspNet.WebForms
 			return list.Count > 0? list : null;
 		}
 		
-		static CompletionDataList GetRegisterAttributeValues (AspNetAppProject project, FilePath fromFile, string attribute)
+		static CompletionDataList GetRegisterAttributeValues (Project project, FilePath fromFile, string attribute)
 		{
 			switch (attribute.ToLowerInvariant ()) {
 			case "src":

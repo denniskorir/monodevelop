@@ -24,15 +24,16 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 // THE SOFTWARE.
 
-using System;
 using System.Collections;
-using ICSharpCode.PackageManagement;
+using System.Collections.Generic;
+using System.Threading.Tasks;
 using MonoDevelop.Core;
 using MonoDevelop.Projects;
+using MonoDevelop.Projects.MSBuild;
 
 namespace MonoDevelop.PackageManagement
 {
-	public class ProjectProxy : IProject
+	internal class ProjectProxy : IProject
 	{
 		Project project;
 
@@ -53,6 +54,10 @@ namespace MonoDevelop.PackageManagement
 			get { return project.BaseDirectory; }
 		}
 
+		public FilePath BaseIntermediateOutputPath {
+			get { return project.BaseIntermediateOutputPath; }
+		}
+
 		public ISolution ParentSolution {
 			get { return new SolutionProxy (project.ParentSolution); }
 		}
@@ -61,9 +66,19 @@ namespace MonoDevelop.PackageManagement
 			get { return project.ExtendedProperties; }
 		}
 
-		public void Save ()
+		public IEnumerable<string> FlavorGuids {
+			get { return project.FlavorGuids; }
+		}
+
+		public IMSBuildEvaluatedPropertyCollection EvaluatedProperties {
+			get { return project.MSBuildProject?.EvaluatedProperties; }
+		}
+
+		public async Task SaveAsync ()
 		{
-			project.Save ();
+			using (var monitor = new ProgressMonitor ()) {
+				await project.SaveAsync (monitor);
+			}
 		}
 	}
 }

@@ -37,6 +37,12 @@ using MonoDevelop.Core;
 using MonoDevelop.Ide.CodeCompletion;
 using Mono.Addins;
 using System.Linq;
+using MonoDevelop.Ide.Editor;
+using MonoDevelop.Ide.Editor.Highlighting;
+using System.Text;
+using MonoDevelop.Ide.Editor.TextMate;
+using System.Threading;
+using System.Threading.Tasks;
 
 namespace MonoDevelop.Ide.CodeTemplates
 {
@@ -69,30 +75,153 @@ namespace MonoDevelop.Ide.CodeTemplates
 		{
 			try {
 				Templates = LoadTemplates ();
+				AddinManager.AddExtensionNodeHandler ("/MonoDevelop/Ide/CodeTemplates", delegate (object sender, ExtensionNodeEventArgs args) {
+					var codon = (CodeTemplateCodon)args.ExtensionNode;
+					switch (args.Change) {
+					case ExtensionChange.Add:
+						using (XmlReader reader = codon.Open ()) {
+							LoadTemplates (reader).ForEach (t => templates.Add (t));
+						}
+						break;
+					}
+				});
 			} catch (Exception e) {
 				LoggingService.LogError ("CodeTemplateService: Exception while loading templates.", e);
 			}
-			
-			AddinManager.AddExtensionNodeHandler ("/MonoDevelop/Ide/CodeTemplates", delegate(object sender, ExtensionNodeEventArgs args) {
-				var codon = (CodeTemplateCodon)args.ExtensionNode;
-				switch (args.Change) {
-				case ExtensionChange.Add:
-					using (XmlReader reader = codon.Open ()) {
-						LoadTemplates (reader).ForEach (t => templates.Add (t));
-					}
-					break;
-				}
-			});
 		}
 		
 		public static IEnumerable<CodeTemplate> GetCodeTemplates (string mimeType)
 		{
 			var savedTemplates = templates;
 			if (savedTemplates == null || string.IsNullOrEmpty (mimeType))
-				return new CodeTemplate[0];
-			return savedTemplates.ToArray ().Where (t => t != null && t.MimeType == mimeType);
+				return new CodeTemplate [0];
+			return savedTemplates.ToArray ().Where (delegate (CodeTemplate t) {
+				try {
+					return t != null && DesktopService.GetMimeTypeIsSubtype (mimeType, t.MimeType);
+				} catch (Exception) {
+					// required for some unit tests
+					return t != null && mimeType == t.MimeType;
+				}	
+			});
 		}
-		
+
+		public static async Task<IEnumerable<CodeTemplate>> GetCodeTemplatesAsync (TextEditor editor, CancellationToken cancellationToken = default(CancellationToken))
+		{
+			var result = new List<CodeTemplate> ();
+			result.AddRange (GetCodeTemplates (editor.MimeType));
+			var scope = await editor.SyntaxHighlighting.GetScopeStackAsync (editor.CaretOffset, cancellationToken);
+			foreach (var setting in TextMateLanguage.Create (scope).Snippets) {
+				var convertedTemplate = ConvertToTemplate (setting);
+				if (convertedTemplate != null)
+					result.Add (convertedTemplate);
+			}
+			return result;
+		}
+
+		static CodeTemplate ConvertToTemplate (TmSnippet setting)
+		{
+			var result = new CodeTemplate ();
+			result.Shortcut = setting.TabTrigger;
+			var sb = StringBuilderCache.Allocate ();
+			var nameBuilder = StringBuilderCache.Allocate ();
+			bool readDollar = false;
+			bool inBracketExpression = false;
+			bool inExpressionContent = false;
+			bool inVariable = false;
+			int number = 0;
+			foreach (var ch in setting.Content) {
+				if (inVariable) {
+					if (char.IsLetter (ch)) {
+						nameBuilder.Append (ch);
+					} else {
+						sb.Append (ConvertVariable (nameBuilder.ToString ()));
+						nameBuilder.Length = 0;
+						inVariable = false;
+					}
+				}
+
+				if (ch == '$') {
+					readDollar = true;
+					continue;
+				}
+				if (readDollar) {
+					if (ch == '{') {
+						number = 0;
+						inBracketExpression = true;
+						readDollar = false;
+						continue;
+					} else if (char.IsLetter (ch)) {
+						inVariable = true;
+					} else {
+						sb.Append ("$$");
+						readDollar = false;
+					}	
+				}
+				if (inBracketExpression) {
+					if (ch == ':') {
+						inBracketExpression = false;
+						inExpressionContent = true;
+						continue;
+					}
+					number = number * 10 + (ch - '0');
+					continue;
+				}
+
+
+				if (inExpressionContent) {
+					if (ch == '}') {
+						if (number == 0) {
+							sb.Append ("$end$");
+							sb.Append (nameBuilder);
+						} else {
+							sb.Append ("$");
+							sb.Append (nameBuilder);
+							sb.Append ("$");
+							result.AddVariable (new CodeTemplateVariable (nameBuilder.ToString ()) { Default = nameBuilder.ToString (), IsEditable = true });
+						}
+						nameBuilder.Length = 0;
+						number = 0;
+						inExpressionContent = false;
+						continue;
+					}
+					nameBuilder.Append (ch);
+					continue;
+				}
+				sb.Append (ch);
+			}
+			if (inVariable) {
+				sb.Append (ConvertVariable (nameBuilder.ToString ()));
+				nameBuilder.Length = 0;
+				inVariable = false;
+			}
+			StringBuilderCache.Free (nameBuilder);
+			result.Code = StringBuilderCache.ReturnAndFree (sb);
+			result.CodeTemplateContext = CodeTemplateContext.Standard;
+			result.CodeTemplateType = CodeTemplateType.Expansion;
+			result.Description = setting.Name;
+			return result;
+		}
+
+		static string ConvertVariable (string textmateVariable)
+		{
+			switch (textmateVariable) {
+			case "SELECTION":
+			case "TM_SELECTED_TEXT":
+				return "$selected$";
+			case "TM_CURRENT_LINE":
+			case "TM_CURRENT_WORD":
+			case "TM_FILENAME":
+			case "TM_FILEPATH":
+			case "TM_FULLNAME":
+			case "TM_LINE_INDEX":
+			case "TM_LINE_NUMBER":
+			case "TM_SOFT_TABS":
+			case "TM_TAB_SIZE":
+				return "$" + textmateVariable + "$";
+			}
+			return "";
+		}
+
 		public static IEnumerable<CodeTemplate> GetCodeTemplatesForFile (string fileName)
 		{
 			return GetCodeTemplates (DesktopService.GetMimeTypeForUri (fileName));
@@ -173,7 +302,7 @@ namespace MonoDevelop.Ide.CodeTemplates
 			}
 		}*/
 		
-		static List<CodeTemplate> LoadTemplates (XmlReader reader)
+		static List<CodeTemplate> LoadTemplates (XmlReader reader, string filePathForDebugging = null)
 		{
 			List<CodeTemplate> result = new List<CodeTemplate> ();
 			
@@ -183,8 +312,10 @@ namespace MonoDevelop.Ide.CodeTemplates
 						switch (reader.LocalName) {
 						case Node:
 							string fileVersion = reader.GetAttribute (VersionAttribute);
-							if (fileVersion != Version) 
-								return null;
+							if (fileVersion != Version) {
+								LoggingService.LogError ($"CodeTemplateService: unsupported fileVersion ({fileVersion}), supported is: {Version}");
+								return result;
+							}
 							break;
 						case CodeTemplate.Node:
 							result.Add (CodeTemplate.Read (reader));
@@ -193,8 +324,8 @@ namespace MonoDevelop.Ide.CodeTemplates
 					}
 				}
 			} catch (Exception e) {
-				LoggingService.LogError ("CodeTemplateService: Exception while loading template.", e);
-				return null;
+				LoggingService.LogError ("CodeTemplateService: Exception while loading template: " + filePathForDebugging, e);
+				return result;
 			} finally {
 				reader.Close ();
 			}
@@ -210,31 +341,23 @@ namespace MonoDevelop.Ide.CodeTemplates
 		static List<CodeTemplate> LoadTemplates ()
 		{
 			const string ManifestResourceName = "MonoDevelop-templates.xml";
-			List<CodeTemplate> builtinTemplates = LoadTemplates (XmlTextReader.Create (typeof (CodeTemplateService).Assembly.GetManifestResourceStream (ManifestResourceName)));
+			var builtinTemplates = LoadTemplates (XmlReader.Create (typeof (CodeTemplateService).Assembly.GetManifestResourceStream (ManifestResourceName)));
 			if (Directory.Exists (TemplatePath)) {
-				List<CodeTemplate> result = new List<CodeTemplate> ();
-				foreach (string templateFile in Directory.GetFiles (TemplatePath, "*.xml")) {
-					result.AddRange (LoadTemplates (XmlTextReader.Create (templateFile)));
+				var result = new List<CodeTemplate> ();
+				try {
+					foreach (string templateFile in Directory.GetFiles (TemplatePath, "*.xml")) {
+						result.AddRange (LoadTemplates (XmlReader.Create (templateFile), filePathForDebugging: templateFile));
+					}
+				} catch (Exception ex) {
+					LoggingService.LogError ("Exception when reading snippets from directory: " + TemplatePath, ex);
 				}
-				
 				// merge user templates with built in templates
 				for (int i = 0; i < builtinTemplates.Count; i++) {
-					CodeTemplate curTemplate = builtinTemplates[i];
-					bool found = false;
-					for (int j = 0; j < result.Count; j++) {
-						CodeTemplate curResultTemplate = result[j];
-						if (curTemplate.Shortcut == curResultTemplate.Shortcut) {
-							found = true;
-							if (curResultTemplate.Version != curTemplate.Version)
-								result[j] = curTemplate;
-						}
-					}
-					// template is new, insert it.
-					if (!found) 
+					var curTemplate = builtinTemplates[i];
+					if (!result.Any (t => t.Shortcut == curTemplate.Shortcut))
 						result.Add (curTemplate);
 				}
-				
-				
+
 				return result;
 			}
 			

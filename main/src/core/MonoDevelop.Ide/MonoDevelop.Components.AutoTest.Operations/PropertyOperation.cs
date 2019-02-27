@@ -51,6 +51,11 @@ namespace MonoDevelop.Components.AutoTest.Operations
 
 			return newResultSet;
 		}
+
+		public override string ToString ()
+		{
+			return string.Format ("Property ({0}, {1})", PropertyName, DesiredValue);
+		}
 	}
 }
 

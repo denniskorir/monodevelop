@@ -24,6 +24,11 @@ namespace MonoDevelop.VersionControl
 			return true;
 		}
 
+		public virtual string FormatDialogTitle (ChangeSet changeSet, string title)
+		{
+			return null;
+		}
+
 		public virtual void CommitMessageTextViewHook (Gtk.TextView textView)
 		{
 		}
@@ -74,8 +79,7 @@ namespace MonoDevelop.VersionControl
 				if (value == allowCommit)
 					return;
 				allowCommit = value;
-				if (AllowCommitChanged != null)
-					AllowCommitChanged (this, EventArgs.Empty);
+				AllowCommitChanged?.Invoke (this, EventArgs.Empty);
 			}
 		}
 	}

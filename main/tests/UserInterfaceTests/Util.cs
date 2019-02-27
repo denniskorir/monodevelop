@@ -27,87 +27,63 @@
 using System;
 using System.IO;
 using MonoDevelop.Core;
+using System.Reflection;
+using System.Linq;
 
 namespace UserInterfaceTests
 {
 	public static class Util
 	{
-		static FilePath rootDir;
-
-		static string testRunIdentifier = DateTime.Now.ToString ("dddd-dd-MM-yyyy-HH-mm-ss");
-
-		public static string TestRunId {
-			get {
-				return testRunIdentifier;
-			}
-		}
-
-		public static FilePath TestsRootDir {
-			get {
-				if (rootDir.IsNull) {
-					rootDir = Path.GetDirectoryName (typeof(Util).Assembly.Location);
-					rootDir = rootDir.ParentDirectory.ParentDirectory.Combine ("tests");
-				}
-				return rootDir;
-			}
-		}
-
-		public static FilePath TmpDir {
-			get { return TestsRootDir.Combine ("tmp"); }
-		}
-
-		public static void ClearTmpDir ()
+		public static void PrintData (this object data)
 		{
-			if (Directory.Exists (TmpDir))
-				Directory.Delete (TmpDir, true);
+			if (data != null)
+				TestService.Session.DebugObject.Debug (data.ToString ());
 		}
 
-		public static string ToValidPath (string path)
+		public static string ToPathSafeString (this string str, char replaceWith = '-')
 		{
-			if (Path.DirectorySeparatorChar == '/')
-				return path;
-			return path.Replace ('/', Path.DirectorySeparatorChar);
+			var invalids = Path.GetInvalidFileNameChars ().Concat (Path.GetInvalidPathChars ()).Distinct ().ToArray ();
+			return new string (str.Select (c => invalids.Contains (c) ? replaceWith : c).ToArray ());
 		}
 
-		public static FilePath GetSampleProject (FilePath solution)
+		public static string ToBoldText (this string str)
 		{
-			solution = GetSampleProjectPath (solution);
-
-			FilePath srcDir = solution.ParentDirectory;
-
-			FilePath tmpDir = CreateTmpDir (srcDir.FileName);
-			CopyDir (srcDir, tmpDir);
-			return tmpDir.Combine (solution.FileName);
+			return str != null ? string.Format ("<b>{0}</b>", str) : null;
 		}
 
-		public static FilePath GetSampleProjectPath (string solution)
+		public static FilePath CreateTmpDir (string hint = null)
 		{
-			solution = ToValidPath (solution);
-			return TestsRootDir.Combine ("test-projects").Combine (solution);
-		}
-
-		public static FilePath CreateTmpDir (string hint)
-		{
-			string tempDirectory = Path.Combine(Path.GetTempPath(), Path.GetRandomFileName(), hint);
+			var cwd = new FileInfo (Assembly.GetExecutingAssembly ().Location).DirectoryName;
+			string tempDirectory = Path.Combine (cwd, Path.GetRandomFileName());
+			tempDirectory = hint != null ? Path.Combine (tempDirectory, hint) : tempDirectory;
 
 			if (!Directory.Exists (tempDirectory))
 				Directory.CreateDirectory (tempDirectory);
 			return tempDirectory;
 		}
 
-		static void CopyDir (string src, string dst)
+		public static Action GetAction (this BeforeBuildAction action)
 		{
-			if (Path.GetFileName (src) == ".svn")
-				return;
+			switch (action) {
+			case BeforeBuildAction.None:
+				return Ide.EmptyAction;
+			case BeforeBuildAction.WaitForPackageUpdate:
+				return Ide.WaitForPackageUpdate;
+			case BeforeBuildAction.WaitForSolutionCheckedOut:
+				return Ide.WaitForSolutionCheckedOut;
+			default:
+				return Ide.EmptyAction;
+			}
+		}
 
-			if (!Directory.Exists (dst))
-				Directory.CreateDirectory (dst);
+		public static Action<string> GetNonNullAction (Action<string> action)
+		{
+			return action ?? delegate { };
+		}
 
-			foreach (string file in Directory.GetFiles (src))
-				File.Copy (file, Path.Combine (dst, Path.GetFileName (file)));
-
-			foreach (string dir in Directory.GetDirectories (src))
-				CopyDir (dir, Path.Combine (dst, Path.GetFileName (dir)));
+		public static string StripBold (this string value)
+		{
+			return value != null ? value.Replace ("<b>", string.Empty).Replace ("</b>", string.Empty) : null;
 		}
 	}
 }

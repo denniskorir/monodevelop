@@ -29,6 +29,9 @@ using System.Text;
 using Gtk;
 using MonoDevelop.Components.AutoTest.Operations;
 using MonoDevelop.Components.AutoTest.Results;
+using System.Linq;
+using System.Xml;
+using MonoDevelop.Core;
 
 #if MAC
 using AppKit;
@@ -36,7 +39,7 @@ using AppKit;
 
 namespace MonoDevelop.Components.AutoTest
 {
-	public class AppQuery : MarshalByRefObject
+	public class AppQuery : MarshalByRefObject, IDisposable
 	{
 		AppResult rootNode;
 		List<Operation> operations = new List<Operation> ();
@@ -48,7 +51,7 @@ namespace MonoDevelop.Components.AutoTest
 			AppResult firstChild = null, lastChild = null;
 
 			foreach (var child in container.Children) {
-				AppResult node = new GtkWidgetResult (child);
+				AppResult node = new GtkWidgetResult (child) { SourceQuery = ToString () };
 				resultSet.Add (node);
 
 				// FIXME: Do we need to recreate the tree structure of the AppResults?
@@ -76,7 +79,7 @@ namespace MonoDevelop.Components.AutoTest
 			AppResult firstChild = null, lastChild = null;
 
 			foreach (var child in view.Subviews) {
-				AppResult node = new NSObjectResult (child);
+				AppResult node = new NSObjectResult (child) { SourceQuery = ToString () };
 				resultSet.Add (node);
 
 				if (firstChild == null) {
@@ -94,6 +97,22 @@ namespace MonoDevelop.Components.AutoTest
 				}
 			}
 
+			if (view is NSSegmentedControl || view.GetType ().IsSubclassOf (typeof (NSSegmentedControl))) {
+				var segmentedControl = (NSSegmentedControl)view;
+				for (int i = 0; i < segmentedControl.SegmentCount; i++) {
+					var node = new NSObjectResult (view, i);
+					resultSet.Add (node);
+					if (firstChild == null) {
+						firstChild = node;
+						lastChild = node;
+					} else {
+						lastChild.NextSibling = node;
+						node.PreviousSibling = lastChild;
+						lastChild = node;
+					}
+				}
+			}
+
 			return firstChild;
 		}
 #endif
@@ -103,13 +122,13 @@ namespace MonoDevelop.Components.AutoTest
 			Gtk.Window[] windows = Gtk.Window.ListToplevels ();
 
 			// null for AppResult signifies root node
-			rootNode = new GtkWidgetResult (null);
+			rootNode = new GtkWidgetResult (null) { SourceQuery = ToString () };
 			List<AppResult> fullResultSet = new List<AppResult> ();
 
 			// Build the tree and full result set recursively
 			AppResult lastChild = null;
 			foreach (var window in windows) {
-				AppResult node = new GtkWidgetResult (window);
+				AppResult node = new GtkWidgetResult (window) { SourceQuery = ToString () };
 				fullResultSet.Add (node);
 
 				if (rootNode.FirstChild == null) {
@@ -131,7 +150,7 @@ namespace MonoDevelop.Components.AutoTest
 			NSWindow[] nswindows = NSApplication.SharedApplication.Windows;
 			if (nswindows != null) {
 				foreach (var window in nswindows) {
-					AppResult node = new NSObjectResult (window);
+					AppResult node = new NSObjectResult (window) { SourceQuery = ToString () };
 					AppResult nsWindowLastNode = null;
 					fullResultSet.Add (node);
 
@@ -145,7 +164,7 @@ namespace MonoDevelop.Components.AutoTest
 					}
 
 					foreach (var child in window.ContentView.Subviews) {
-						AppResult childNode = new NSObjectResult (child);
+						AppResult childNode = new NSObjectResult (child) { SourceQuery = ToString () };
 						fullResultSet.Add (childNode);
 
 						if (node.FirstChild == null) {
@@ -164,7 +183,7 @@ namespace MonoDevelop.Components.AutoTest
 					}
 
 					NSToolbar toolbar = window.Toolbar;
-					AppResult toolbarNode = new NSObjectResult (toolbar);
+					AppResult toolbarNode = new NSObjectResult (toolbar) { SourceQuery = ToString () };
 
 					if (node.FirstChild == null) {
 						node.FirstChild = toolbarNode;
@@ -176,14 +195,24 @@ namespace MonoDevelop.Components.AutoTest
 					}
 
 					if (toolbar != null) {
+						AppResult lastItemNode = null;
 						foreach (var item in toolbar.Items) {
 							if (item.View != null) {
-								AppResult itemNode = new NSObjectResult (item.View);
+								AppResult itemNode = new NSObjectResult (item.View) { SourceQuery = ToString () };
 								fullResultSet.Add (itemNode);
+
+								if (toolbarNode.FirstChild == null) {
+									toolbarNode.FirstChild = itemNode;
+									lastItemNode = itemNode;
+								} else {
+									lastItemNode.NextSibling = itemNode;
+									itemNode.PreviousSibling = lastItemNode;
+									lastItemNode = itemNode;
+								}
 
 								if (item.View.Subviews != null) {
 									AppResult children = GenerateChildrenForNSView (item.View, fullResultSet);
-									toolbarNode.FirstChild = children;
+									itemNode.FirstChild = children;
 								}
 							}
 						}
@@ -206,8 +235,8 @@ namespace MonoDevelop.Components.AutoTest
 				// Some subqueries can select different results
 				resultSet = subquery.Execute (resultSet);
 
-				if (resultSet.Count == 0) {
-					break;
+				if (resultSet == null || resultSet.Count == 0) {
+					return new AppResult[0];
 				}
 			}
 
@@ -223,40 +252,50 @@ namespace MonoDevelop.Components.AutoTest
 			return this;
 		}
 
-		public AppQuery CheckType (Type desiredType)
+		public AppQuery CheckType (Type desiredType, string name = null)
 		{
-			operations.Add (new TypeOperation (desiredType));
+			operations.Add (new TypeOperation (desiredType, name));
 			return this;
 		}
 
 		public AppQuery Button ()
 		{
-			return CheckType (typeof(Button));
+			return CheckType (typeof(Gtk.Button), "Button");
 		}
 
 		public AppQuery Textfield ()
 		{
-			return CheckType (typeof(Entry));
+			return CheckType (typeof(Gtk.Entry), "Textfield");
 		}
 
 		public AppQuery CheckButton ()
 		{
-			return CheckType (typeof(CheckButton));
+			return CheckType (typeof(Gtk.CheckButton), "CheckButton");
 		}
 
 		public AppQuery RadioButton ()
 		{
-			return CheckType (typeof(RadioButton));
+			return CheckType (typeof(Gtk.RadioButton), "RadioButton");
 		}
 
 		public AppQuery TreeView ()
 		{
-			return CheckType (typeof(TreeView));
+			return CheckType (typeof(Gtk.TreeView), "TreeView");
 		}
 
 		public AppQuery Window ()
 		{
-			return CheckType (typeof(Window));
+			return CheckType (typeof(Gtk.Window), "Window");
+		}
+
+		public AppQuery TextView ()
+		{
+			return CheckType (typeof(Gtk.TextView), "TextView");
+		}
+
+		public AppQuery Notebook ()
+		{
+			return CheckType (typeof(Gtk.Notebook), "Notebook");
 		}
 
 		public AppQuery Text (string text)
@@ -268,6 +307,12 @@ namespace MonoDevelop.Components.AutoTest
 		public AppQuery Contains (string text)
 		{
 			operations.Add (new TextOperation (text, false));
+			return this;
+		}
+
+		public AppQuery Selected ()
+		{
+			operations.Add (new SelectedOperation ());
 			return this;
 		}
 
@@ -313,21 +358,23 @@ namespace MonoDevelop.Components.AutoTest
 			return this;
 		}
 
-		public AppQuery Children ()
+		public AppQuery Children (bool recursive = true)
 		{
-			operations.Add (new ChildrenOperation ());
+			operations.Add (new ChildrenOperation (recursive));
 			return this;
 		}
 
 		public override string ToString ()
 		{
-			StringBuilder builder = new StringBuilder ();
-			foreach (var subquery in operations) {
-				builder.Append (subquery.ToString ());
-			}
+			var operationChain = string.Join (".", operations.Select (x => x.ToString ()));
+			return string.Format ("c => c.{0};", operationChain);
+		}
 
-			return builder.ToString ();
-		}		
+		public void Dispose ()
+		{
+			rootNode?.Dispose ();
+			rootNode = null;
+		}
 	}
 }
 

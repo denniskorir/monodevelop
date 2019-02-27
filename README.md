@@ -1,6 +1,9 @@
 **MonoDevelop** is a full-featured integrated development environment (IDE) for mono using Gtk#.
 
-See http://www.monodevelop.com for more info.  
+The MonoDevelop core is also the foundation for Visual Studio for Mac.
+Feel free to file bugs against Visual Studio for Mac here as well.
+
+See http://www.monodevelop.com for more info.
 
 [![Build Status](http://jenkins.mono-project.com/job/test-monodevelop-mainline/badge/icon)](http://jenkins.mono-project.com/job/test-monodevelop-mainline/)
 
@@ -43,8 +46,8 @@ There are two variables you can set when running `configure`:
   * `core`: builds the MonoDevelop core only.
   * `all`: builds everything
   * `mac`: builds for Mac OS X
-  * You can also create your own profile by adding a file to the profiles
-directory containing a list of the directories to build.
+
+**PS:** You can also create your own profile by adding a file to the profiles directory containing a list of the directories to build.
 
 Disclaimer: Please be aware that the 'extras/JavaBinding' and 'extras/ValaBinding' packages do not currently work. When prompted or by manually selecting them during the './configure --select' step, make sure they stay deselected. (deselected by default)
 
@@ -53,6 +56,13 @@ Running
 
 You can run MonoDevelop from the build directory by executing:
 `make run`
+
+Debugging
+---------
+
+You can debug MonoDevelop using Visual Studio (on Windows or macOS) with the
+`main/Main.sln` solution. Use the `DebugWin32` configuration on Windows and the
+`DebugMac` configuration on macOS.
 
 Installing *(Optional)*
 ----------
@@ -70,18 +80,14 @@ Packaging for OS X
 
 To package MonoDevelop for OS X in a convenient MonoDevelop.app
 file, just do this after MonoDevelop has finished building (with
-`make`): `cd main/build/MacOSX ; make`.
+`make`): `cd main/build/MacOSX ; make app`.
 You can run MonoDevelop: `open MonoDevelop.app` or build dmg package: `./make-dmg-bundle.sh`
 
 Dependencies
 ------------
 
-	Mono >= 3.0.4
-	Gtk# >= 2.12.8
-	monodoc >= 1.0
-	mono-addins >= 0.6
-	cmake (Linux only for git support)
-	libssh2 (Linux only for git support)
+- [Windows](https://github.com/mono/md-website/blob/gh-pages/developers/building-monodevelop.md#prerequisites-and-source)
+- [Unix](http://www.monodevelop.com/developers/building-monodevelop/#linux)
 
 Special Environment Variables
 -----------------------------
@@ -91,12 +97,15 @@ Special Environment Variables
 	If this environment variable exists we assume we are compiling inside wrench.
 	We use this to enable raygun only for 'release' builds and not for normal
 	developer builds compiled on a dev machine with 'make && make run'.
-	
+
 
 Known Problems
 -----------------------------
 
+```
 "The type `GLib.IIcon' is defined in an assembly that is not referenced"
+```
+
 This happens when you accidentally installed gtk-sharp3 instead of the 2.12.x branch version.
 Make sure to 'make uninstall' or otherwise remove the gtk-sharp3 version and install the older one.
 
@@ -108,27 +117,11 @@ like the gtk-sharp3 as described before. You can delete the cache in $HOME/.conf
 References
 ----------
 
-**MonoDevelop website**
+**[MonoDevelop website](http://www.monodevelop.com)**
 
-http://www.monodevelop.com
+**[Gnome Human Interface Guidelines (HIG)](https://developer.gnome.org/hig/stable/)**
 
-**Gnome Human Interface Guidelines (HIG)**
-
-https://developer.gnome.org/hig/stable/
-
-**freedesktop.org standards**
-
-http://freedesktop.org/Standards/
-
-**Integrating with GNOME** *(a little out of date)*
-
-http://developers.sun.com/solaris/articles/integrating_gnome.html
-
-**Bugzilla**
-
-http://bugzilla.mozilla.org/bugwritinghelp.html
-
-http://bugzilla.mozilla.org/page.cgi?id=etiquette.html
+**[freedesktop.org standards](http://freedesktop.org/Standards/)**
 
 Discussion, Bugs, Patches
 -------------------------

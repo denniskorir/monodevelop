@@ -29,58 +29,33 @@
 using System;
 using System.Collections;
 using System.Collections.Generic;
+using System.Collections.ObjectModel;
 
 namespace MonoDevelop.Core.Serialization
 {
 	[Serializable]
-	public class DataCollection: IEnumerable
+	public sealed class DataCollection: Collection<DataNode>
 	{
-		List<DataNode> list = new List<DataNode> ();
-		
-		public DataCollection ()
-		{
-		}
-		
-		protected List<DataNode> List {
-			get {
-				if (list == null)
-					list = new List<DataNode> ();
-				return list;
-			}
-		}
-		
-		public int Count
-		{
-			get { return list == null ? 0 : list.Count; }
-		}
-		
-		public virtual DataNode this [int n]
-		{
-			get { return List[n]; }
-			set { List[n] = value; }
-		}
-		
-		public virtual DataNode this [string name]
+		public DataNode this [string name]
 		{
 			get {
 				DataCollection col;
-				int i = FindData (name, out col, false);
-				if (i != -1) return col.List [i];
+				int i = FindData (name, out col, false, 0);
+				if (i != -1) return col [i];
 				else return null;
 			}
 		}
 		
-		int FindData (string name, out DataCollection colec, bool buildTree)
+		internal int FindData (string name, out DataCollection colec, bool buildTree, int skipCount)
 		{
-			if (list == null) {
-				colec = null;
-				return -1;
-			}
-			
 			if (name.IndexOf ('/') == -1) {
-				for (int n=0; n<list.Count; n++) {
-					DataNode data = list [n];
+				for (int n=0; n<Items.Count; n++) {
+					DataNode data = Items [n];
 					if (data.Name == name) {
+						if (skipCount > 0) {
+							skipCount--;
+							continue;
+						}
 						colec = this;
 						return n;
 					}
@@ -111,8 +86,8 @@ namespace MonoDevelop.Core.Serialization
 					}
 					
 					pos = -1;
-					for (int n=0; n<colec.List.Count; n++) {
-						data = colec.List [n];
+					for (int n=0; n<colec.Count; n++) {
+						data = colec [n];
 						if (data.Name == names [p]) {
 							pos = n; break;
 						}
@@ -122,71 +97,26 @@ namespace MonoDevelop.Core.Serialization
 			}
 		}
 		
-		public virtual IEnumerator GetEnumerator ()
-		{
-			return list == null ? Type.EmptyTypes.GetEnumerator() : list.GetEnumerator ();
-		}
-		
-		public void AddRange (DataCollection col)
-		{
-			foreach (DataNode node in col)
-				Add (node);
-		}
-		
-		public virtual void Add (DataNode entry)
-		{
-			if (entry == null)
-				throw new ArgumentNullException ("entry");
-				
-			List.Add (entry);
-		}
-		
-		public virtual void Insert (int index, DataNode entry)
-		{
-			if (entry == null)
-				throw new ArgumentNullException ("entry");
-
-			List.Insert (index, entry);
-		}
-		
-		public virtual void Add (DataNode entry, string itemPath)
+		public void Add (DataNode entry, string itemPath)
 		{
 			if (entry == null)
 				throw new ArgumentNullException ("entry");
 				
 			DataCollection col;
-			FindData (itemPath + "/", out col, true);
-			col.List.Add (entry);
-		}
-		
-		public virtual void Remove (DataNode entry)
-		{
-			if (list != null)
-				list.Remove (entry);
+			FindData (itemPath + "/", out col, true, 0);
+			Add (entry);
 		}
 		
 		public DataNode Extract (string name)
 		{
 			DataCollection col;
-			int i = FindData (name, out col, false);
+			int i = FindData (name, out col, false, 0);
 			if (i != -1) {
-				DataNode data = col.List [i];
-				col.list.RemoveAt (i);
+				DataNode data = col [i];
+				col.RemoveAt (i);
 				return data;
 			}
 			return null;
-		}
-		
-		public int IndexOf (DataNode entry)
-		{
-			if (list == null) return -1;
-			return list.IndexOf (entry);
-		}
-		
-		public virtual void Clear ()
-		{
-			if (list != null)
-				list.Clear ();
 		}
 		
 		public void Merge (DataCollection col)
@@ -203,19 +133,6 @@ namespace MonoDevelop.Core.Serialization
 			}
 			foreach (DataNode node in toAdd)
 				Add (node);
-		}
-		
-		// Sorts the list using the specified key order
-		public void Sort (Dictionary<string,int> nameToPosition)
-		{
-			list.Sort (delegate (DataNode x, DataNode y) {
-				int p1, p2;
-				if (!nameToPosition.TryGetValue (x.Name, out p1))
-					p1 = int.MaxValue;
-				if (!nameToPosition.TryGetValue (y.Name, out p2))
-					p2 = int.MaxValue;
-				return p1.CompareTo (p2);
-			});
 		}
 	}
 }

@@ -31,15 +31,15 @@ using MonoDevelop.Projects.Text;
 
 namespace MonoDevelop.VersionControl
 {
-	public class DefaultMergeViewHandler : IMergeViewHandler
+	public class DefaultMergeViewHandler : IVersionControlViewHandler
 	{
 		public bool CanHandle (VersionControlItem item, DocumentView primaryView)
 		{
 			return (primaryView == null || primaryView.GetContent <ITextFile> () != null)
-				&& DesktopService.GetFileIsText (item.Path);
+				&& item.Repository.GetFileIsText (item.Path);
 		}
 
-		public IMergeView CreateView (VersionControlDocumentInfo info)
+		public BaseViewContent CreateView (VersionControlDocumentInfo info)
 		{
 			return new MergeView (info);
 		}

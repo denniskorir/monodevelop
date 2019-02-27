@@ -6,6 +6,7 @@ using MonoDevelop.Core;
 using Gtk;
 using MonoDevelop.Ide;
 using MonoDevelop.Components;
+using System.Collections.Generic;
 
 namespace MonoDevelop.VersionControl.Dialogs
 {
@@ -18,13 +19,14 @@ namespace MonoDevelop.VersionControl.Dialogs
 	internal partial class SelectRepositoryDialog : Gtk.Dialog
 	{
 		Repository repo;
-		ArrayList systems = new ArrayList ();
+		List<VersionControlSystem> systems = new List<VersionControlSystem> ();
 		Gtk.TreeStore store;
 		SelectRepositoryMode mode;
-		ArrayList loadingRepos = new ArrayList ();
+		List<Repository> loadingRepos = new List<Repository> ();
 		IRepositoryEditor currentEditor;
 		string defaultPath;
-		
+		public readonly ConfigurationProperty<string> VersionControlDefaultPath = ConfigurationProperty.Create ("MonoDevelop.VersionControl.Dialogs.SelectRepositoryDialog.DefaultPath", System.IO.Path.Combine (Environment.GetFolderPath (Environment.SpecialFolder.Personal), "Projects"));
+
 		const int RepositoryCol = 0;
 		const int RepoNameCol = 1;
 		const int VcsName = 2;
@@ -58,14 +60,16 @@ namespace MonoDevelop.VersionControl.Dialogs
 			repoTree.AppendColumn (GettextCatalog.GetString ("Type"), new CellRendererText (), "text", VcsName);
 			repoTree.TestExpandRow += new Gtk.TestExpandRowHandler (OnTestExpandRow);
 			LoadRepositories ();
-			
+
 			if (mode == SelectRepositoryMode.Checkout) {
 				labelName.Visible = false;
 				entryName.Visible = false;
 				boxMessage.Visible = false;
 				labelMessage.Visible = false;
-				defaultPath = PropertyService.Get ("MonoDevelop.Core.Gui.Dialogs.NewProjectDialog.DefaultPath", Environment.GetFolderPath (Environment.SpecialFolder.Personal));
+				defaultPath = VersionControlDefaultPath;
 				entryFolder.Text = defaultPath;
+				buttonOk.Label = GettextCatalog.GetString ("_Checkout");
+				UpdateCheckoutButton ();
 			} else {
 				labelTargetDir.Visible = false;
 				boxFolder.Visible = false;
@@ -108,6 +112,16 @@ namespace MonoDevelop.VersionControl.Dialogs
 			}
 		}
 
+		protected override void OnDestroyed ()
+		{
+			UrlBasedRepositoryEditor edit = currentEditor as UrlBasedRepositoryEditor;
+			if (edit != null) {
+				edit.UrlChanged -= OnEditUrlChanged;
+				edit.PathChanged -= OnPathChanged;
+			}
+			base.OnDestroyed ();
+		}
+
 		protected virtual void OnRepComboChanged(object sender, System.EventArgs e)
 		{
 			if (repoContainer.Child != null)
@@ -116,17 +130,25 @@ namespace MonoDevelop.VersionControl.Dialogs
 			if (repCombo.Active == -1)
 				return;
 
-			VersionControlSystem vcs = (VersionControlSystem) systems [repCombo.Active];
+			VersionControlSystem vcs = systems [repCombo.Active];
 			repo = vcs.CreateRepositoryInstance ();
 			currentEditor = vcs.CreateRepositoryEditor (repo);
 			repoContainer.Add (currentEditor.Widget);
-			currentEditor.Widget.Show ();
+			currentEditor.Show ();
 			UrlBasedRepositoryEditor edit = currentEditor as UrlBasedRepositoryEditor;
-			if (edit != null)
+			if (edit != null) {
+				edit.UrlChanged += OnEditUrlChanged;
 				edit.PathChanged += OnPathChanged;
+			}
 			UpdateRepoDescription ();
 		}
-		
+
+		protected virtual void OnRepositoryServerEntryChanged (object sender, System.EventArgs e)
+		{
+			if (mode == SelectRepositoryMode.Checkout)
+				buttonOk.Sensitive = entryFolder.Text.Length > 0;
+		}
+			
 		public void LoadRepositories ()
 		{
 			store.Clear ();
@@ -166,6 +188,7 @@ namespace MonoDevelop.VersionControl.Dialogs
 				}
 			} finally {
 				dlg.Destroy ();
+				dlg.Dispose ();
 			}
 		}
 
@@ -215,6 +238,7 @@ namespace MonoDevelop.VersionControl.Dialogs
 					UpdateRepoDescription ();
 				} finally {
 					dlg.Destroy ();
+					dlg.Dispose ();
 				}
 			}
 		}
@@ -274,10 +298,9 @@ namespace MonoDevelop.VersionControl.Dialogs
 				ex = e;
 			}
 				
-			Gtk.Application.Invoke (delegate {
+			Gtk.Application.Invoke ((o, args) => {
 				if (ex != null) {
-					store.AppendValues (piter, null, "ERROR: " + ex.Message, "", true);
-					LoggingService.LogError (ex.ToString ());
+					LoggingService.LogError ("Failed to load connected repositories.", ex.ToString ());
 				}
 				else {
 					foreach (Repository rep in repos)
@@ -319,6 +342,7 @@ namespace MonoDevelop.VersionControl.Dialogs
 			var dlg = new MonoDevelop.Components.SelectFolderDialog (GettextCatalog.GetString ("Select target directory"));
 			if (dlg.Run ()) {
 				defaultPath = dlg.SelectedFile;
+				VersionControlDefaultPath.Value = defaultPath;
 				AppendRelativePath ();
 			}
 		}
@@ -341,6 +365,21 @@ namespace MonoDevelop.VersionControl.Dialogs
 					return;
 			}
 			Respond (ResponseType.Ok);
+		}
+
+		protected virtual void OnEditUrlChanged (object sender, EventArgs e)
+		{
+			if (mode == SelectRepositoryMode.Checkout) {
+				UpdateCheckoutButton ();
+			}
+		}
+
+		void UpdateCheckoutButton()
+		{
+			UrlBasedRepositoryEditor edit = currentEditor as UrlBasedRepositoryEditor;
+			if (edit == null)
+				return;
+			buttonOk.Sensitive = !string.IsNullOrWhiteSpace (edit.RepositoryServer);
 		}
 
 		protected virtual void OnPathChanged (object sender, EventArgs e)

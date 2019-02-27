@@ -27,23 +27,24 @@
 //
 
 using System;
+using System.Collections.Generic;
 using System.Linq;
+using System.Net;
+using System.Net.Security;
+using System.Reflection;
 using System.Runtime.InteropServices;
+using System.Security.Cryptography.X509Certificates;
 using System.Text;
 using System.Threading;
+using System.Threading.Tasks;
+
 using Mono.Addins;
 using Mono.Addins.Setup;
-using MonoDevelop.Core;
 using MonoDevelop.Core.Assemblies;
 using MonoDevelop.Core.Execution;
 using MonoDevelop.Core.Instrumentation;
 using MonoDevelop.Core.Setup;
-using System.Security.Cryptography.X509Certificates;
-using System.Net.Security;
-using System.Net;
 using MonoDevelop.Core.Web;
-using System.Collections.Generic;
-
 
 namespace MonoDevelop.Core
 {
@@ -55,6 +56,9 @@ namespace MonoDevelop.Core
 		static ApplicationService applicationService;
 		static bool initialized;
 		static SynchronizationContext mainSynchronizationContext;
+		static SynchronizationContext defaultSynchronizationContext;
+		static RuntimePreferences preferences = new RuntimePreferences ();
+		static Thread mainThread;
 
 		public static void GetAddinRegistryLocation (out string configDir, out string addinsDir, out string databaseDir)
 		{
@@ -81,10 +85,16 @@ namespace MonoDevelop.Core
 			SetupInstrumentation ();
 
 			Platform.Initialize ();
-			
+
+			mainThread = mainThread ?? Thread.CurrentThread;
+
 			// Set a default sync context
-			if (SynchronizationContext.Current == null)
-				SynchronizationContext.SetSynchronizationContext (new SynchronizationContext ());
+			if (SynchronizationContext.Current == null) {
+				defaultSynchronizationContext = new SynchronizationContext ();
+				SynchronizationContext.SetSynchronizationContext (defaultSynchronizationContext);
+			} else
+				defaultSynchronizationContext = SynchronizationContext.Current;
+
 
 			// Hook up the SSL certificate validation codepath
 			ServicePointManager.ServerCertificateValidationCallback += delegate(object sender, X509Certificate certificate, X509Chain chain, SslPolicyErrors sslPolicyErrors) {
@@ -99,6 +109,7 @@ namespace MonoDevelop.Core
 			AddinManager.AddinLoadError += OnLoadError;
 			AddinManager.AddinLoaded += OnLoad;
 			AddinManager.AddinUnloaded += OnUnload;
+			AddinManager.AddinAssembliesLoaded += OnAssembliesLoaded;
 
 			try {
 				Counters.RuntimeInitialization.Trace ("Initializing Addin Manager");
@@ -116,8 +127,9 @@ namespace MonoDevelop.Core
 				PropertyService.Initialize ();
 
 				WebRequestHelper.Initialize ();
-				Mono.Addins.Setup.WebRequestHelper.SetRequestHandler (WebRequestHelper.GetResponse);
-				
+				Web.HttpClientProvider.Initialize ();
+				Mono.Addins.Setup.HttpClientProvider.SetHttpClientFactory (Web.HttpClientProvider.CreateHttpClient);
+
 				//have to do this after the addin service and property service have initialized
 				if (UserDataMigrationService.HasSource) {
 					Counters.RuntimeInitialization.Trace ("Migrating User Data from MD " + UserDataMigrationService.SourceVersion);
@@ -129,6 +141,7 @@ namespace MonoDevelop.Core
 				Counters.RuntimeInitialization.Trace ("Initializing Assembly Service");
 				systemAssemblyService = new SystemAssemblyService ();
 				systemAssemblyService.Initialize ();
+				LoadMSBuildLibraries ();
 				
 				initialized = true;
 				
@@ -153,7 +166,7 @@ namespace MonoDevelop.Core
 			foreach (AddinRepository rep in reps.GetRepositories ()) {
 				if (rep.Url.StartsWith ("http://go-mono.com/md/") || 
 					(rep.Url.StartsWith ("http://monodevelop.com/files/addins/")) ||
-					(rep.Url.StartsWith ("http://addins.monodevelop.com/") && !validUrls.Contains (rep.Url)))
+				    ((rep.Url.StartsWith ("http://addins.monodevelop.com/") || rep.Url.StartsWith ("https://addins.monodevelop.com/")) && !validUrls.Contains (rep.Url)))
 					reps.RemoveRepository (rep.Url);
 			}
 			
@@ -178,12 +191,12 @@ namespace MonoDevelop.Core
 			else
 				platform = "Linux";
 			
-			return "http://addins.monodevelop.com/" + quality + "/" + platform + "/" + AddinManager.CurrentAddin.Version + "/main.mrep";
+			return "https://addins.monodevelop.com/" + quality + "/" + platform + "/" + AddinManager.CurrentAddin.Version + "/main.mrep";
 		}
 		
 		static void SetupInstrumentation ()
 		{
-			InstrumentationService.Enabled = PropertyService.Get ("MonoDevelop.EnableInstrumentation", false);
+			InstrumentationService.Enabled = Runtime.Preferences.EnableInstrumentation;
 			if (InstrumentationService.Enabled) {
 				LoggingService.LogInfo ("Instrumentation Service started");
 				try {
@@ -193,9 +206,7 @@ namespace MonoDevelop.Core
 					LoggingService.LogError ("Instrumentation service could not be published", ex);
 				}
 			}
-			PropertyService.AddPropertyHandler ("MonoDevelop.EnableInstrumentation", delegate {
-				InstrumentationService.Enabled = PropertyService.Get ("MonoDevelop.EnableInstrumentation", false);
-			});
+			Runtime.Preferences.EnableInstrumentation.Changed += (s,e) => InstrumentationService.Enabled = Runtime.Preferences.EnableInstrumentation;
 		}
 		
 		static void OnLoadError (object s, AddinErrorEventArgs args)
@@ -203,18 +214,31 @@ namespace MonoDevelop.Core
 			string msg = "Add-in error (" + args.AddinId + "): " + args.Message;
 			LoggingService.LogError (msg, args.Exception);
 		}
-		
+
 		static void OnLoad (object s, AddinEventArgs args)
 		{
-			Counters.AddinsLoaded.Inc ("Add-in loaded: " + args.AddinId, new Dictionary<string,string> { { "AddinId", args.AddinId } });
+			Counters.AddinsLoaded.Inc (1, "Add-in loaded: " + args.AddinId, new Dictionary<string, object> {
+				{ "AddinId", args.AddinId },
+				{ "LoadTrace", Environment.StackTrace },
+			});
+#if DEBUG
+			LoggingService.LogDebug ("Add-in loaded: {0}: {1}", args.AddinId, Environment.StackTrace);
+#endif
 		}
 		
 		static void OnUnload (object s, AddinEventArgs args)
 		{
 			Counters.AddinsLoaded.Dec ("Add-in unloaded: " + args.AddinId);
 		}
+
+		static void OnAssembliesLoaded (object s, AddinEventArgs args)
+		{
+#if DEBUG
+			LoggingService.LogDebug ("Add-in assemblies loaded: {0}: {1}", args.AddinId, Environment.StackTrace);
+#endif
+		}
 		
-		internal static bool Initialized {
+		public static bool Initialized {
 			get { return initialized; }
 		}
 		
@@ -262,33 +286,177 @@ namespace MonoDevelop.Core
 				return applicationService;
 			}
 		}
+
+		public static RuntimePreferences Preferences {
+			get { return preferences; }
+		}
 		
 		static Version version;
 
 		public static Version Version {
 			get {
-				if (version == null) {
-					version = new Version (BuildInfo.Version);
-					var relId = SystemInformation.GetReleaseId ();
-					if (relId != null && relId.Length >= 9) {
-						int rev;
-						int.TryParse (relId.Substring (relId.Length - 4), out rev);
-						version = new Version (Math.Max (version.Major, 0), Math.Max (version.Minor, 0), Math.Max (version.Build, 0), Math.Max (rev, 0));
-					}
-				}
+				if (version == null)
+					version = new Version (BuildInfo.FullVersion);
 				return version;
 			}
 		}
 
 		public static SynchronizationContext MainSynchronizationContext {
 			get {
-				return mainSynchronizationContext ?? SynchronizationContext.Current;
+				return mainSynchronizationContext ?? defaultSynchronizationContext;
 			}
 			set {
 				if (mainSynchronizationContext != null && value != null)
-					throw new InvalidOperationException ("The main synchronization context has already been set");
+					LoggingService.LogWarning ($"The main synchronization context is being changed from {mainSynchronizationContext} to {value}");
+
+				mainThread = Thread.CurrentThread;
 				mainSynchronizationContext = value;
+				taskScheduler = new SynchronizationContextTaskScheduler (value);
 			}
+		}
+
+		static TaskScheduler taskScheduler;
+		public static TaskScheduler MainTaskScheduler => taskScheduler;
+
+		/// <summary>
+		/// Runs an action in the main thread (usually the UI thread). The method returns a task, so it can be awaited.
+		/// </summary>
+		public static Task RunInMainThread (Action action)
+		{
+			var ts = new TaskCompletionSource<int> ();
+			if (IsMainThread) {
+				try {
+					action ();
+					ts.SetResult (0);
+				} catch (Exception ex) {
+					ts.SetException (ex);
+				}
+			} else {
+				MainSynchronizationContext.Post (state => {
+					var (act, tcs) = (ValueTuple<Action, TaskCompletionSource<int>>)state;
+					try {
+						act ();
+						tcs.SetResult (0);
+					} catch (Exception ex) {
+						tcs.SetException (ex);
+					}
+				}, (action, ts));
+			}
+			return ts.Task;
+		}
+
+		/// <summary>
+		/// Runs a function in the main thread (usually the UI thread). The method returns a task, so it can be awaited.
+		/// </summary>
+		public static Task<T> RunInMainThread<T> (Func<T> func)
+		{
+			var ts = new TaskCompletionSource<T> ();
+			if (IsMainThread) {
+				try {
+					ts.SetResult (func ());
+				} catch (Exception ex) {
+					ts.SetException (ex);
+				}
+			} else {
+				MainSynchronizationContext.Post (state => {
+					var (fun, tcs) = (ValueTuple<Func<T>, TaskCompletionSource<T>>)state;
+					try {
+						tcs.SetResult (fun ());
+					} catch (Exception ex) {
+						tcs.SetException (ex);
+					}
+				}, (func, ts));
+			}
+			return ts.Task;
+		}
+
+		/// <summary>
+		/// Runs an action in the main thread (usually the UI thread). The method returns a task, so it can be awaited.
+		/// </summary>
+		/// <remarks>This version of the method is useful when the operation to be executed in the main
+		/// thread is asynchronous.</remarks>
+		public static Task<T> RunInMainThread<T> (Func<Task<T>> func)
+		{
+			if (IsMainThread) {
+				return func ();
+			} else {
+				var ts = new TaskCompletionSource<T> ();
+				MainSynchronizationContext.Post (async state => {
+					var (fun, tcs) = (ValueTuple<Func<Task<T>>, TaskCompletionSource<T>>)state;
+					try {
+						tcs.SetResult (await fun ());
+					} catch (Exception ex) {
+						tcs.SetException (ex);
+					}
+				}, (func, ts));
+				return ts.Task;
+			}
+		}
+
+		/// <summary>
+		/// Runs an action in the main thread (usually the UI thread). The method returns a task, so it can be awaited.
+		/// </summary>
+		/// <remarks>This version of the method is useful when the operation to be executed in the main
+		/// thread is asynchronous.</remarks>
+		public static Task RunInMainThread (Func<Task> func)
+		{
+			if (IsMainThread) {
+				return func ();
+			} else {
+				var ts = new TaskCompletionSource<int> ();
+				MainSynchronizationContext.Post (async state => {
+					var (fun, tcs) = (ValueTuple<Func<Task>, TaskCompletionSource<int>>)state;
+					try {
+						await fun ();
+						tcs.SetResult (0);
+					} catch (Exception ex) {
+						tcs.SetException (ex);
+					}
+				}, (func, ts));
+				return ts.Task;
+			}
+		}
+
+		/// <summary>
+		/// The main UI thread of the application. Needed to initialize the JoinableTaskContext.
+		/// </summary>
+		public static Thread MainThread => mainThread;
+
+		/// <summary>
+		/// Returns true if current thread is GUI thread.
+		/// </summary>
+		public static bool IsMainThread
+		{
+			// TODO: This logic should probably change to:
+			// Compare types, because instances can change (using SynchronizationContext.CreateCopy).
+			// if (SynchronizationContext.Current.GetType () != MainSynchronizationContext.GetType ())
+			// once https://bugzilla.xamarin.com/show_bug.cgi?id=35530 is resolved
+			get { return mainThread == Thread.CurrentThread; }
+		}
+
+		/// <summary>
+		/// Asserts that the current thread is the main thread. It will throw an exception if it isn't.
+		/// </summary>
+		public static void AssertMainThread ()
+		{
+			if (!IsMainThread)
+				throw new InvalidOperationException ("Operation not supported in background thread");
+		}
+
+		/// <summary>
+		/// Asserts that the current thread is the main thread. It will log a warning if it isn't.
+		/// </summary>
+		public static void CheckMainThread ()
+		{
+			if (IsMainThread) {
+				return;
+			}
+
+			if (System.Diagnostics.Debugger.IsAttached) {
+				System.Diagnostics.Debugger.Break ();
+			}
+
+			LoggingService.LogWarning ("Operation not supported in background thread. Location: " + Environment.StackTrace);
 		}
 
 		public static void SetProcessName (string name)
@@ -324,6 +492,51 @@ namespace MonoDevelop.Core
 		}
 		
 		public static event EventHandler ShuttingDown;
+
+		static void LoadMSBuildLibraries ()
+		{
+			// Explicitly load the msbuild libraries since they are not installed in the GAC
+			var path = systemAssemblyService.CurrentRuntime.GetMSBuildBinPath ("15.0");
+			LoadAssemblyFrom (System.IO.Path.Combine (path, "Microsoft.Build.dll"));
+			LoadAssemblyFrom (System.IO.Path.Combine (path, "Microsoft.Build.Framework.dll"));
+			LoadAssemblyFrom (System.IO.Path.Combine (path, "Microsoft.Build.Tasks.Core.dll"));
+			LoadAssemblyFrom (System.IO.Path.Combine (path, "Microsoft.Build.Utilities.Core.dll"));
+
+			if (Type.GetType ("Mono.Runtime") == null) {
+				AppDomain.CurrentDomain.AssemblyResolve += CurrentDomain_AssemblyResolve;
+			}
+		}
+
+		/// <summary>
+		/// This is necessary on Windows because without it, even though the assemblies are already loaded
+		/// the CLR will still throw FileNotFoundException (unable to load assembly).
+		/// </summary>
+		static System.Reflection.Assembly CurrentDomain_AssemblyResolve (object sender, ResolveEventArgs args)
+		{
+			if (args.Name != null && args.Name.StartsWith ("Microsoft.Build", StringComparison.OrdinalIgnoreCase)) {
+				foreach (var assembly in AppDomain.CurrentDomain.GetAssemblies ()) {
+					if (string.Equals (assembly.FullName, args.Name, StringComparison.OrdinalIgnoreCase)) {
+						return assembly;
+					}
+				}
+			}
+
+			return null;
+		}
+
+		public static Assembly LoadAssemblyFrom (string asmPath)
+		{
+			if (Environment.OSVersion.Platform == PlatformID.Win32NT) {
+				// MEF composition under Win32 requires that all assemblies be loaded in the
+				// Assembly.Load() context so use Assembly.Load() after getting the AssemblyName
+				// (which, on Win32, also contains the full path information so Assembly.Load()
+				// will work).
+				var asmName = AssemblyName.GetAssemblyName (asmPath);
+				return Assembly.Load (asmName);
+			}
+
+			return Assembly.LoadFrom (asmPath);
+		}
 	}
 	
 	internal static class Counters
@@ -347,11 +560,39 @@ namespace MonoDevelop.Core
 		public static Counter DirectoriesRemoved = InstrumentationService.CreateCounter ("Directories removed", "File Service");
 		public static Counter DirectoriesCreated = InstrumentationService.CreateCounter ("Directories created", "File Service");
 		public static Counter DirectoriesRenamed = InstrumentationService.CreateCounter ("Directories renamed", "File Service");
-		
+
 		public static Counter LogErrors = InstrumentationService.CreateCounter ("Errors", "Log");
 		public static Counter LogWarnings = InstrumentationService.CreateCounter ("Warnings", "Log");
 		public static Counter LogMessages = InstrumentationService.CreateCounter ("Information messages", "Log");
 		public static Counter LogFatalErrors = InstrumentationService.CreateCounter ("Fatal errors", "Log");
 		public static Counter LogDebug = InstrumentationService.CreateCounter ("Debug messages", "Log");
+	}
+
+	public class RuntimePreferences
+	{
+		internal RuntimePreferences () { }
+
+		public readonly ConfigurationProperty<bool> EnableInstrumentation = ConfigurationProperty.Create ("MonoDevelop.EnableInstrumentation", false);
+		public readonly ConfigurationProperty<bool> EnableAutomatedTesting = ConfigurationProperty.Create ("MonoDevelop.EnableAutomatedTesting", false);
+		public readonly ConfigurationProperty<string> UserInterfaceLanguage = ConfigurationProperty.Create ("MonoDevelop.Ide.UserInterfaceLanguage", "");
+		public readonly ConfigurationProperty<MonoDevelop.Projects.MSBuild.MSBuildVerbosity> MSBuildVerbosity = ConfigurationProperty.Create ("MonoDevelop.Ide.MSBuildVerbosity", MonoDevelop.Projects.MSBuild.MSBuildVerbosity.Normal);
+
+		[Obsolete]
+		public readonly ConfigurationProperty<bool> BuildWithMSBuild = ConfigurationProperty.CreateObsolete (true);
+
+		public readonly ConfigurationProperty<bool> SkipBuildingUnmodifiedProjects = ConfigurationProperty.Create ("MonoDevelop.Ide.SkipBuildingUnmodifiedProjects", true);
+		public readonly ConfigurationProperty<bool> ParallelBuild = ConfigurationProperty.Create ("MonoDevelop.ParallelBuild", true);
+
+		public readonly ConfigurationProperty<string> AuthorName = ConfigurationProperty.Create ("Author.Name", Environment.UserName, oldName:"ChangeLogAddIn.Name");
+		public readonly ConfigurationProperty<string> AuthorEmail = ConfigurationProperty.Create ("Author.Email", "", oldName:"ChangeLogAddIn.Email");
+		public readonly ConfigurationProperty<string> AuthorCopyright = ConfigurationProperty.Create ("Author.Copyright", (string) null);
+		public readonly ConfigurationProperty<string> AuthorCompany = ConfigurationProperty.Create ("Author.Company", "");
+		public readonly ConfigurationProperty<string> AuthorTrademark = ConfigurationProperty.Create ("Author.Trademark", "");
+
+		/// <summary>
+		/// Gets or sets a value indicating whether the updater should be enabled for the current session.
+		/// This value won't be stored in the user preferences.
+		/// </summary>
+		public bool EnableUpdaterForCurrentSession { get; set; } = true;
 	}
 }

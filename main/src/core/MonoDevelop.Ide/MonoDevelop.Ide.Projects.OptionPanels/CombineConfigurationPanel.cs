@@ -41,7 +41,7 @@ namespace MonoDevelop.Ide.Projects.OptionPanels
 	{
 		CombineConfigurationPanelWidget widget;
 		
-		public override Widget CreatePanelWidget()
+		public override Control CreatePanelWidget()
 		{
 			return widget = new CombineConfigurationPanelWidget ((MultiConfigItemOptionsDialog) ParentDialog, ConfiguredSolution);
 		}
@@ -75,8 +75,9 @@ namespace MonoDevelop.Ide.Projects.OptionPanels
 			this.parentDialog = parentDialog;
 			this.solution = solution;
 
-			store = new ListStore (typeof(string), typeof(bool), typeof(SolutionEntityItem));
+			store = new ListStore (typeof(string), typeof(bool), typeof(SolutionItem));
 			configsList.Model = store;
+			configsList.SearchColumn = -1; // disable the interactive search
 			configsList.HeadersVisible = true;
 			
 			TreeViewColumn col = new TreeViewColumn ();
@@ -104,7 +105,7 @@ namespace MonoDevelop.Ide.Projects.OptionPanels
 			configuration = config;
 
 			store.Clear ();
-			foreach (var it in solution.GetAllSolutionItems ().OfType<SolutionEntityItem> ().Where (s => s.SupportsBuild ())) {
+			foreach (var it in solution.GetAllSolutionItems ().OfType<SolutionItem> ().Where (s => s.SupportsBuild ())) {
 				var ce = config.GetEntryForItem (it);
 				store.AppendValues (it.Name, ce != null && ce.Build, it);
 			}
@@ -112,7 +113,7 @@ namespace MonoDevelop.Ide.Projects.OptionPanels
 		
 		void OnSetConfigurationsData (Gtk.TreeViewColumn treeColumn, Gtk.CellRenderer cell, Gtk.TreeModel model, Gtk.TreeIter iter)
 		{
-			var item = (SolutionEntityItem) store.GetValue (iter, ProjectCol);
+			var item = (SolutionItem) store.GetValue (iter, ProjectCol);
 			ConfigurationData data = parentDialog.ConfigurationData.FindConfigurationData (item);
 			
 			CellRendererComboBox comboCell = (CellRendererComboBox) cell;
@@ -126,7 +127,7 @@ namespace MonoDevelop.Ide.Projects.OptionPanels
 				comboCell.Markup = escaped;
 		}
 
-		string GetSelectedConfiguration (SolutionEntityItem item)
+		string GetSelectedConfiguration (SolutionItem item)
 		{
 			var entry = configuration.GetEntryForItem (item);
 			return entry != null ? entry.ItemConfiguration : (item.DefaultConfiguration != null ? item.DefaultConfiguration.Id : "");
@@ -136,7 +137,7 @@ namespace MonoDevelop.Ide.Projects.OptionPanels
 		{
 			TreeIter iter;
 			if (store.GetIter (out iter, new TreePath (args.Path))) {
-				var item = (SolutionEntityItem) store.GetValue (iter, ProjectCol);
+				var item = (SolutionItem) store.GetValue (iter, ProjectCol);
 				var entry = configuration.GetEntryForItem (item);
 				if (entry == null) {
 					entry = CreateDefaultMapping (item);
@@ -147,7 +148,7 @@ namespace MonoDevelop.Ide.Projects.OptionPanels
 			}
 		}
 
-		SolutionConfigurationEntry CreateDefaultMapping (SolutionEntityItem item)
+		SolutionConfigurationEntry CreateDefaultMapping (SolutionItem item)
 		{
 			var conf = GetSelectedConfiguration (item);
 			var entry = configuration.AddItem (item);
@@ -159,7 +160,7 @@ namespace MonoDevelop.Ide.Projects.OptionPanels
 		{
 			TreeIter iter;
 			if (store.GetIter (out iter, new TreePath (args.Path))) {
-				var item = (SolutionEntityItem) store.GetValue (iter, ProjectCol);
+				var item = (SolutionItem) store.GetValue (iter, ProjectCol);
 				var entry = configuration.GetEntryForItem (item);
 				if (entry == null) {
 					entry = CreateDefaultMapping (item);

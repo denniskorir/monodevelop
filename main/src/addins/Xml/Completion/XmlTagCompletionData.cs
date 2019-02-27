@@ -31,12 +31,13 @@ using System;
 using MonoDevelop.Ide.CodeCompletion;
 using MonoDevelop.Ide.Gui.Content;
 using MonoDevelop.Core;
+using MonoDevelop.Ide.Editor.Extension;
 
 namespace MonoDevelop.Xml.Completion
 {
 	
 	
-	public class XmlTagCompletionData : CompletionData
+	public class XmlTagCompletionData : BaseXmlCompletionData
 	{
 		string element;
 		int cursorOffset;
@@ -53,7 +54,14 @@ namespace MonoDevelop.Xml.Completion
 			this.element = element;
 			this.closing = closing;
 		}
-		
+
+		public override bool IsCommitCharacter (char keyChar, string partialWord)
+		{
+			if (closing && keyChar == '.')
+				return false;
+			return base.IsCommitCharacter (keyChar, partialWord);
+		}
+
 		public override IconId Icon {
 			get { return closing? Gtk.Stock.GoBack : Gtk.Stock.GoForward; }
 		}
@@ -64,23 +72,6 @@ namespace MonoDevelop.Xml.Completion
 		
 		public override string CompletionText {
 			get { return element; }
-		}
-		
-		public override void InsertCompletionText (CompletionListWindow window, ref KeyActions ka, Gdk.Key closeChar, char keyChar, Gdk.ModifierType modifier)
-		{
-			IEditableTextBuffer buf = window.CompletionWidget as IEditableTextBuffer;
-			if (buf != null) {
-				//completion context gets nulled from window as soon as we alter the buffer
-				var codeCompletionContext = window.CodeCompletionContext;
-
-				using (var undo = buf.OpenUndoGroup ()) {
-					buf.InsertText (buf.CursorPosition, element);
-					
-					// Move caret into the middle of the tags
-					buf.CursorPosition = codeCompletionContext.TriggerOffset + cursorOffset;
-					buf.Select (buf.CursorPosition, buf.CursorPosition);
-				}
-			}
 		}
 	}
 }

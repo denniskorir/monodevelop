@@ -32,14 +32,15 @@ using MonoDevelop.Core;
 using MonoDevelop.Ide;
 using MonoDevelop.Ide.CustomTools;
 using MonoDevelop.Projects;
+using System.Threading.Tasks;
 
 namespace MonoDevelop.TextTemplating
 {
 	public class TextTemplatingFilePreprocessor : ISingleFileCustomTool
 	{
-		public IAsyncOperation Generate (IProgressMonitor monitor, ProjectFile file, SingleFileCustomToolResult result)
+		public Task Generate (ProgressMonitor monitor, ProjectFile file, SingleFileCustomToolResult result)
 		{
-			return new ThreadAsyncOperation (delegate {
+			return Task.Run (delegate {
 				using (var host = new ProjectFileTemplatingHost (file, IdeApp.Workspace.ActiveConfiguration)) {
 
 					string outputFile;
@@ -51,7 +52,7 @@ namespace MonoDevelop.TextTemplating
 					foreach (var err in host.Errors)
 						monitor.Log.WriteLine (err);
 				}
-			}, result);
+			});
 		}
 
 		static void Generate (TemplateGenerator host, ProjectFile file, out string outputFile)
@@ -64,7 +65,7 @@ namespace MonoDevelop.TextTemplating
 			}
 			catch (IOException ex) {
 				host.Errors.Add (new CompilerError {
-					ErrorText = "Could not read input file '" + file.FilePath + "':\n" + ex
+					ErrorText = GettextCatalog.GetString ("Could not read input file '{0}':\n{1}", file.FilePath, ex)
 				});
 				return;
 			}
@@ -100,10 +101,9 @@ namespace MonoDevelop.TextTemplating
 			}
 			catch (IOException ex) {
 				host.Errors.Add (new CompilerError {
-					ErrorText = "Could not write output file '" + outputFile + "':\n" + ex
+					ErrorText = GettextCatalog.GetString ("Could not write output file '{0}':\n{1}", outputFile, ex)
 				});
 			}
 		}
 	}
 }
-

@@ -28,18 +28,19 @@
 
 using System;
 using System.Collections;
+using System.Collections.Generic;
 using MonoDevelop.Core;
 
 namespace MonoDevelop.Components.Commands
 {
-	public class CommandMenuItem: Gtk.ImageMenuItem, ICommandMenuItem
+	class CommandMenuItem: Gtk.ImageMenuItem, ICommandMenuItem
 	{
 		CommandManager commandManager;
 		object commandId;
 		bool isArray;
 		bool isArrayItem;
 		object arrayDataItem;
-		ArrayList itemArray;
+		List<Gtk.MenuItem> itemArray;
 		IconId lastIcon;
 		string overrideLabel;
 		bool wasButtonActivation;
@@ -129,7 +130,7 @@ namespace MonoDevelop.Components.Commands
 					commandManager.DispatchCommandFromAccel (commandId, arrayDataItem, initialTarget);
 			} else {
 				wasButtonActivation = false;
-				commandManager.DispatchCommand (commandId, arrayDataItem, initialTarget, GetMenuCommandSource (this));
+				commandManager.DispatchCommand (commandId, arrayDataItem, initialTarget, GetMenuCommandSource (this), lastCmdInfo);
 			}
 		}
 		
@@ -146,10 +147,21 @@ namespace MonoDevelop.Components.Commands
 				commandManager.NotifyDeselected ();
 			base.OnDeselected ();
 		}
-		
+
+		void CommandInfoChanged (object sender, EventArgs e)
+		{
+			Update ((CommandInfo)sender);
+		}
+
 		void Update (CommandInfo cmdInfo)
 		{
+			if (lastCmdInfo != null) {
+				lastCmdInfo.CancelAsyncUpdate ();
+				lastCmdInfo.Changed -= CommandInfoChanged;
+			}
 			lastCmdInfo = cmdInfo;
+			lastCmdInfo.Changed += CommandInfoChanged;
+
 			if (isArray && !isArrayItem) {
 				this.Visible = false;
 				Gtk.Menu menu = (Gtk.Menu) Parent;  
@@ -159,7 +171,7 @@ namespace MonoDevelop.Components.Commands
 						menu.Remove (item);
 				}
 				
-				itemArray = new ArrayList ();
+				itemArray = new List<Gtk.MenuItem> ();
 				int i = Array.IndexOf (menu.Children, this);
 				
 				if (cmdInfo.ArrayInfo != null) {
@@ -229,7 +241,7 @@ namespace MonoDevelop.Components.Commands
 				this.Visible = cmdInfo.Visible && (disabledVisible || cmdInfo.Enabled);
 				
 				if (!cmdInfo.Icon.IsNull && cmdInfo.Icon != lastIcon) {
-					Image = new Gtk.Image (cmdInfo.Icon, Gtk.IconSize.Menu);
+					Image = new ImageView (cmdInfo.Icon, Gtk.IconSize.Menu);
 					lastIcon = cmdInfo.Icon;
 				}
 				
@@ -259,7 +271,11 @@ namespace MonoDevelop.Components.Commands
 			itemArray = null;
 			initialTarget = null;
 			arrayDataItem = null;
-			lastCmdInfo = null;
+			if (lastCmdInfo != null) {
+				lastCmdInfo.CancelAsyncUpdate ();
+				lastCmdInfo.Changed -= CommandInfoChanged;
+				lastCmdInfo = null;
+			}
 		}
 	}
 }

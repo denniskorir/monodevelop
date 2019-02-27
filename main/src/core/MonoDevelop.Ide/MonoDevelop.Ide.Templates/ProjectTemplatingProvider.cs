@@ -32,6 +32,7 @@
 
 using System.Collections.Generic;
 using System.Linq;
+using System.Threading.Tasks;
 using MonoDevelop.Ide.Projects;
 using MonoDevelop.Projects;
 using MonoDevelop.Core;
@@ -52,18 +53,18 @@ namespace MonoDevelop.Ide.Templates
 			return template is DefaultSolutionTemplate;
 		}
 
-		public ProcessedTemplateResult ProcessTemplate (SolutionTemplate template, NewProjectConfiguration config, SolutionFolder parentFolder)
+		public Task<ProcessedTemplateResult> ProcessTemplate (SolutionTemplate template, NewProjectConfiguration config, SolutionFolder parentFolder)
 		{
 			return ProcessTemplate ((DefaultSolutionTemplate)template, config, parentFolder);
 		}
 
-		ProcessedTemplateResult ProcessTemplate (DefaultSolutionTemplate template, NewProjectConfiguration config, SolutionFolder parentFolder)
+		async Task<ProcessedTemplateResult> ProcessTemplate (DefaultSolutionTemplate template, NewProjectConfiguration config, SolutionFolder parentFolder)
 		{
 			IEnumerable<IWorkspaceFileObject> newItems = null;
 			ProjectCreateInformation cinfo = CreateProjectCreateInformation (config, parentFolder);
 
 			if (parentFolder == null) {
-				IWorkspaceFileObject newItem = template.Template.CreateWorkspaceItem (cinfo);
+				IWorkspaceFileObject newItem = await template.Template.CreateWorkspaceItem (cinfo);
 				if (newItem != null) {
 					newItems = new [] { newItem };
 				}
@@ -81,7 +82,7 @@ namespace MonoDevelop.Ide.Templates
 			cinfo.ProjectName = config.ProjectName;
 			cinfo.SolutionName = config.SolutionName;
 			cinfo.ParentFolder = parentFolder;
-			cinfo.ActiveConfiguration = IdeApp.Workspace.ActiveConfiguration;
+			cinfo.ActiveConfiguration = IdeApp.Workspace?.ActiveConfiguration ?? ConfigurationSelector.Default;
 			cinfo.Parameters = config.Parameters;
 			return cinfo;
 		}

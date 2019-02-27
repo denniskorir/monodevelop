@@ -31,15 +31,15 @@ using MonoDevelop.Projects.Text;
 
 namespace MonoDevelop.VersionControl
 {
-	public class DefaultDiffViewHandler : IDiffViewHandler
+	public class DefaultDiffViewHandler : IVersionControlViewHandler
 	{
 		public bool CanHandle (VersionControlItem item, DocumentView primaryView)
 		{
 			return (primaryView == null || primaryView.GetContent <ITextFile> () != null)
-				&& DesktopService.GetFileIsText (item.Path);
+				&& item.Repository.GetFileIsText (item.Path);
 		}
 
-		public IDiffView CreateView (VersionControlDocumentInfo info)
+		public BaseViewContent CreateView (VersionControlDocumentInfo info)
 		{
 			return new DiffView (info);
 		}

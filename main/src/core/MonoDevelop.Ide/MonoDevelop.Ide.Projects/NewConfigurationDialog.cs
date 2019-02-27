@@ -26,6 +26,7 @@
 //
 
 using System.Collections.Generic;
+using MonoDevelop.Components.AtkCocoaHelper;
 using MonoDevelop.Core;
 using MonoDevelop.Projects;
 using MonoDevelop.Ide.Gui.Dialogs;
@@ -35,8 +36,12 @@ namespace MonoDevelop.Ide.Projects
 	partial class NewConfigurationDialog : Gtk.Dialog
 	{
 		ItemConfigurationCollection<ItemConfiguration> configurations;
-		
-		public NewConfigurationDialog (ItemConfigurationCollection<ItemConfiguration> configurations)
+
+		public NewConfigurationDialog (ItemConfigurationCollection<ItemConfiguration> configurations): this (null, configurations)
+		{
+		}
+
+		public NewConfigurationDialog (IConfigurationTarget item, ItemConfigurationCollection<ItemConfiguration> configurations)
 		{
 			this.Build();
 			this.configurations = configurations;
@@ -50,8 +55,28 @@ namespace MonoDevelop.Ide.Projects
 				    comboPlatform.AppendText (plat);
 			}
 			comboPlatform.Entry.Text = MultiConfigItemOptionsPanel.GetPlatformName ("");
+			if (!(item is Solution)) {
+				createChildrenCheck.Active = false;
+				createChildrenCheck.Visible = false;
+				DefaultHeight = 0;
+			}
+
+			SetupAccessibility ();
 		}
-		
+
+		void SetupAccessibility ()
+		{
+			comboName.SetCommonAccessibilityAttributes ("NewConfiguration.Name", label1,
+			                                            GettextCatalog.GetString ("Select or enter the name of the new configuration"));
+
+			comboPlatform.SetCommonAccessibilityAttributes ("NewConfiguration.Platform",
+			                                                label2,
+			                                                GettextCatalog.GetString ("Select or enter the platform for the new configuration"));
+
+			createChildrenCheck.SetCommonAccessibilityAttributes ("NewConfiguration.CreateCheck", "",
+			                                                      GettextCatalog.GetString ("Check to create configurations for all the solution items"));
+		}
+
 		public string ConfigName {
 			get {
 				string plat = MultiConfigItemOptionsPanel.GetPlatformId (comboPlatform.Entry.Text.Trim ());

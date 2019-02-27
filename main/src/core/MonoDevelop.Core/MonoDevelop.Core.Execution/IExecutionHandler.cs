@@ -28,6 +28,10 @@
 
 using System;
 using System.Collections.Generic;
+using System.Threading;
+using System.Threading.Tasks;
+using Mono.Addins;
+using MonoDevelop.Projects;
 
 namespace MonoDevelop.Core.Execution
 {
@@ -56,7 +60,7 @@ namespace MonoDevelop.Core.Execution
 		/// <param name='console'>
 		/// Console where to log the output
 		/// </param>
-		IProcessAsyncOperation Execute (ExecutionCommand command, IConsole console);
+		ProcessAsyncOperation Execute (ExecutionCommand command, OperationConsole console);
 	}
 
 	/// <summary>
@@ -68,5 +72,10 @@ namespace MonoDevelop.Core.Execution
 		/// The execution target
 		/// </summary>
 		ExecutionTarget Target { get; }
+	}
+
+	public interface IConfigurableExecutionHandler
+	{
+		Task<IExecutionHandler> Configure (IRunTarget target, MonoDevelop.Projects.ExecutionContext context, ConfigurationSelector configuration, RunConfiguration runConfiguration);
 	}
 }

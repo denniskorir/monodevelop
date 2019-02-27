@@ -33,7 +33,6 @@ using System.Runtime.InteropServices;
 using Gdk;
 using Cairo;
 using MonoDevelop.Core;
-using Mono.TextEditor;
 
 namespace MonoDevelop.Components
 {
@@ -539,8 +538,21 @@ namespace MonoDevelop.Components
 			var tmp = System.IO.Path.GetTempFileName ();
 			System.IO.File.WriteAllBytes (tmp, buffer);
 			var img = new ImageSurface (tmp);
-			System.IO.File.Delete (tmp);
+			try {
+				System.IO.File.Delete (tmp);
+			} catch (Exception e) {
+				LoggingService.LogWarning ($"Unable to delete {tmp} due to exception {e}");
+
+				// Only want to dispose when the Delete failed
+				img.Dispose ();
+				throw;
+			}
 			return img;
+		}
+
+		public static Cairo.Color WithAlpha (Cairo.Color c, double alpha)
+		{
+			return new Cairo.Color (c.R, c.G, c.B, alpha);
 		}
 
 		public static Cairo.Color MultiplyAlpha (this Cairo.Color self, double alpha)

@@ -37,6 +37,7 @@ using MonoDevelop.Ide.Gui.Components;
 using System.Linq;
 using System.Collections.Generic;
 using MonoDevelop.Ide.Tasks;
+using System.Threading.Tasks;
 
 namespace MonoDevelop.Ide.Gui.Pads.ProjectPad
 {
@@ -62,13 +63,15 @@ namespace MonoDevelop.Ide.Gui.Pads.ProjectPad
 					Context.CacheComposedIcon (nodeInfo.Icon, "fade", gicon);
 				}
 				nodeInfo.Icon = gicon;
-				nodeInfo.Label = GettextCatalog.GetString ("<span foreground='grey'>{0} <span size='small'>(Unavailable)</span></span>", GLib.Markup.EscapeText (entry.Name));
+				nodeInfo.Label = GettextCatalog.GetString ("{0} <span size='small'>(Unavailable)</span>", GLib.Markup.EscapeText (entry.Name));
+				nodeInfo.DisabledStyle = true;
 			}
 			else if (entry.LoadError.Length > 0) {
 				nodeInfo.Icon = Context.GetIcon (MonoDevelop.Ide.Gui.Stock.Project).WithAlpha (0.5);
 				nodeInfo.Label = entry.Name;
 				nodeInfo.StatusSeverity = TaskSeverity.Error;
 				nodeInfo.StatusMessage = GettextCatalog.GetString ("Load failed: ") + entry.LoadError;
+				nodeInfo.DisabledStyle = true;
 			} else {
 				nodeInfo.Icon = Context.GetIcon (MonoDevelop.Ide.Gui.Stock.Project);
 				var gicon = Context.GetComposedIcon (nodeInfo.Icon, "fade");
@@ -91,10 +94,11 @@ namespace MonoDevelop.Ide.Gui.Pads.ProjectPad
 	{
 		[CommandHandler (ProjectCommands.Reload)]
 		[AllowMultiSelection]
-		public void OnReload ()
+		public async void OnReload ()
 		{
 			var solutions = new HashSet<Solution> ();
-			using (IProgressMonitor m = IdeApp.Workbench.ProgressMonitors.GetProjectLoadProgressMonitor (true)) {
+			Task task = Task.FromResult (0);
+			using (ProgressMonitor m = IdeApp.Workbench.ProgressMonitors.GetProjectLoadProgressMonitor (true)) {
 				m.BeginTask (null, CurrentNodes.Length);
 				foreach (ITreeNavigator node in CurrentNodes) {
 					UnknownSolutionItem entry = (UnknownSolutionItem) node.DataItem;
@@ -102,12 +106,16 @@ namespace MonoDevelop.Ide.Gui.Pads.ProjectPad
 						entry.Enabled = true;
 						solutions.Add (entry.ParentSolution);
 					}
-					entry.ParentFolder.ReloadItem (m, entry);
-					m.Step (1);
+					var am = m.BeginAsyncStep (1);
+					var t = entry.ParentFolder.ReloadItem (am, entry).ContinueWith (ta => {
+						am.Dispose ();
+					});
+					task = Task.WhenAll (task, t);
 				}
 				m.EndTask ();
 			}
-			IdeApp.ProjectOperations.Save (solutions);
+			await task;
+			await IdeApp.ProjectOperations.SaveAsync (solutions);
 		}
 		
 		[CommandUpdateHandler (ProjectCommands.Reload)]
@@ -127,18 +135,18 @@ namespace MonoDevelop.Ide.Gui.Pads.ProjectPad
 		public void OnUnload ()
 		{
 			HashSet<Solution> solutions = new HashSet<Solution> ();
-			using (IProgressMonitor m = IdeApp.Workbench.ProgressMonitors.GetProjectLoadProgressMonitor (true)) {
+			using (ProgressMonitor m = IdeApp.Workbench.ProgressMonitors.GetProjectLoadProgressMonitor (true)) {
 				m.BeginTask (null, CurrentNodes.Length);
 				foreach (ITreeNavigator nav in CurrentNodes) {
 					UnknownSolutionItem p = (UnknownSolutionItem) nav.DataItem;
+					solutions.Add (p.ParentSolution);
 					p.Enabled = false;
 					p.ParentFolder.ReloadItem (m, p);
 					m.Step (1);
-					solutions.Add (p.ParentSolution);
 				}
 				m.EndTask ();
 			}
-			IdeApp.ProjectOperations.Save (solutions);
+			IdeApp.ProjectOperations.SaveAsync (solutions);
 		}
 
 		[CommandUpdateHandler (ProjectCommands.Unload)]
@@ -151,7 +159,7 @@ namespace MonoDevelop.Ide.Gui.Pads.ProjectPad
 		public void OnEditUnknownSolutionItem ()
 		{
 			UnknownSolutionItem si = (UnknownSolutionItem) CurrentNode.DataItem;
-			IdeApp.Workbench.OpenDocument (si.FileName);
+			IdeApp.Workbench.OpenDocument (si.FileName, project: null);
 		}
 
 		[CommandUpdateHandler (ProjectCommands.EditSolutionItem)]
@@ -174,7 +182,7 @@ namespace MonoDevelop.Ide.Gui.Pads.ProjectPad
 			if (yes) {
 				cmb.Items.Remove (item);
 				item.Dispose ();
-				IdeApp.ProjectOperations.Save (cmb.ParentSolution);
+				IdeApp.ProjectOperations.SaveAsync (cmb.ParentSolution);
 			}
 		}
 	}

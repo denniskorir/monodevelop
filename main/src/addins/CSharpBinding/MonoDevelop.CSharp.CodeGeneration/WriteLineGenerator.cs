@@ -25,15 +25,13 @@
 // THE SOFTWARE.
 
 using System;
-using MonoDevelop.Components;
-using Gtk;
-using MonoDevelop.Ide.Gui;
 using System.Collections.Generic;
-using ICSharpCode.NRefactory.CSharp;
 using System.Text;
 using MonoDevelop.Core;
-using MonoDevelop.Refactoring;
-using ICSharpCode.NRefactory.TypeSystem;
+using Microsoft.CodeAnalysis;
+using Microsoft.CodeAnalysis.CSharp;
+using Microsoft.CodeAnalysis.CSharp.Syntax;
+using Microsoft.CodeAnalysis.Simplification;
 
 namespace MonoDevelop.CodeGeneration
 {
@@ -77,69 +75,87 @@ namespace MonoDevelop.CodeGeneration
 			
 			protected override IEnumerable<object> GetValidMembers ()
 			{
-				if (Options == null || Options.EnclosingType == null || Options.EnclosingMember == null || Options.Document == null)
+				if (Options == null || Options.EnclosingType == null)
 					yield break;
-				var editor = Options.Document.Editor;
+				if (Options.EnclosingMember == null)
+					yield break;
+				if (Options.DocumentContext == null)
+					yield break;
+				var editor = Options.Editor;
 				if (editor == null)
 					yield break;
-				
 				
 				// add local variables
 				var state = Options.CurrentState;
 				if (state != null) {
-					foreach (var v in state.LocalVariables) 
+					foreach (var v in state.LookupSymbols (editor.CaretOffset).OfType<ILocalSymbol> ())
 						yield return v;
 				}
-				
+
 				// add parameters
-				if (Options.EnclosingMember is IParameterizedMember) {
-					foreach (IParameter param in ((IParameterizedMember)Options.EnclosingMember).Parameters)
+				if (Options.EnclosingMember is IMethodSymbol) {
+					foreach (var param in ((IMethodSymbol)Options.EnclosingMember).Parameters)
 						yield return param;
 				}
-				
+				if (Options.EnclosingMember is IPropertySymbol) {
+					foreach (var param in ((IPropertySymbol)Options.EnclosingMember).Parameters)
+						yield return param;
+				}
+
 				// add type members
-				foreach (IField field in Options.EnclosingType.Fields) {
-					if (field.IsSynthetic)
+				foreach (IFieldSymbol field in Options.EnclosingType.GetMembers ().OfType<IFieldSymbol> ()) {
+					if (field.IsImplicitlyDeclared)
 						continue;
 					yield return field;
 				}
 
-				foreach (IProperty property in Options.EnclosingType.Properties) {
-					if (property.IsSynthetic)
+				foreach (IPropertySymbol property in Options.EnclosingType.GetMembers ().OfType<IPropertySymbol> ()) {
+					if (property.IsImplicitlyDeclared)
 						continue;
-					if (property.CanGet)
+					if (property.GetMethod != null)
 						yield return property;
 				}
 			}
 			
 			static string GetName (object m)
 			{
-				var e = m as IEntity;
-				if (e != null)
-					return e.Name;
-				return ((IVariable)m).Name;
+				return ((ISymbol)m).Name;
 			}
 			
 			protected override IEnumerable<string> GenerateCode (List<object> includedMembers)
 			{
-				StringBuilder format = new StringBuilder ();
+				var format = StringBuilderCache.Allocate ();
 				int i = 0;
+				format.Append ("$\"");
 				foreach (var member in includedMembers) {
 					if (i > 0)
 						format.Append (", ");
 					format.Append (GetName (member));
 					format.Append ("={");
-					format.Append (i++);
+					format.Append (member.ToString ());
 					format.Append ("}");
+					i++;
 				}
-				
-				var consoleType = typeof (Console).ToTypeReference ().Resolve (Options.Document.Compilation.TypeResolveContext);
-				var invocationExpression = new InvocationExpression (new MemberReferenceExpression (new TypeReferenceExpression (Options.CreateShortType (consoleType)), "WriteLine"));
-				invocationExpression.Arguments.Add (new PrimitiveExpression (format.ToString ()));
-				foreach (var member in includedMembers) {
-					invocationExpression.Arguments.Add (new IdentifierExpression (GetName (member)));
-				}
-				yield return new ExpressionStatement (invocationExpression).ToString (Options.FormattingOptions);
+				format.Append ("\"");
+				var arguments = new List<ArgumentSyntax> ();
+				arguments.Add (SyntaxFactory.Argument (SyntaxFactory.ParseExpression (StringBuilderCache.ReturnAndFree (format))));
+				var node = 
+					SyntaxFactory.ExpressionStatement (
+						SyntaxFactory.InvocationExpression (
+							SyntaxFactory.MemberAccessExpression (SyntaxKind.SimpleMemberAccessExpression,
+								SyntaxFactory.MemberAccessExpression (SyntaxKind.SimpleMemberAccessExpression, 
+									SyntaxFactory.IdentifierName ("System"), 
+									SyntaxFactory.IdentifierName ("Console")
+								),
+								SyntaxFactory.IdentifierName ("WriteLine")
+							),
+							SyntaxFactory.ArgumentList (
+								SyntaxFactory.SeparatedList<ArgumentSyntax> (arguments)
+							)
+						)
+					);
+
+				yield return Options.OutputNode (node).Result;
 			}
 		}
 	}

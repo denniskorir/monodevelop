@@ -45,6 +45,7 @@ using MonoDevelop.Projects;
 using MonoDevelop.Core.Serialization;
 using MonoDevelop.DesignerSupport.Toolbox;
 using MonoDevelop.Ide;
+using System.Threading.Tasks;
 
 namespace MonoDevelop.DesignerSupport
 {
@@ -66,7 +67,7 @@ namespace MonoDevelop.DesignerSupport
 		{
 			// Null check here because the service may be loaded in an external process
 			if (IdeApp.Workbench != null)
-				IdeApp.Workbench.ActiveDocumentChanged += new EventHandler (onActiveDocChanged);
+				IdeApp.Workbench.ActiveDocumentChanged += onActiveDocChanged;
 			
 			AddinManager.AddExtensionNodeHandler (toolboxLoaderPath, OnLoaderExtensionChanged);
 			AddinManager.AddExtensionNodeHandler (toolboxProviderPath, OnProviderExtensionChanged);
@@ -123,11 +124,16 @@ namespace MonoDevelop.DesignerSupport
 			OnToolboxContentsChanged ();
 		}
 		
-		public void AddUserItems ()
+		public async Task AddUserItems ()
 		{
-			ComponentSelectorDialog dlg = new ComponentSelectorDialog (currentConsumer);
-			dlg.Fill ();
-			MessageService.ShowCustomDialog (dlg);
+			using (ComponentSelectorDialog dlg = new ComponentSelectorDialog ()) {
+				bool initialized = await dlg.Initialize (currentConsumer);
+				if (!initialized)
+					return;
+
+				dlg.Fill ();
+				MessageService.ShowCustomDialog (dlg);
+			}
 		}
 		
 		void AddUserItems (IList<ItemToolboxNode> nodes)
@@ -146,8 +152,16 @@ namespace MonoDevelop.DesignerSupport
 		
 		public void RemoveUserItem (ItemToolboxNode node)
 		{
-			Configuration.ItemList.Remove (node);
-			SaveConfiguration ();
+			if (Configuration.ItemList.Remove (node)) {
+				SaveConfiguration ();
+			} else {
+				//we need check in the dynamic providers
+				foreach (var prov in dynamicProviders) {
+					if (prov is IToolboxDynamicProviderDeleteSupport provDelSupport && provDelSupport.DeleteDynamicItem (node)) {
+						break;
+					}
+				}
+			}
 			OnToolboxContentsChanged ();
 		}
 		
@@ -161,6 +175,8 @@ namespace MonoDevelop.DesignerSupport
 				OnToolboxContentsChanged ();
 
 				System.Threading.ThreadPool.QueueUserWorkItem (delegate {
+					if (!Runtime.Initialized)
+						return;
 					List<ItemToolboxNode> nodes = new List<ItemToolboxNode> ();
 					try {
 						IEnumerable<ItemToolboxNode> newItems = provider.GetDefaultItems ();
@@ -175,15 +191,21 @@ namespace MonoDevelop.DesignerSupport
 						IEnumerable<string> files = provider.GetDefaultFiles ();
 						if (files != null) {
 							ctx = new LoaderContext ();
-							foreach (string f in files)
+							foreach (string f in files) {
+								if (ctx.CancellationToken.IsCancellationRequested)
+									break;
 								nodes.AddRange (GetFileItems (ctx, f));
+							}
 						}
 					} finally {
 						if (ctx != null)
 							ctx.Dispose ();
 					}
 
-					DispatchService.GuiDispatch (delegate {
+					if (!Runtime.Initialized)
+						return;
+					
+					Runtime.RunInMainThread (delegate {
 						AddUserItems (nodes);
 						initializing--;
 						SaveConfiguration ();
@@ -230,6 +252,8 @@ namespace MonoDevelop.DesignerSupport
 					continue;
 				
 				try {
+					if (ctx.CancellationToken.IsCancellationRequested)
+						break;
 					IList<ItemToolboxNode> loadedItems = loader.Load (ctx, fileName);
 					items.AddRange (loadedItems);
 				}
@@ -510,7 +534,22 @@ namespace MonoDevelop.DesignerSupport
 			//we assume permitted, so only return false when blocked by a filter
 			return true;
 		}
-		
+
+		internal bool CanRemoveUserItem (ItemToolboxNode node)
+		{
+			if (Configuration.ItemList.Contains (node)) {
+				return true;
+			} else {
+				//we need check in the dynamic providers
+				foreach (var prov in dynamicProviders) {
+					if (prov is IToolboxDynamicProviderDeleteSupport provDelSupport && provDelSupport.CanDeleteDynamicItem (node)) {
+						return true;
+					}
+				}
+			}
+			return false;
+		}
+
 		//evaluate a filter attribute against a list, and check whether permitted
 		private bool FilterPermitted (ItemToolboxNode node, ToolboxItemFilterAttribute desFa, 
 		    ICollection<ToolboxItemFilterAttribute> filterAgainst, IToolboxConsumer consumer)
@@ -540,7 +579,7 @@ namespace MonoDevelop.DesignerSupport
 			throw new InvalidOperationException ("Unexpected ToolboxItemFilterType value.");
 		}
 		
-		internal ComponentIndex GetComponentIndex (IProgressMonitor monitor)
+		internal async Task<ComponentIndex> GetComponentIndex (ProgressMonitor monitor)
 		{
 			// Returns an index of all components that can be added to the toolbox.
 			
@@ -557,7 +596,7 @@ namespace MonoDevelop.DesignerSupport
 					todelete.Add (ia);
 				if (ia.NeedsUpdate)
 					toupdate.Add (ia);
-				if (monitor.IsCancelRequested)
+				if (monitor.CancellationToken.IsCancellationRequested)
 					return index;
 			}
 			
@@ -570,7 +609,7 @@ namespace MonoDevelop.DesignerSupport
 						index.Files.Add (c);
 						toupdate.Add (c);
 					}
-					if (monitor.IsCancelRequested)
+					if (monitor.CancellationToken.IsCancellationRequested)
 						return index;
 				}
 			}
@@ -583,12 +622,16 @@ namespace MonoDevelop.DesignerSupport
 				monitor.BeginTask (GettextCatalog.GetString ("Looking for components..."), toupdate.Count);
 				LoaderContext ctx = new LoaderContext ();
 				try {
-					foreach (ComponentIndexFile ia in toupdate) {
-						ia.Update (ctx);
-						monitor.Step (1);
-						if (monitor.IsCancelRequested)
-							return index;
-					}
+					await Task.Run (() => {
+						foreach (ComponentIndexFile ia in toupdate) {
+							ia.Update (ctx);
+							monitor.Step (1);
+							if (monitor.CancellationToken.IsCancellationRequested)
+								return;
+						}
+					});
+					if (monitor.CancellationToken.IsCancellationRequested)
+						return index;
 				} finally {
 					ctx.Dispose ();
 					monitor.EndTask ();
@@ -600,7 +643,7 @@ namespace MonoDevelop.DesignerSupport
 			
 			return index;
 		}
-		
+
 		#endregion
 	}
 	

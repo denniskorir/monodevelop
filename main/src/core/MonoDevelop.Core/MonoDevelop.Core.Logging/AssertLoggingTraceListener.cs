@@ -32,28 +32,8 @@ using System.IO;
 
 namespace MonoDevelop.Core.Logging
 {
-	class AssertLoggingTraceListener : TraceListener
+	class AssertLoggingTraceListener : DefaultTraceListener
 	{
-		public override void Write (string message)
-		{
-			//ignore
-		}
-
-		public override void WriteLine (string message)
-		{
-			//ignore
-		}
-
-		public override void TraceData (TraceEventCache eventCache, string source, TraceEventType eventType, int id, params object[] data)
-		{
-			//ignore
-		}
-
-		public override void TraceData (TraceEventCache eventCache, string source, TraceEventType eventType, int id, object data)
-		{
-			//ignore
-		}
-
 		public override void Fail (string message, string detailMessage)
 		{
 			var frames = new StackTrace (1, true).GetFrames ();
@@ -65,7 +45,7 @@ namespace MonoDevelop.Core.Logging
 			if (callerFrame == frames.Length - 1)
 				callerFrame = 0;
 
-			var sb = new StringBuilder ();
+			var sb = StringBuilderCache.Allocate();
 			if (IsRealMessage (message)) {
 				if (!string.IsNullOrEmpty (detailMessage)) {
 					sb.AppendFormat ("Failed assertion: {0} - {1}", message, detailMessage);
@@ -81,7 +61,7 @@ namespace MonoDevelop.Core.Logging
 			sb.Append ("\n");
 			FormatStackTrace (sb, frames, callerFrame);
 
-			LoggingService.LogError (sb.ToString ());
+			LoggingService.LogError (StringBuilderCache.ReturnAndFree(sb));
 		}
 
 		static bool IsRealMessage (string message)

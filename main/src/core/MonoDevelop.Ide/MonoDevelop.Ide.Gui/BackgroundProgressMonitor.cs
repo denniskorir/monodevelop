@@ -33,7 +33,7 @@ using Gtk;
 
 namespace MonoDevelop.Ide.Gui
 {
-	class BackgroundProgressMonitor: SimpleProgressMonitor
+	class BackgroundProgressMonitor: ProgressMonitor
 	{
 		string title;
 		StatusBarIcon icon;
@@ -42,9 +42,11 @@ namespace MonoDevelop.Ide.Gui
 		{
 			this.title = title;
 			if (!iconName.IsNull) {
-				Application.Invoke (delegate {
+				Application.Invoke ((o, args) => {
 					var img = ImageService.GetIcon (iconName, IconSize.Menu);
 					icon = IdeApp.Workbench.StatusBar.ShowStatusIcon (img);
+					icon.Title = GettextCatalog.GetString ("Background Progress");
+					icon.Help = GettextCatalog.GetString ("An operation is occuring in the background");
 					if (icon == null)
 						LoggingService.LogError ("Icon '" + iconName + "' not found.");
 				});
@@ -56,21 +58,21 @@ namespace MonoDevelop.Ide.Gui
 			if (icon == null)
 				return;
 			string tip;
-			if (Tracker.UnknownWork)
-				tip = string.Format ("{0}\n{1}", title, Tracker.CurrentTask);
+			if (ProgressIsUnknown)
+				tip = string.Format ("{0}\n{1}", title, CurrentTaskName);
 			else
-				tip = string.Format ("{0} ({1}%)\n{2}", title, (int)(Tracker.GlobalWork * 100), Tracker.CurrentTask);
+				tip = string.Format ("{0} ({1}%)\n{2}", title, (int)(Progress * 100), CurrentTaskName);
 				
-			Application.Invoke (delegate {
+			Application.Invoke ((o, args) => {
 				if (icon != null)
 					icon.ToolTip = tip;
 			});
 		}
-		
-		public override void Dispose()
+
+		protected override void OnDispose (bool disposing)
 		{
-			base.Dispose ();
-			Application.Invoke (delegate {
+			base.OnDispose (disposing);
+			Application.Invoke ((o, args) => {
 				if (icon != null) {
 					icon.Dispose ();
 					icon = null;

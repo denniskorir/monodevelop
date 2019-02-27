@@ -25,8 +25,11 @@
 // THE SOFTWARE.
 
 using System;
+using System.Collections.Generic;
+using System.Text;
 using Gtk;
-using Mono.TextEditor;
+using MonoDevelop.Components;
+using MonoDevelop.Core;
 
 namespace MonoDevelop.Ide.Gui.Components
 {
@@ -34,7 +37,20 @@ namespace MonoDevelop.Ide.Gui.Components
 	{
 		PadFontChanger changer;
 		CellRendererText textRenderer = new CellRendererText ();
-		
+		readonly List<CellRendererText> renderers = new List<CellRendererText> ();
+
+		static void ResetSearchColumn (object sender, EventArgs args)
+		{
+			// The Gtk documentation is incorrect for SearchColumn.
+			// SearchColumn does not get reset to -1 when the model changes,
+			// it gets reset to the first string column which then reenables the ctrl+f search feature
+			//
+			// This is probably not the behaviour expected so we work around it here.
+
+			var tree = sender as TreeView;
+			tree.SearchColumn = -1;
+		}
+
 		public PadTreeView ()
 		{
 			Init ();
@@ -44,28 +60,37 @@ namespace MonoDevelop.Ide.Gui.Components
 		{
 			Init ();
 		}
-		
+
 		void Init ()
 		{
 			changer = new PadFontChanger (this,
-				delegate (Pango.FontDescription desc) { textRenderer.FontDesc = desc; },
-				ColumnsAutosize);
+				delegate (Pango.FontDescription desc) {
+					textRenderer.FontDesc = desc;
+					foreach (var renderer in renderers)
+						renderer.FontDesc = desc;
+				}, ColumnsAutosize);
 			MonoDevelop.Components.GtkUtil.EnableAutoTooltips (this);
+
+			EnableSearch = false;
+			SearchColumn = -1;
+
+			AddNotification ("model", ResetSearchColumn);
 		}
-		
+
 		public CellRendererText TextRenderer {
 			get { return textRenderer; }
 		}
-		
+
 		protected override void OnDestroyed ()
 		{
 			if (changer != null) {
 				changer.Dispose ();
 				changer = null;
 			}
+			renderers.Clear ();
 			base.OnDestroyed ();
 		}
-		
+
 		// Workaround for Bug 1698 - Error list scroll position doesn't reset when list changes, hides items
 		// If the store of a pad treeview is modified while the pad is unrealized (autohidden), the treeview
 		// doesn't update its internal vertical offset. This can lead to items becoming offset outside the 
@@ -91,6 +116,82 @@ namespace MonoDevelop.Ide.Gui.Components
 				Vadjustment.Value = v + delta;
 				Vadjustment.Value = v;
 			}
+		}
+
+		internal void RegisterRenderForFontChanges (CellRendererText renderer)
+		{
+			renderer.FontDesc = IdeApp.Preferences.CustomPadFont;
+			renderers.Add (renderer);
+		}
+
+		// Util helper to check for column visibility
+		public bool IsAColumnVisible ()
+		{
+			foreach (var c in Columns) {
+				if (c.Visible) {
+					return true;
+				}
+			}
+			return false;
+		}
+	}
+
+	// A ContextMenu to hide and show columns.
+	public class ColumnSelectorMenu : ContextMenu
+	{
+		class ColumnSelectorMenuItem : CheckBoxContextMenuItem
+		{
+			TreeViewColumn column;
+
+			public ColumnSelectorMenuItem (TreeViewColumn column, string label) : base (label)
+			{
+				this.column = column;
+
+				Checked = column.Visible;
+			}
+
+			protected override void DoClick ()
+			{
+				base.DoClick ();
+				column.Visible = Checked;
+				ColumnVisibilityChanged?.Invoke (this, EventArgs.Empty);
+			}
+
+			public event EventHandler ColumnVisibilityChanged;
+		}
+
+		string id;
+
+		public ColumnSelectorMenu (TreeView treeview, string restoreID, params string[] columnNames)
+		{
+			id = restoreID;
+
+			int i = 0;
+			foreach (var column in treeview.Columns) {
+				var name = i < columnNames.Length ? columnNames[i] : null;
+
+				var item = new ColumnSelectorMenuItem (column, string.IsNullOrEmpty(name) ? column.Title : name);
+				item.ColumnVisibilityChanged += OnColumnVisibilityChanged;
+
+				Add (item);
+
+				i++;
+			}
+		}
+
+		void OnColumnVisibilityChanged (object sender, EventArgs args)
+		{
+			StringBuilder builder = new StringBuilder ();
+			foreach (var c in Items) {
+				var item = c as CheckBoxContextMenuItem;
+				if (item == null) {
+					continue;
+				}
+				builder.AppendFormat ("{0};", item.Checked);
+			}
+			builder.Remove (builder.Length - 1, 1);
+
+			PropertyService.Set (id, builder.ToString ());
 		}
 	}
 }

@@ -26,10 +26,8 @@
 //
 
 using System;
-using System.Collections;
 using System.Collections.Generic;
 
-using Mono.TextEditor;
 
 // Terminology:
 //   chord: A 'chord' is a key binding prefix / modifier meant to allow a
@@ -84,15 +82,15 @@ namespace MonoDevelop.Components.Commands
 		#region Platform-dependent selection modifiers
 		//FIXME: these should be named for what they do, not what they are
 		
-		public static Gdk.ModifierType SelectionModifierAlt {
+		internal static Gdk.ModifierType SelectionModifierAlt {
 			get; private set;
 		}
 		
-		public static Gdk.ModifierType SelectionModifierControl {
+		internal static Gdk.ModifierType SelectionModifierControl {
 			get; private set;
 		}
 		
-		public static Gdk.ModifierType SelectionModifierSuper {
+		internal static Gdk.ModifierType SelectionModifierSuper {
 			get; private set;
 		}
 		
@@ -102,15 +100,15 @@ namespace MonoDevelop.Components.Commands
 		
 		static bool KeyIsModifier (Gdk.Key key)
 		{
-			if (key.Equals (Gdk.Key.Control_L) || key.Equals (Gdk.Key.Control_R))
+			if (key == Gdk.Key.Control_L || key == Gdk.Key.Control_R)
 				return true;
-			else if (key.Equals (Gdk.Key.Alt_L) || key.Equals (Gdk.Key.Alt_R))
+			else if (key == Gdk.Key.Alt_L || key == Gdk.Key.Alt_R)
 				return true;
-			else if (key.Equals (Gdk.Key.Shift_L) || key.Equals (Gdk.Key.Shift_R))
+			else if (key == Gdk.Key.Shift_L || key == Gdk.Key.Shift_R)
 				return true;
-			else if (key.Equals (Gdk.Key.Meta_L) || key.Equals (Gdk.Key.Meta_R))
+			else if (key == Gdk.Key.Meta_L || key == Gdk.Key.Meta_R)
 				return true;
-			else if (key.Equals (Gdk.Key.Super_L) || key.Equals (Gdk.Key.Super_R))
+			else if (key == Gdk.Key.Super_L || key == Gdk.Key.Super_R)
 				return true;
 			
 			return false;
@@ -138,15 +136,15 @@ namespace MonoDevelop.Components.Commands
 		{
 			string label = string.Empty;
 			
-			if (key.Equals (Gdk.Key.Control_L) || key.Equals (Gdk.Key.Control_R))
+			if (key == Gdk.Key.Control_L || key == Gdk.Key.Control_R)
 				label += "Control+";
-			else if (key.Equals (Gdk.Key.Alt_L) || key.Equals (Gdk.Key.Alt_R))
+			else if (key == Gdk.Key.Alt_L || key == Gdk.Key.Alt_R)
 				label += "Alt+";
-			else if (key.Equals (Gdk.Key.Shift_L) || key.Equals (Gdk.Key.Shift_R))
+			else if (key == Gdk.Key.Shift_L || key == Gdk.Key.Shift_R)
 				label += "Shift+";
-			else if (key.Equals (Gdk.Key.Meta_L) || key.Equals (Gdk.Key.Meta_R))
+			else if (key == Gdk.Key.Meta_L || key == Gdk.Key.Meta_R)
 				label += "Meta+";
-			else if (key.Equals (Gdk.Key.Super_L) || key.Equals (Gdk.Key.Super_R))
+			else if (key == Gdk.Key.Super_L || key == Gdk.Key.Super_R)
 				label += "Super+";
 			
 			return label;
@@ -494,8 +492,12 @@ namespace MonoDevelop.Components.Commands
 				
 				str = shortcut.Substring (i, j - i);
 				if ((mod = ModifierMask (str)) == Gdk.ModifierType.None) {
-					if (str.Length > 1)
-						key = (Gdk.Key) Gdk.Key.Parse (typeof (Gdk.Key), str);
+					if (str.Length > 1) {
+						if (!Gdk.Key.TryParse (str, out key)) {
+							Console.WriteLine ("WARNING: invalid Gdk.Key portion of shortcut {0}", shortcut);
+							return null;
+						}
+					}
 					else if (str[0] >= 'a' && str[0] <= 'z')
 						key = (Gdk.Key) str[0] - 32;
 					else
@@ -560,6 +562,36 @@ namespace MonoDevelop.Components.Commands
 			accel = AccelLabelFromKey ((Gdk.Key) key, mod);
 			
 			return Binding (chord, accel);
+		}
+
+		internal static string FixChordSeparators (string binding)
+		{
+			// converts old style '|' separators to new scheme with chord detection.
+			// Examples:
+			//    Control|X -> Control+X
+			//    Alt|| -> Alt+|
+			//    Alt|+ -> Alt++
+			// this conversion is required for proper key detection, otherwise
+			// keys bindings like Control|X and Control+X will not be detected as
+			// eqal / duplicate bindings.
+			if (string.IsNullOrEmpty (binding))
+				return binding;
+			var chars = binding.ToCharArray ();
+			bool foundChordSep = false;
+			// first and last characters are never separators, skip them
+			for (int i = 1; i < binding.Length - 1; i++) {
+				// chords can not start with a '+', therefore all bindings
+				// whre a '+' occurs before a '|' have already the right style
+				if (chars [i] == '+' && !foundChordSep)
+					return binding;
+				// make sure we don't convert the real '|' key
+				if (chars [i] == '|' && chars [i - 1] != '|') {
+					foundChordSep = true;
+					chars [i] = '+';
+				}
+			}
+			var result = new string (chars);
+			return result;
 		}
 		
 		#endregion
@@ -778,9 +810,13 @@ namespace MonoDevelop.Components.Commands
 			case Gdk.Key.Delete:
 				return '⌦';
 			case Gdk.Key.Home:
-				return '⇱';
+				return '\u2196';    // ↖
+				//return '\u21F1';  // ⇱
+				//return '⇱';
 			case Gdk.Key.End:
-				return '⇲';
+				return '\u2198';    // ↘
+				//return '\u21F2';  // ⇲
+				//return '⇲';
 			case Gdk.Key.Page_Up:
 				return '⇞';
 			case Gdk.Key.Page_Down:

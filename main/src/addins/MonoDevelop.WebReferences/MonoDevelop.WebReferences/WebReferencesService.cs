@@ -29,6 +29,7 @@ using MonoDevelop.Projects;
 using System.Collections.Generic;
 using MonoDevelop.WebReferences.WCF;
 using MonoDevelop.WebReferences.WS;
+using MonoDevelop.Core;
 
 namespace MonoDevelop.WebReferences
 {
@@ -39,21 +40,21 @@ namespace MonoDevelop.WebReferences
 
 		public static IEnumerable<WebReferenceItem> GetWebReferenceItemsWS (DotNetProject project)
 		{
-			foreach (WebReferenceItem item in WsEngine.GetReferenceItems (project))
-				yield return item;
+			var ext = project.GetService<WebReferencesProjectExtension> ();
+			return ext.GetWebReferenceItemsWS ();
 		}
 
 		public static IEnumerable<WebReferenceItem> GetWebReferenceItemsWCF (DotNetProject project)
 		{
-			foreach (WebReferenceItem item in WcfEngine.GetReferenceItems (project))
-				yield return item;
+			var ext = project.GetService<WebReferencesProjectExtension> ();
+			return ext.GetWebReferenceItemsWCF ();
 		}
 
 		public static IEnumerable<WebReferenceItem> GetWebReferenceItems (DotNetProject project)
 		{
-			foreach (WebReferenceItem item in WcfEngine.GetReferenceItems (project))
+			foreach (WebReferenceItem item in GetWebReferenceItemsWCF (project))
 				yield return item;
-			foreach (WebReferenceItem item in WsEngine.GetReferenceItems (project))
+			foreach (WebReferenceItem item in GetWebReferenceItemsWS (project))
 				yield return item;
 		}
 		
@@ -62,11 +63,11 @@ namespace MonoDevelop.WebReferences
 			// This is called from a background thread when webreferences are being
 			// updated asynchronously, so lets keep things simple for the users of
 			// this event and just ensure we proxy it to the main thread.
-			if (MonoDevelop.Ide.DispatchService.IsGuiThread) {
+			if (Runtime.IsMainThread) {
 				if (WebReferencesChanged != null)
 					WebReferencesChanged (null, new WebReferencesChangedEventArgs (project));
 			} else {
-				MonoDevelop.Ide.DispatchService.GuiDispatch (() => {
+				Runtime.RunInMainThread (() => {
 					if (WebReferencesChanged != null)
 						WebReferencesChanged (null, new WebReferencesChangedEventArgs (project));
 				});

@@ -33,6 +33,7 @@ using System.Text;
 using MonoDevelop.Core;
 using MonoDevelop.Ide.Gui.Dialogs;
 using MonoDevelop.Components;
+using MonoDevelop.Components.AtkCocoaHelper;
 using MonoDevelop.Ide.Tasks;
 using Gtk;
 
@@ -59,13 +60,45 @@ namespace MonoDevelop.Ide.Gui.OptionPanels
 			tokensTreeView.AppendColumn (String.Empty, new CellRendererText (), "text", 0);
 			tokensTreeView.Selection.Changed += new EventHandler (OnTokenSelectionChanged);
 			tokensTreeView.Model = tokensStore;
-			
+			tokensTreeView.SearchColumn = -1; // disable the interactive search
+
 			OnTokenSelectionChanged (null, null);
 			
 			buttonAdd.Clicked += new EventHandler (AddToken);
 			buttonChange.Clicked += new EventHandler (ChangeToken);
 			buttonRemove.Clicked += new EventHandler (RemoveToken);
 			entryToken.Changed += new EventHandler (Validate);
+
+			Styles.Changed += HandleUserInterfaceThemeChanged;
+			SetupAccessibility ();
+		}
+
+		void SetupAccessibility ()
+		{
+			comboPriority.SetCommonAccessibilityAttributes ("TasksPanel.priorityCombo", label113,
+			                                                GettextCatalog.GetString ("Select the priority for this token"));
+
+			entryToken.SetCommonAccessibilityAttributes ("TasksPanel.tokenEntry", label112,
+			                                             GettextCatalog.GetString ("Enter a word to detect as a token"));
+
+			tokensTreeView.SetCommonAccessibilityAttributes ("TasksPanel.tokensList", labelTokens,
+			                                                 GettextCatalog.GetString ("A list of recognised tokens"));
+
+			buttonAdd.SetCommonAccessibilityAttributes ("TasksPanel.addButton", "",
+			                                            GettextCatalog.GetString ("Add a new token"));
+			buttonChange.SetCommonAccessibilityAttributes ("TasksPanel.changeButton", "",
+			                                               GettextCatalog.GetString ("Edit the currently selected token"));
+			buttonRemove.SetCommonAccessibilityAttributes ("TasksPanel.removeButton", "",
+			                                               GettextCatalog.GetString ("Remove the currently selected token"));
+
+			colorbuttonLowPrio.SetCommonAccessibilityAttributes ("TasksPanel.lowColor", label12,
+			                                                     GettextCatalog.GetString ("Select the foreground color for low priority tasks"));
+
+			colorbuttonHighPrio.SetCommonAccessibilityAttributes ("TasksPanel.hiColor", label10,
+			                                                      GettextCatalog.GetString ("Select the foreground color for the high priority tasks"));
+
+			colorbuttonNormalPrio.SetCommonAccessibilityAttributes ("TasksPanel.normalColor", label11,
+			                                                        GettextCatalog.GetString ("Select the foreground color for the normal priority tasks"));
 		}
 		
 		void Validate (object sender, EventArgs args)
@@ -120,7 +153,7 @@ namespace MonoDevelop.Ide.Gui.OptionPanels
 		void OnTokenSelectionChanged (object sender, EventArgs args)
 		{
 			TreeSelection selection = sender as TreeSelection;
-			if (sender != null)
+			if (selection != null)
 			{
 				TreeIter iter;
 				TreeModel model = (TreeModel)tokensStore;
@@ -167,10 +200,20 @@ namespace MonoDevelop.Ide.Gui.OptionPanels
 		{
 			foreach (var ctag in CommentTag.SpecialCommentTags)
 				tokensStore.AppendValues (ctag.Tag, ctag.Priority);
-			
-			colorbuttonHighPrio.Color = StringToColor ((string)PropertyService.Get ("Monodevelop.UserTasksHighPrioColor", ""));
-			colorbuttonNormalPrio.Color = StringToColor ((string)PropertyService.Get ("Monodevelop.UserTasksNormalPrioColor", ""));
-			colorbuttonLowPrio.Color = StringToColor ((string)PropertyService.Get ("Monodevelop.UserTasksLowPrioColor", ""));
+
+			LoadColors ();
+		}
+
+		void HandleUserInterfaceThemeChanged (object sender, EventArgs e)
+		{
+			LoadColors ();
+		}
+
+		public void LoadColors ()
+		{
+			colorbuttonHighPrio.Color = StringToColor (IdeApp.Preferences.UserTasksHighPrioColor);
+			colorbuttonNormalPrio.Color = StringToColor (IdeApp.Preferences.UserTasksNormalPrioColor);
+			colorbuttonLowPrio.Color = StringToColor (IdeApp.Preferences.UserTasksLowPrioColor);
 		}
 		
 		public void Store ()
@@ -181,9 +224,9 @@ namespace MonoDevelop.Ide.Gui.OptionPanels
 
 			CommentTag.SpecialCommentTags = tags;
 			
-			PropertyService.Set ("Monodevelop.UserTasksHighPrioColor", ColorToString (colorbuttonHighPrio.Color));
-			PropertyService.Set ("Monodevelop.UserTasksNormalPrioColor", ColorToString (colorbuttonNormalPrio.Color));
-			PropertyService.Set ("Monodevelop.UserTasksLowPrioColor", ColorToString (colorbuttonLowPrio.Color));
+			IdeApp.Preferences.UserTasksHighPrioColor.Value = ColorToString (colorbuttonHighPrio.Color);
+			IdeApp.Preferences.UserTasksNormalPrioColor.Value = ColorToString (colorbuttonNormalPrio.Color);
+			IdeApp.Preferences.UserTasksLowPrioColor.Value = ColorToString (colorbuttonLowPrio.Color);
 		}
 		
 		static string ColorToString (Gdk.Color color)
@@ -209,13 +252,19 @@ namespace MonoDevelop.Ide.Gui.OptionPanels
 			}
 			return color;
 		}
+
+		protected override void OnDestroyed ()
+		{
+			Styles.Changed -= HandleUserInterfaceThemeChanged;
+			base.OnDestroyed ();
+		}
 	}
 	
 	internal class TasksOptionsPanel : OptionsPanel
 	{
 		TasksPanelWidget widget;
 		
-		public override Widget CreatePanelWidget ()
+		public override Control CreatePanelWidget ()
 		{
 			widget = new TasksPanelWidget ();
 			widget.Load ();

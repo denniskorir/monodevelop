@@ -25,6 +25,7 @@
 // THE SOFTWARE.
 
 using System;
+using MonoDevelop.Core.StringParsing;
 using MonoDevelop.Ide.Templates;
 using ProjectCreateParameters = MonoDevelop.Projects.ProjectCreateParameters;
 using SolutionFolder = MonoDevelop.Projects.SolutionFolder;
@@ -39,6 +40,10 @@ namespace MonoDevelop.Ide.Projects
 		SolutionTemplate template;
 		bool valid;
 		bool projectNameIsReadOnly;
+		bool? createProjectDirectoryInsideSolutionDirectory;
+		bool createProjectDirectoryInsideSolutionDirectoryEnabled = true;
+		bool? createGitIgnoreFile;
+		bool gitIgnoreEnabled = true;
 
 		public FinalProjectConfigurationPage (NewProjectConfiguration config)
 		{
@@ -137,7 +142,12 @@ namespace MonoDevelop.Ide.Projects
 		}
 
 		public bool CreateGitIgnoreFile {
-			get { return config.CreateGitIgnoreFile; }
+			get {
+				if (createGitIgnoreFile.HasValue) {
+					return createGitIgnoreFile.Value;
+				}
+				return config.CreateGitIgnoreFile;
+			}
 			set { config.CreateGitIgnoreFile = value; }
 		}
 
@@ -147,7 +157,12 @@ namespace MonoDevelop.Ide.Projects
 		}
 
 		public bool CreateProjectDirectoryInsideSolutionDirectory {
-			get { return config.CreateProjectDirectoryInsideSolutionDirectory; }
+			get {
+				if (createProjectDirectoryInsideSolutionDirectory.HasValue) {
+					return createProjectDirectoryInsideSolutionDirectory.Value;
+				}
+				return config.CreateProjectDirectoryInsideSolutionDirectory;
+			}
 			set { config.CreateProjectDirectoryInsideSolutionDirectory = value; }
 		}
 
@@ -160,11 +175,11 @@ namespace MonoDevelop.Ide.Projects
 		}
 
 		public bool IsCreateProjectDirectoryInsideSolutionDirectoryEnabled {
-			get { return HasProjects; }
+			get { return HasProjects && IsNewSolution && createProjectDirectoryInsideSolutionDirectoryEnabled; }
 		}
 
 		public bool IsGitIgnoreEnabled {
-			get { return config.UseGit && IsUseGitEnabled; }
+			get { return config.UseGit && IsUseGitEnabled && gitIgnoreEnabled; }
 		}
 
 		public bool IsUseGitEnabled { get; set; }
@@ -228,7 +243,22 @@ namespace MonoDevelop.Ide.Projects
 		public void UpdateFromParameters ()
 		{
 			ProjectName = Parameters ["ProjectName"];
-			projectNameIsReadOnly = Parameters.GetBoolean ("IsProjectNameReadOnly", false);
+			projectNameIsReadOnly = Parameters.GetBoolValue ("IsProjectNameReadOnly", false);
+
+			createProjectDirectoryInsideSolutionDirectory = GetParameterValue ("CreateProjectDirectoryInsideSolutionDirectory");
+			createProjectDirectoryInsideSolutionDirectoryEnabled = Parameters. GetBoolValue ("IsCreateProjectDirectoryInsideSolutionDirectoryEnabled", true);
+
+			createGitIgnoreFile = GetParameterValue ("CreateGitIgnoreFile");
+			gitIgnoreEnabled = Parameters.GetBoolValue ("IsGitIgnoreEnabled", true);
+		}
+
+		bool? GetParameterValue (string name)
+		{
+			string value = Parameters [name];
+			if (!string.IsNullOrEmpty (value)) {
+				return Parameters.GetBoolValue (name);
+			}
+			return null;
 		}
 	}
 }

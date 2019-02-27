@@ -70,58 +70,59 @@ namespace MonoDevelop.VersionControl
 			get { return Name; }
 		}
 
-		internal static string FormatMessage (string msg)
+		public static bool operator ==(Revision a, Revision b)
 		{
-			StringBuilder sb = new StringBuilder ();
-			bool wasWs = false;
-			foreach (char ch in msg) {
-				if (ch == ' ' || ch == '\t') {
-					if (!wasWs)
-						sb.Append (' ');
-					wasWs = true;
-					continue;
-				}
-				wasWs = false;
-				sb.Append (ch);
+			if (System.Object.ReferenceEquals(a, b))
+			{
+				return true;
 			}
 
-			var doc = TextDocument.CreateImmutableDocument (sb.ToString());
-			foreach (var line in doc.Lines) {
-				string text = doc.GetTextAt (line.Offset, line.Length).Trim ();
-				int idx = text.IndexOf (':');
-				if (text.StartsWith ("*", StringComparison.Ordinal) && idx >= 0 && idx < text.Length - 1) {
-					int offset = line.EndOffsetIncludingDelimiter;
-					msg = text.Substring (idx + 1) + doc.GetTextAt (offset, doc.TextLength - offset);
-					break;
-				}
+			if (((object)a == null) || ((object)b == null))
+			{
+				return false;
 			}
-			return msg.TrimStart (' ', '\t');
+			return a.Equals(b);
+		}
+
+		public static bool operator !=(Revision a, Revision b)
+		{
+			return !(a == b);
 		}
 	}
 	
 	public class RevisionPath
 	{
-		public RevisionPath (string path, RevisionAction action, string actionDescription)
+		public RevisionPath (string path, string oldPath, RevisionAction action, string actionDescription)
 		{
 			this.Path = path;
+			this.OldPath = oldPath;
 			this.Action = action;
 			this.ActionDescription = actionDescription;
+		}
+
+		public RevisionPath (string path, RevisionAction action, string actionDescription) : this (path, path, action, actionDescription)
+		{
+		}
+
+		public string OldPath {
+			get;
+			private set;
 		}
 		
 		public string Path {
 			get;
-			set;
+			private set;
 		}
 		
 		public RevisionAction Action {
 			get;
-			set;
+			private set;
 		}
 		
 		// To use when Action == RevisionAction.Other
 		public string ActionDescription {
 			get;
-			set;
+			private set;
 		}
 	}
 	

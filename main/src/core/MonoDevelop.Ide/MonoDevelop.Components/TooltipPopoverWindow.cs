@@ -3,6 +3,7 @@
 //
 // Author:
 //       Lluis Sanchez <lluis@xamarin.com>
+//       Vsevolod Kukol <sevoku@microsoft.com>
 //
 // Copyright (c) 2012 Xamarin Inc
 //
@@ -24,23 +25,40 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 // THE SOFTWARE.
 using System;
-using MonoDevelop.Ide.Tasks;
+using MonoDevelop.Core;
+using MonoDevelop.Ide.Fonts;
 using MonoDevelop.Ide.Gui;
+using MonoDevelop.Ide.Tasks;
+using Xwt;
 
 namespace MonoDevelop.Components
 {
-	public class TooltipPopoverWindow: PopoverWindow
+	public class TooltipPopoverWindow: XwtThemedPopup
 	{
-		Gtk.Label label;
+		static readonly Toolkit preferredEngine;
+		Label label;
 		TaskSeverity? severity;
 		bool hasMarkup;
 		string text;
-		Gtk.Alignment alignment;
 
-		public TooltipPopoverWindow ()
+		static TooltipPopoverWindow ()
 		{
-			Theme.SetFlatColor (Styles.PopoverWindow.DefaultBackgroundColor);
-			Theme.BorderColor = Styles.PopoverWindow.DefaultBorderColor;
+			preferredEngine = Platform.IsWindows? Toolkit.Load (ToolkitType.Gtk) : Toolkit.NativeEngine;
+		}
+
+		public static TooltipPopoverWindow Create (bool tryNative = true)
+		{
+			TooltipPopoverWindow popover = null;
+			(tryNative ? preferredEngine : Toolkit.CurrentEngine).Invoke (() => {
+				popover = new TooltipPopoverWindow ();
+			});
+			return popover;
+		}
+
+		public TooltipPopoverWindow () : base (PopupType.Tooltip)
+		{
+			Theme.SetBackgroundColor (Styles.PopoverWindow.DefaultBackgroundColor);
+			Theme.Font = Xwt.Drawing.Font.FromName (FontService.SansFontName).WithScaledSize (Styles.FontScale11);
 			ShowArrow = true;
 		}
 
@@ -74,83 +92,71 @@ namespace MonoDevelop.Components
 			get { return severity; }
 			set {
 				severity = value;
-
+				AddLabel ();
 				UpdateLabel ();
 
 				if (severity.HasValue) {
 					Theme.Padding = 3;
 					Theme.CornerRadius = 3;
-					Theme.BorderColor = new Cairo.Color (0, 0, 0, 0);
-
-					alignment.SetPadding (4, 4, 6, 6);
-
-					var f = Style.FontDescription.Copy ();
-					f.Size = ((f.Size / (int)Pango.Scale.PangoScale) - 1) * (int)Pango.Scale.PangoScale;
-					label.ModifyFont (f);
 
 					switch (severity.Value) {
 					case TaskSeverity.Information:
-						Theme.SetFlatColor (Styles.PopoverWindow.InformationBackgroundColor);
-						Theme.BorderColor = Styles.PopoverWindow.InformationBorderColor;
-						break;
-
 					case TaskSeverity.Comment:
-						Theme.SetFlatColor (Styles.PopoverWindow.InformationBackgroundColor);
-						Theme.BorderColor = Styles.PopoverWindow.InformationBorderColor;
+						Theme.SetBackgroundColor (Styles.PopoverWindow.InformationBackgroundColor);
 						break;
 
 					case TaskSeverity.Error:
-						Theme.SetFlatColor (Styles.PopoverWindow.ErrorBackgroundColor);
-						Theme.BorderColor = Styles.PopoverWindow.ErrorBorderColor;
+						Theme.SetBackgroundColor (Styles.PopoverWindow.ErrorBackgroundColor);
 						return;
 
 					case TaskSeverity.Warning:
-						Theme.SetFlatColor (Styles.PopoverWindow.WarningBackgroundColor);
-						Theme.BorderColor = Styles.PopoverWindow.WarningBorderColor;
+						Theme.SetBackgroundColor (Styles.PopoverWindow.WarningBackgroundColor);
 						return;
 					}
-				} else {
-					Theme.SetFlatColor (Styles.PopoverWindow.DefaultBackgroundColor);
-					Theme.BorderColor = Styles.PopoverWindow.DefaultBorderColor;
-				}
+				} else
+					Theme.SetBackgroundColor (Styles.PopoverWindow.DefaultBackgroundColor);
 			}
 		}
 
 		void AddLabel ()
 		{
 			if (label == null) {
-				alignment = new Gtk.Alignment (0.5f, 0.5f, 1f, 1f);
-				alignment.SetPadding (6, 6, 6, 6);
-				label = new Gtk.Label ();
-				alignment.Add (label);
-				ContentBox.Add (alignment);
-				alignment.ShowAll ();
+				InvokeAsync (() => {
+					label = new Label ();
+					label.Font = Theme.Font;
+					label.Margin = new WidgetSpacing (5, 4, 5, 4);
+					Content = label;
+				});
 			}
 		}
 
 		void UpdateLabel ()
 		{
-			if (severity.HasValue) {
-				string msg = hasMarkup ? text : GLib.Markup.EscapeText (text);
-
-				switch (severity.Value) {
-				case TaskSeverity.Information:
-					label.Markup = "<b><span color='" + CairoExtensions.ColorGetHex (Styles.PopoverWindow.InformationTextColor) + "'>" + msg + "</span></b>";
-					return;
-
-				case TaskSeverity.Comment:
-					label.Markup = "<b><span color='" + CairoExtensions.ColorGetHex (Styles.PopoverWindow.InformationTextColor) + "'>" + msg + "</span></b>";
-					return;
-
-				case TaskSeverity.Error:
-					label.Markup = "<b><span color='" + CairoExtensions.ColorGetHex (Styles.PopoverWindow.ErrorTextColor) + "'>" + msg + "</span></b>";
-					return;
-
-				case TaskSeverity.Warning:
-					label.Markup = "<b><span color='" + CairoExtensions.ColorGetHex (Styles.PopoverWindow.WarningTextColor) + "'>" + msg + "</span></b>";
-					return;
-				}
+			if (label == null)
+				return;
+			
+			if (string.IsNullOrEmpty (text)) {
+				label.Text = String.Empty;
+				return;
 			}
+
+			label.Font = Theme.Font;
+
+			if (severity.HasValue) {
+				switch (severity.Value) {
+					case TaskSeverity.Information:
+					case TaskSeverity.Comment:
+						label.TextColor = Styles.PopoverWindow.InformationTextColor;
+						break;
+					case TaskSeverity.Error:
+						label.TextColor = Styles.PopoverWindow.ErrorTextColor;
+						break;
+					case TaskSeverity.Warning:
+						label.TextColor = Styles.PopoverWindow.WarningTextColor;
+						break;
+				}
+			} else
+				label.TextColor = Styles.PopoverWindow.DefaultTextColor;
 
 			if (hasMarkup)
 				label.Markup = text;
@@ -160,14 +166,21 @@ namespace MonoDevelop.Components
 
 		void AdjustSize ()
 		{
-			if (label.SizeRequest ().Width > 330) {
-				label.Wrap = true;
+			// always reset fixed width and wrapping for size calculations
+			label.WidthRequest = -1;
+			label.Wrap = WrapMode.None;
+			var s = label.Surface.GetPreferredSize ();
+			if (s.Width > 330) {
+				label.Wrap = WrapMode.Word;
 				label.WidthRequest = 330;
 			} else {
-				label.Wrap = false;
+				if (hasMarkup && BackendHost.ToolkitEngine.Type == ToolkitType.XamMac)
+					// HACK: Cocoa bug: wrapping needs to be enabled in order to display Attributed string correctly on Mac
+					label.Wrap = WrapMode.Word;
+				else
+					label.Wrap = WrapMode.None;
 				label.WidthRequest = -1;
 			}
-			RepositionWindow ();
 		}
 	}
 }

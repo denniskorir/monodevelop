@@ -52,7 +52,7 @@ namespace MonoDevelop.VersionControl.Git
 	{
 		public GitRepository Repository {
 			get {
-				IWorkspaceObject wob = IdeApp.ProjectOperations.CurrentSelectedSolutionItem;
+				WorkspaceObject wob = IdeApp.ProjectOperations.CurrentSelectedSolutionItem;
 				if (wob == null)
 					wob = IdeApp.ProjectOperations.CurrentSelectedWorkspaceItem;
 				if (wob != null)
@@ -64,7 +64,7 @@ namespace MonoDevelop.VersionControl.Git
 		protected GitRepository UpdateVisibility (CommandInfo info)
 		{
 			var repo = Repository;
-			info.Visible = Repository != null;
+			info.Visible = repo != null;
 			return repo;
 		}
 
@@ -91,9 +91,9 @@ namespace MonoDevelop.VersionControl.Git
 
 	class SwitchToBranchHandler: GitCommandHandler
 	{
-		protected override void Run (object dataItem)
+		protected async override void Run (object dataItem)
 		{
-			GitService.SwitchToBranch (Repository, (string)dataItem);
+			await GitService.SwitchToBranch (Repository, (string)dataItem).ConfigureAwait (false);
 		}
 
 		protected override void Update (CommandArrayInfo info)
@@ -102,7 +102,7 @@ namespace MonoDevelop.VersionControl.Git
 			if (repo == null)
 				return;
 
-			var wob = IdeApp.ProjectOperations.CurrentSelectedItem as IWorkspaceObject;
+			var wob = IdeApp.ProjectOperations.CurrentSelectedItem as WorkspaceObject;
 			if (wob == null)
 				return;
 			if (((wob is WorkspaceItem) && ((WorkspaceItem)wob).ParentWorkspace == null) ||
@@ -110,8 +110,8 @@ namespace MonoDevelop.VersionControl.Git
 			{
 				string currentBranch = repo.GetCurrentBranch ();
 				foreach (Branch branch in repo.GetBranches ()) {
-					CommandInfo ci = info.Add (branch.Name, branch.Name);
-					if (branch.Name == currentBranch)
+					CommandInfo ci = info.Add (branch.FriendlyName, branch.FriendlyName);
+					if (branch.FriendlyName == currentBranch)
 						ci.Checked = true;
 				}
 			}
@@ -151,23 +151,43 @@ namespace MonoDevelop.VersionControl.Git
 				if (MessageService.RunCustomDialog (dlg) == (int) Gtk.ResponseType.Ok) {
 					string comment = dlg.Comment;
 					var monitor = new MessageDialogProgressMonitor (true, false, false, true);
-					var statusTracker = IdeApp.Workspace.GetFileStatusTracker ();
+					FileService.FreezeEvents ();
 					ThreadPool.QueueUserWorkItem (delegate {
 						try {
 							Stash stash;
-							Repository.TryCreateStash (monitor, comment, out stash);
+							if (Repository.TryCreateStash (monitor, comment, out stash)) {
+								string msg;
+								if (stash != null) {
+									msg = GettextCatalog.GetString ("Changes successfully stashed");
+								} else {
+									msg = GettextCatalog.GetString ("No changes were available to stash");
+								}
+
+								Runtime.RunInMainThread (delegate {
+									IdeApp.Workbench.StatusBar.ShowMessage (msg);
+								});
+							}
+
 						} catch (Exception ex) {
 							MessageService.ShowError (GettextCatalog.GetString ("Stash operation failed"), ex);
 						}
 						finally {
 							monitor.Dispose ();
-							statusTracker.NotifyChanges ();
+							FileService.ThawEvents ();
 						}
 					});
 				}
 			} finally {
 				dlg.Destroy ();
+				dlg.Dispose ();
 			}
+		}
+
+		protected override void Update (CommandInfo info)
+		{
+			var repo = UpdateVisibility (info);
+			if (repo != null)
+				info.Enabled = repo.RunOperation (repo.RootPath, repository => !repository.Info.IsHeadUnborn);
 		}
 	}
 
@@ -176,7 +196,7 @@ namespace MonoDevelop.VersionControl.Git
 		protected override void Run ()
 		{
 			var monitor = new MessageDialogProgressMonitor (true, false, false, true);
-			var statusTracker = IdeApp.Workspace.GetFileStatusTracker ();
+			FileService.FreezeEvents ();
 			ThreadPool.QueueUserWorkItem (delegate {
 				try {
 					GitService.ReportStashResult (Repository.PopStash (monitor, 0));
@@ -185,7 +205,9 @@ namespace MonoDevelop.VersionControl.Git
 				}
 				finally {
 					monitor.Dispose ();
-					statusTracker.NotifyChanges ();
+					Runtime.RunInMainThread (delegate {
+						FileService.ThawEvents ();
+					});
 				}
 			});
 		}

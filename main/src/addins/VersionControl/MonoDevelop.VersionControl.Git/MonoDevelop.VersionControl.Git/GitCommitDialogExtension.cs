@@ -30,11 +30,14 @@ using System;
 using MonoDevelop.Core;
 using MonoDevelop.Projects;
 using MonoDevelop.Ide;
+using System.Text.RegularExpressions;
 
 namespace MonoDevelop.VersionControl.Git
 {
 	sealed class GitCommitDialogExtension: CommitDialogExtension
 	{
+		public static readonly Regex MailRegex = new Regex (@"[\w\d._%+-]+@[\w\d.-]+\.\w+", RegexOptions.Compiled);
+
 		GitCommitDialogExtensionWidget widget;
 
 		Gtk.TextView textView;
@@ -42,17 +45,25 @@ namespace MonoDevelop.VersionControl.Git
 
 		public override bool Initialize (ChangeSet changeSet)
 		{
-			if (changeSet.Repository is GitRepository) {
-				widget = new GitCommitDialogExtensionWidget ();
+			var repo = changeSet.Repository as GitRepository;
+			if (repo != null) {
+				widget = new GitCommitDialogExtensionWidget (repo);
 				Add (widget);
 				widget.Show ();
 				Show ();
 				widget.Changed += delegate {
-					AllowCommit = widget.CommitterIsAuthor || widget.AuthorName.Length > 0;
+					AllowCommit = widget.CommitterIsAuthor || 
+					(widget.AuthorName.Length > 0 && IsValidMail(widget.AuthorMail));
 				};
 				return true;
 			}
 			return false;
+		}
+
+		public override string FormatDialogTitle (ChangeSet changeSet, string title)
+		{
+			var gitRepo = changeSet.Repository as GitRepository;
+			return gitRepo != null ? string.Format ("{0} ({1})", title, gitRepo.GetCurrentBranch ()) : title;
 		}
 
 		public override bool OnBeginCommit (ChangeSet changeSet)
@@ -104,10 +115,12 @@ namespace MonoDevelop.VersionControl.Git
 							return false;
 					} finally {
 						dlg.Destroy ();
+						dlg.Dispose ();
 					}
 				}
 
-				if (user != sol.AuthorInformation.Name || email != sol.AuthorInformation.Email) {
+				if ((!string.IsNullOrEmpty (sol.AuthorInformation.Name) && !string.IsNullOrEmpty (sol.AuthorInformation.Email)) &&
+					(user != sol.AuthorInformation.Name || email != sol.AuthorInformation.Email)) {
 					// There is a conflict. Ask the user what to do
 					string gitInfo = GetDesc (user, email);
 					string mdInfo = GetDesc (sol.AuthorInformation.Name, sol.AuthorInformation.Email);
@@ -126,6 +139,7 @@ namespace MonoDevelop.VersionControl.Git
 							return false;
 					} finally {
 						dlg.Destroy ();
+						dlg.Dispose ();
 					}
 				}
 			}
@@ -135,11 +149,11 @@ namespace MonoDevelop.VersionControl.Git
 		static string GetDesc (string name, string email)
 		{
 			if (string.IsNullOrEmpty (name) && string.IsNullOrEmpty (email))
-				return "Not configured";
+				return GettextCatalog.GetString ("Not configured");
 			if (string.IsNullOrEmpty (name))
 				name = GettextCatalog.GetString ("Name not configured");
 			if (string.IsNullOrEmpty (email))
-				email = GettextCatalog.GetString ("e-mail not configured");
+				email = GettextCatalog.GetString ("Email not configured");
 			return name + ", " + email;
 		}
 
@@ -153,7 +167,7 @@ namespace MonoDevelop.VersionControl.Git
 		{
 			this.textView = textView;
 			overflowTextTag = new Gtk.TextTag ("overflow");
-			overflowTextTag.Foreground = "red";
+			overflowTextTag.Foreground = Ide.Gui.Styles.ErrorForegroundColor.ToHexString (false);
 			overflowTextTag.ForegroundSet = true;
 			textView.Buffer.TagTable.Add (overflowTextTag);
 			textView.Buffer.Changed += OnTextChanged;
@@ -175,10 +189,12 @@ namespace MonoDevelop.VersionControl.Git
 			var text = textView.Buffer.Text;
 			var lines = text.Split ('\n');
 			if (lines.Length > 0 && lines [0].Length > maxLengthConventionForFirstLineOfCommitMessage) {
-				textView.TooltipText = String.Format (GettextCatalog.GetString (
-					"When using Git, it is not recommended to surpass the character count of {0} in the first line of the commit message"),
-					maxLengthConventionForFirstLineOfCommitMessage);
-				textView.HasTooltip = true;
+				if (!textView.HasTooltip) {
+					textView.TooltipText = GettextCatalog.GetString (
+						"When using Git, it is not recommended to surpass the character count of {0} in the first line of the commit message",
+						maxLengthConventionForFirstLineOfCommitMessage);
+					textView.HasTooltip = true;
+				}
 
 				textView.Buffer.GetBounds (out start, out unused);
 				start.ForwardChars (maxLengthConventionForFirstLineOfCommitMessage);
@@ -189,6 +205,16 @@ namespace MonoDevelop.VersionControl.Git
 			} else {
 				textView.HasTooltip = false;
 			}
+		}
+
+		bool IsValidMail (string mail)
+		{
+			if (string.IsNullOrEmpty (mail))
+				return false;
+
+			var match = MailRegex.Match (mail);
+
+			return match.Success;
 		}
 	}
 }

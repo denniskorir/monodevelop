@@ -24,39 +24,69 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 // THE SOFTWARE.
 
+using System;
 using MonoDevelop.Components.Commands;
-using MonoDevelop.Ide;
 using MonoDevelop.Projects;
+using NuGet.ProjectManagement.Projects;
 
 namespace MonoDevelop.PackageManagement.Commands
 {
-	public class RestorePackagesInProjectHandler : PackagesCommandHandler
+	internal class RestorePackagesInProjectHandler : PackagesCommandHandler
 	{
 		protected override void Run ()
 		{
-			IDotNetProject project = GetSelectedProject ();
-			if (project == null)
-				return;
-
-			ProgressMonitorStatusMessage progressMessage = ProgressMonitorStatusMessageFactory.CreateRestoringPackagesInProjectMessage ();
-			var runner = new PackageRestoreRunner ();
-			DispatchService.BackgroundDispatch (() => {
-				runner.Run (project, progressMessage);
-			});
-		}
-
-		IDotNetProject GetSelectedProject ()
-		{
-			DotNetProject project = GetSelectedDotNetProject ();
-			if (project != null) {
-				return new DotNetProjectProxy (project);
-			}
-			return null;
+			Run (GetSelectedDotNetProject ());
 		}
 
 		protected override void Update (CommandInfo info)
 		{
-			info.Enabled = SelectedDotNetProjectOrSolutionHasPackages ();
+			info.Enabled = SelectedDotNetProjectHasPackages ();
+		}
+
+		public static void Run (DotNetProject project)
+		{
+			Run (project, false);
+		}
+
+		public static void Run (DotNetProject project, bool restoreTransitiveProjectReferences, bool reevaluateBeforeRestore = false)
+		{
+			try {
+				ProgressMonitorStatusMessage message = ProgressMonitorStatusMessageFactory.CreateRestoringPackagesInProjectMessage ();
+				IPackageAction action = CreateRestorePackagesAction (project, restoreTransitiveProjectReferences, reevaluateBeforeRestore);
+				PackageManagementServices.BackgroundPackageActionRunner.Run (message, action);
+			} catch (Exception ex) {
+				ShowStatusBarError (ex);
+			}
+		}
+
+		static IPackageAction CreateRestorePackagesAction (DotNetProject project, bool restoreTransitiveProjectReferences, bool reevaluateBeforeRestore)
+		{
+			var solutionManager = PackageManagementServices.Workspace.GetSolutionManager (project.ParentSolution);
+			var nugetProject = solutionManager.GetNuGetProject (new DotNetProjectProxy (project));
+
+			var buildIntegratedProject = nugetProject as BuildIntegratedNuGetProject;
+			if (buildIntegratedProject != null) {
+				return new RestoreNuGetPackagesInNuGetIntegratedProject (
+					project,
+					buildIntegratedProject,
+					solutionManager,
+					restoreTransitiveProjectReferences) {
+					ReevaluateBeforeRestore = reevaluateBeforeRestore
+				};
+			}
+
+			var nugetAwareProject = project as INuGetAwareProject;
+			if (nugetAwareProject != null) {
+				return new RestoreNuGetPackagesInNuGetAwareProjectAction (project, solutionManager);
+			}
+
+			return new RestoreNuGetPackagesInProjectAction (project, nugetProject, solutionManager);
+		}
+
+		static void ShowStatusBarError (Exception ex)
+		{
+			ProgressMonitorStatusMessage message = ProgressMonitorStatusMessageFactory.CreateRestoringPackagesInProjectMessage ();
+			PackageManagementServices.BackgroundPackageActionRunner.ShowError (message, ex);
 		}
 	}
 }

@@ -35,10 +35,11 @@ using MonoDevelop.Core;
 using MonoDevelop.Ide.Gui.Content;
 using MonoDevelop.Components.Commands;
 using MonoDevelop.Ide.Commands;
+using MonoDevelop.Ide.Editor;
 
 namespace MonoDevelop.Ide.Gui
 {
-	public class ViewCommandHandlers : ICommandRouter
+	public class ViewCommandHandlers
 	{
 		IWorkbenchWindow window;
 		Document doc;
@@ -52,11 +53,6 @@ namespace MonoDevelop.Ide.Gui
 		public T GetContent <T>() where T : class
 		{
 			return (T) window.ActiveViewContent.GetContent (typeof(T));
-		}
-		
-		object ICommandRouter.GetNextCommandTarget ()
-		{
-			return doc.ExtendedCommandTargetChain;
 		}
 		
 		[CommandHandler (FileCommands.Save)]
@@ -158,8 +154,13 @@ namespace MonoDevelop.Ide.Gui
 		[CommandUpdateHandler (EditCommands.Cut)]
 		protected void OnUpdateCut (CommandInfo info)
 		{
+			bool inWpf = false;
+			#if WIN32
+			if (System.Windows.Input.Keyboard.FocusedElement != null)
+				inWpf = true;
+			#endif
 			IClipboardHandler handler = GetContent <IClipboardHandler> ();
-			if (handler != null && handler.EnableCut)
+			if (!inWpf && handler != null && handler.EnableCut)
 				info.Enabled = true;
 			else
 				info.Bypass = true;
@@ -176,8 +177,13 @@ namespace MonoDevelop.Ide.Gui
 		[CommandUpdateHandler (EditCommands.Copy)]
 		protected void OnUpdateCopy (CommandInfo info)
 		{
+			bool inWpf = false;
+			#if WIN32
+			if (System.Windows.Input.Keyboard.FocusedElement != null)
+				inWpf = true;
+			#endif
 			IClipboardHandler handler = GetContent <IClipboardHandler> ();
-			if (handler != null && handler.EnableCopy)
+			if (!inWpf && handler != null && handler.EnableCopy)
 				info.Enabled = true;
 			else
 				info.Bypass = true;
@@ -194,8 +200,13 @@ namespace MonoDevelop.Ide.Gui
 		[CommandUpdateHandler (EditCommands.Paste)]
 		protected void OnUpdatePaste (CommandInfo info)
 		{
+			bool inWpf = false;
+			#if WIN32
+			if (System.Windows.Input.Keyboard.FocusedElement != null)
+				inWpf = true;
+			#endif
 			IClipboardHandler handler = GetContent <IClipboardHandler> ();
-			if (handler != null && handler.EnablePaste)
+			if (!inWpf && handler != null && handler.EnablePaste)
 				info.Enabled = true;
 			else
 				info.Bypass = true;
@@ -230,8 +241,13 @@ namespace MonoDevelop.Ide.Gui
 		[CommandUpdateHandler (EditCommands.SelectAll)]
 		protected void OnUpdateSelectAll (CommandInfo info)
 		{
+			bool inWpf = false;
+			#if WIN32
+			if (System.Windows.Input.Keyboard.FocusedElement != null)
+				inWpf = true;
+			#endif
 			IClipboardHandler handler = GetContent <IClipboardHandler> ();
-			if (handler != null)
+			if (!inWpf && handler != null)
 				info.Enabled = handler.EnableSelectAll;
 			else
 				info.Bypass = true;
@@ -240,33 +256,33 @@ namespace MonoDevelop.Ide.Gui
 		[CommandHandler (EditCommands.UppercaseSelection)]
 		public void OnUppercaseSelection ()
 		{
-			IEditableTextBuffer buffer = GetContent <IEditableTextBuffer> ();
+			var buffer = GetContent <TextEditor> ();
 			if (buffer == null)
 				return;
 			
 			string selectedText = buffer.SelectedText;
 			if (string.IsNullOrEmpty (selectedText)) {
-				int pos = buffer.CursorPosition;
-				string ch = buffer.GetText (pos, pos + 1);
+				int pos = buffer.CaretOffset;
+				string ch = buffer.GetTextAt (pos, 1);
 				string upper = ch.ToUpper ();
 				if (upper == ch) {
-					buffer.CursorPosition = pos + 1;
+					buffer.CaretOffset = pos + 1;
 					return;
 				}
 				using (var undo = buffer.OpenUndoGroup ()) {
-					buffer.DeleteText (pos, 1);
+					buffer.RemoveText (pos, 1);
 					buffer.InsertText (pos, upper);
-					buffer.CursorPosition = pos + 1;
+					buffer.CaretOffset = pos + 1;
 				}
 			} else {
 				string newText = selectedText.ToUpper ();
 				if (newText == selectedText)
 					return;
-				int startPos = buffer.SelectionStartPosition;
+				int startPos = buffer.SelectionRange.Offset;
 				using (var undo = buffer.OpenUndoGroup ()) {
-					buffer.DeleteText (startPos, selectedText.Length);
+					buffer.RemoveText (startPos, selectedText.Length);
 					buffer.InsertText (startPos, newText);
-					buffer.Select (startPos, startPos + newText.Length);
+					buffer.SetSelection (startPos, startPos + newText.Length);
 				}
 			}
 		}
@@ -274,40 +290,40 @@ namespace MonoDevelop.Ide.Gui
 		[CommandUpdateHandler (EditCommands.UppercaseSelection)]
 		protected void OnUppercaseSelection (CommandInfo info)
 		{
-			IEditableTextBuffer buffer = GetContent <IEditableTextBuffer> ();
+			var buffer = GetContent <TextEditor> ();
 			info.Enabled = buffer != null;
 		}
 		
 		[CommandHandler (EditCommands.LowercaseSelection)]
 		public void OnLowercaseSelection ()
 		{
-			IEditableTextBuffer buffer = GetContent <IEditableTextBuffer> ();
+			var buffer = GetContent <TextEditor> ();
 			if (buffer == null)
 				return;
 			
 			string selectedText = buffer.SelectedText;
 			if (string.IsNullOrEmpty (selectedText)) {
-				int pos = buffer.CursorPosition;
-				string ch = buffer.GetText (pos, pos + 1);
+				int pos = buffer.CaretOffset;
+				string ch = buffer.GetTextAt (pos, 1);
 				string lower = ch.ToLower ();
 				if (lower == ch) {
-					buffer.CursorPosition = pos + 1;
+					buffer.CaretOffset = pos + 1;
 					return;
 				};
 				using (var undo = buffer.OpenUndoGroup ()) {
-					buffer.DeleteText (pos, 1);
+					buffer.RemoveText (pos, 1);
 					buffer.InsertText (pos, lower);
-					buffer.CursorPosition = pos + 1;
+					buffer.CaretOffset = pos + 1;
 				}
 			} else {
 				string newText = selectedText.ToLower ();
 				if (newText == selectedText)
 					return;
-				int startPos = buffer.SelectionStartPosition;
+				int startPos = buffer.SelectionRange.Offset;
 				using (var undo = buffer.OpenUndoGroup ()) {
-					buffer.DeleteText (startPos, selectedText.Length);
+					buffer.RemoveText (startPos, selectedText.Length);
 					buffer.InsertText (startPos, newText);
-					buffer.Select (startPos, startPos + newText.Length);
+					buffer.SetSelection (startPos, startPos + newText.Length);
 				}
 			}
 		}
@@ -315,100 +331,96 @@ namespace MonoDevelop.Ide.Gui
 		[CommandUpdateHandler (EditCommands.LowercaseSelection)]
 		protected void OnLowercaseSelection (CommandInfo info)
 		{
-			IEditableTextBuffer buffer = GetContent <IEditableTextBuffer> ();
+			var buffer = GetContent <TextEditor> ();
 			info.Enabled = buffer != null;
 		}
 		
 
 		// Text editor commands
 		
-		[CommandUpdateHandler (TextEditorCommands.LineEnd)]
-		[CommandUpdateHandler (TextEditorCommands.LineStart)]
-		[CommandUpdateHandler (TextEditorCommands.DeleteLeftChar)]
-		[CommandUpdateHandler (TextEditorCommands.DeleteRightChar)]
 		[CommandUpdateHandler (TextEditorCommands.CharLeft)]
 		[CommandUpdateHandler (TextEditorCommands.CharRight)]
-		[CommandUpdateHandler (TextEditorCommands.LineUp)]
-		[CommandUpdateHandler (TextEditorCommands.LineDown)]
-		[CommandUpdateHandler (TextEditorCommands.DocumentStart)]
-		[CommandUpdateHandler (TextEditorCommands.DocumentEnd)]
+		[CommandUpdateHandler (TextEditorCommands.DeleteLeftChar)]
 		[CommandUpdateHandler (TextEditorCommands.DeleteLine)]
-		[CommandUpdateHandler (TextEditorCommands.MoveBlockUp)]
-		[CommandUpdateHandler (TextEditorCommands.MoveBlockDown)]		
-		[CommandUpdateHandler (TextEditorCommands.GotoMatchingBrace)]		
+		[CommandUpdateHandler (TextEditorCommands.DeleteRightChar)]
+		[CommandUpdateHandler (TextEditorCommands.DocumentEnd)]
+		[CommandUpdateHandler (TextEditorCommands.DocumentStart)]
+		[CommandUpdateHandler (TextEditorCommands.LineDown)]
+		[CommandUpdateHandler (TextEditorCommands.LineEnd)]
+		[CommandUpdateHandler (TextEditorCommands.LineStart)]
+		[CommandUpdateHandler (TextEditorCommands.LineUp)]
 		protected void OnUpdateLineEnd (CommandInfo info)
 		{
 			// If the current document is not an editor, just ignore the text
 			// editor commands.
-			info.Bypass = doc.Editor == null;
+			info.Bypass = doc.Editor?.HasFocus == false;
 		}
 		
 		[CommandHandler (TextEditorCommands.LineEnd)]
 		protected void OnLineEnd ()
 		{
-			Mono.TextEditor.CaretMoveActions.LineEnd (doc.Editor);
+			doc.Editor.EditorOperations.MoveToEndOfLine (false);
 		}
 		
 		[CommandHandler (TextEditorCommands.LineStart)]
 		protected void OnLineStart ()
 		{
-			Mono.TextEditor.CaretMoveActions.LineStart (doc.Editor);
+			doc.Editor.EditorOperations.MoveToStartOfLine (false);
 		}
 		
 		[CommandHandler (TextEditorCommands.DeleteLeftChar)]
 		protected void OnDeleteLeftChar ()
 		{
-			Mono.TextEditor.CaretMoveActions.Left (doc.Editor);
-			Mono.TextEditor.DeleteActions.Delete (doc.Editor);
+			doc.Editor.EditorOperations.Backspace ();
 		}
 		
 		[CommandHandler (TextEditorCommands.DeleteRightChar)]
 		protected void OnDeleteRightChar ()
 		{
-			Mono.TextEditor.DeleteActions.Delete (doc.Editor);
+			doc.Editor.EditorOperations.Delete ();
 		}
 		
 		[CommandHandler (TextEditorCommands.CharLeft)]
 		protected void OnCharLeft ()
 		{
-			Mono.TextEditor.CaretMoveActions.Left (doc.Editor);
+			doc.Editor.EditorOperations.MoveToPreviousCharacter (false);
 		}
 		
 		[CommandHandler (TextEditorCommands.CharRight)]
 		protected void OnCharRight ()
 		{
-			Mono.TextEditor.CaretMoveActions.Right (doc.Editor);
+			doc.Editor.EditorOperations.MoveToNextCharacter (false);
 		}
 		
 		[CommandHandler (TextEditorCommands.LineUp)]
 		protected void OnLineUp ()
 		{
-			Mono.TextEditor.CaretMoveActions.Up (doc.Editor);
+			doc.Editor.EditorOperations.MoveLineUp (false);
 		}
 		
 		[CommandHandler (TextEditorCommands.LineDown)]
 		protected void OnLineDown ()
 		{
-			Mono.TextEditor.CaretMoveActions.Down (doc.Editor);
+			doc.Editor.EditorOperations.MoveLineDown (false);
 		}
 		
 		[CommandHandler (TextEditorCommands.DocumentStart)]
 		protected void OnDocumentStart ()
 		{
-			Mono.TextEditor.CaretMoveActions.ToDocumentStart (doc.Editor);
+			doc.Editor.EditorOperations.MoveToStartOfDocument (false);
 		}
 		
 		[CommandHandler (TextEditorCommands.DocumentEnd)]
 		protected void OnDocumentEnd ()
 		{
-			Mono.TextEditor.CaretMoveActions.ToDocumentEnd (doc.Editor);
+			doc.Editor.EditorOperations.MoveToEndOfDocument (false);
 		}
 		
 		[CommandHandler (TextEditorCommands.DeleteLine)]
 		protected void OnDeleteLine ()
 		{
-			var line = doc.Editor.Document.GetLine (doc.Editor.Caret.Line);
-			doc.Editor.Remove (line.Offset, line.LengthIncludingDelimiter);
+			var line = doc.Editor.GetLine (doc.Editor.CaretLocation.Line);
+			doc.Editor.RemoveText (line.Offset, line.LengthIncludingDelimiter);
 		}
 		
 		struct RemoveInfo
@@ -435,7 +447,7 @@ namespace MonoDevelop.Ide.Gui
 				return ch == ' ' || ch == '\t' || ch == '\v';
 			}
 			
-			public static RemoveInfo GetRemoveInfo (Mono.TextEditor.TextDocument document, ref int pos)
+			public static RemoveInfo GetRemoveInfo (TextEditor document, ref int pos)
 			{
 				int len = 0;
 				while (pos > 0 && IsWhiteSpace (document.GetCharAt (pos))) {
@@ -458,22 +470,22 @@ namespace MonoDevelop.Ide.Gui
 		[CommandHandler (EditCommands.RemoveTrailingWhiteSpaces)]
 		public void OnRemoveTrailingWhiteSpaces ()
 		{
-			Mono.TextEditor.TextEditorData data = doc.Editor;
+			var data = doc.Editor;
 			if (data == null)
 				return;
 			
 			System.Collections.Generic.List<RemoveInfo> removeList = new System.Collections.Generic.List<RemoveInfo> ();
-			int pos = data.Document.TextLength - 1;
-			RemoveInfo removeInfo = RemoveInfo.GetRemoveInfo (data.Document, ref pos);
+			int pos = data.Length - 1;
+			RemoveInfo removeInfo = RemoveInfo.GetRemoveInfo (data, ref pos);
 			if (!removeInfo.IsEmpty)
 				removeList.Add (removeInfo);
 			
 			while (pos >= 0) {
-				char ch = data.Document.GetCharAt (pos);
+				char ch = data.GetCharAt (pos);
 				if (ch == '\n' || ch == '\r') {
-					if (RemoveInfo.IsWhiteSpace (data.Document.GetCharAt (pos - 1))) {
+					if (RemoveInfo.IsWhiteSpace (data.GetCharAt (pos - 1))) {
 						--pos;
-						removeInfo = RemoveInfo.GetRemoveInfo (data.Document, ref pos);
+						removeInfo = RemoveInfo.GetRemoveInfo (data, ref pos);
 						if (!removeInfo.IsEmpty)
 							removeList.Add (removeInfo);
 					}
@@ -482,8 +494,7 @@ namespace MonoDevelop.Ide.Gui
 			}
 			using (var undo = data.OpenUndoGroup ()) {
 				foreach (var info in removeList) {
-					data.Document.Remove (info.Position, info.Length);
-					data.Document.CommitLineUpdate (data.Document.OffsetToLineNumber (info.Position));
+					data.RemoveText (info.Position, info.Length);
 				}
 			}
 		}
@@ -491,14 +502,27 @@ namespace MonoDevelop.Ide.Gui
 		[CommandUpdateHandler (EditCommands.RemoveTrailingWhiteSpaces)]
 		protected void OnRemoveTrailingWhiteSpaces (CommandInfo info)
 		{
-			info.Enabled = GetContent <IEditableTextBuffer> () != null;
+			info.Enabled = GetContent <TextEditor> () != null;
 		}
 		
 		#region Folding
 		bool IsFoldMarkerMarginEnabled {
 			get {
-				return PropertyService.Get ("ShowFoldMargin", false);
+				return DefaultSourceEditorOptions.Instance.ShowFoldMargin;
 			}
+		}
+
+		[CommandHandler (EditCommands.EnableDisableFolding)]
+		protected void EnableDisableFolding ()
+		{
+			DefaultSourceEditorOptions.Instance.ShowFoldMargin = !DefaultSourceEditorOptions.Instance.ShowFoldMargin;
+		}
+
+		[CommandUpdateHandler (EditCommands.EnableDisableFolding)]
+		protected void UpdateEnableDisableFolding (CommandInfo info)
+		{
+			info.Text = IsFoldMarkerMarginEnabled ? GettextCatalog.GetString ("Disable _Folding") : GettextCatalog.GetString ("Enable _Folding");
+			info.Enabled = GetContent<IFoldable> () != null;
 		}
 
 		[CommandUpdateHandler (EditCommands.ToggleAllFoldings)]

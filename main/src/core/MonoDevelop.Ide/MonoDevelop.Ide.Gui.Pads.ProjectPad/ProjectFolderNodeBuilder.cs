@@ -47,9 +47,6 @@ namespace MonoDevelop.Ide.Gui.Pads.ProjectPad
 		Xwt.Drawing.Image folderOpenIcon;
 		Xwt.Drawing.Image folderClosedIcon;
 		
-		EventHandler<FileCopyEventArgs> fileRenamedHandler;
-		EventHandler<FileEventArgs> fileRemovedHandler;
-		
 		public override Type NodeDataType {
 			get { return typeof(ProjectFolder); }
 		}
@@ -74,17 +71,14 @@ namespace MonoDevelop.Ide.Gui.Pads.ProjectPad
 
 			folderOpenIcon = Context.GetIcon (Stock.OpenFolder);
 			folderClosedIcon = Context.GetIcon (Stock.ClosedFolder);
-			
-			fileRenamedHandler = DispatchService.GuiDispatch<EventHandler<FileCopyEventArgs>> (OnFolderRenamed);
-			fileRemovedHandler = DispatchService.GuiDispatch<EventHandler<FileEventArgs>> (OnFolderRemoved);
 		}
 		
 		public override void OnNodeAdded (object dataObject)
 		{
 			base.OnNodeAdded (dataObject);
 			ProjectFolder folder = (ProjectFolder) dataObject;
-			folder.FolderRenamed += fileRenamedHandler;
-			folder.FolderRemoved += fileRemovedHandler;
+			folder.FolderRenamed += OnFolderRenamed;
+			folder.FolderRemoved += OnFolderRemoved;
 			folder.TrackChanges = true;
 		}
 		
@@ -92,8 +86,8 @@ namespace MonoDevelop.Ide.Gui.Pads.ProjectPad
 		{
 			base.OnNodeRemoved (dataObject);
 			ProjectFolder folder = (ProjectFolder) dataObject;
-			folder.FolderRenamed -= fileRenamedHandler;
-			folder.FolderRemoved -= fileRemovedHandler;
+			folder.FolderRenamed -= OnFolderRenamed;
+			folder.FolderRemoved -= OnFolderRemoved;
 			folder.Dispose ();
 		}
 		
@@ -117,6 +111,12 @@ namespace MonoDevelop.Ide.Gui.Pads.ProjectPad
 				tb.MoveToParent ();
 				tb.UpdateChildren ();
 			}
+		}
+
+		public override int GetSortIndex (ITreeNavigator node)
+		{
+			// Before items, but after references and other collections
+			return -100;
 		}
 	
 		public override void BuildNode (ITreeBuilder treeBuilder, object dataObject, NodeInfo nodeInfo)
@@ -149,7 +149,7 @@ namespace MonoDevelop.Ide.Gui.Pads.ProjectPad
 			return ((ProjectFolder)dataObject).Path;
 		}
 		
-		public override void RenameItem (string newName)
+		public async override void RenameItem (string newName)
 		{
 			ProjectFolder folder = (ProjectFolder) CurrentNode.DataItem as ProjectFolder;
 			string oldFoldername = folder.Path;
@@ -157,7 +157,7 @@ namespace MonoDevelop.Ide.Gui.Pads.ProjectPad
 			
 			if (oldFoldername != newFoldername) {
 				try {
-					if (!FileService.IsValidPath (newFoldername)) {
+					if (!FileService.IsValidPath (newFoldername) || ContainsDirectorySeparator (newName)) {
 						MessageService.ShowWarning (GettextCatalog.GetString ("The name you have chosen contains illegal characters. Please choose a different name."));
 						return;
 					} 
@@ -166,7 +166,7 @@ namespace MonoDevelop.Ide.Gui.Pads.ProjectPad
 						return;
 					}
 					// Don't use Directory.Exists because we want to check for the exact case in case-insensitive file systems
-					var di = Directory.GetDirectories (Path.GetDirectoryName (newFoldername), Path.GetFileName (newFoldername)).FirstOrDefault ();
+					var di = Directory.EnumerateDirectories (Path.GetDirectoryName (newFoldername), Path.GetFileName (newFoldername)).FirstOrDefault ();
 					if (di != null) {
 						MessageService.ShowWarning (GettextCatalog.GetString ("File or directory name is already in use. Please choose a different one."));
 						return;
@@ -174,7 +174,7 @@ namespace MonoDevelop.Ide.Gui.Pads.ProjectPad
 
 					FileService.RenameDirectory (oldFoldername, newName);
 					if (folder.Project != null)
-						IdeApp.ProjectOperations.Save (folder.Project);
+						await IdeApp.ProjectOperations.SaveAsync (folder.Project);
 
 				} catch (System.ArgumentException) { // new file name with wildcard (*, ?) characters in it
 					MessageService.ShowWarning (GettextCatalog.GetString ("The name you have chosen contains illegal characters. Please choose a different name."));
@@ -183,10 +183,10 @@ namespace MonoDevelop.Ide.Gui.Pads.ProjectPad
 				}
 			}
 		}
-		
+
 		public override void DeleteMultipleItems ()
 		{
-			var projects = new Set<SolutionEntityItem> ();
+			var projects = new Set<SolutionItem> ();
 			var folders = new List<ProjectFolder> ();
 			foreach (ITreeNavigator node in CurrentNodes)
 				folders.Add ((ProjectFolder) node.DataItem);
@@ -198,16 +198,16 @@ namespace MonoDevelop.Ide.Gui.Pads.ProjectPad
 				"The Delete option permanently removes the directory and any files it contains from your hard disk. " +
 				"Click Remove from Project if you only want to remove it from your current solution.")
 			};
-			question.Buttons.Add (AlertButton.Cancel);
 			question.Buttons.Add (AlertButton.Delete);
 			question.Buttons.Add (removeButton);
+			question.Buttons.Add (AlertButton.Cancel);
 
 			var deleteOnlyQuestion = new QuestionMessage () {
 				AllowApplyToAll = folders.Count > 1,
 				SecondaryText = GettextCatalog.GetString ("The directory and any files it contains will be permanently removed from your hard disk. ")
 			};
-			deleteOnlyQuestion.Buttons.Add (AlertButton.Cancel);
 			deleteOnlyQuestion.Buttons.Add (AlertButton.Delete);
+			deleteOnlyQuestion.Buttons.Add (AlertButton.Cancel);
 			
 			foreach (var folder in folders) {
 				var project = folder.Project;
@@ -273,7 +273,7 @@ namespace MonoDevelop.Ide.Gui.Pads.ProjectPad
 					}
 				}
 			}
-			IdeApp.ProjectOperations.Save (projects);
+			IdeApp.ProjectOperations.SaveAsync (projects);
 		}
 
 		static void DeleteFolder (ProjectFolder folder)
@@ -299,7 +299,7 @@ namespace MonoDevelop.Ide.Gui.Pads.ProjectPad
 		[AllowMultiSelection]
 		public void IncludeToProject ()
 		{
-			Set<SolutionEntityItem> projects = new Set<SolutionEntityItem> ();
+			Set<SolutionItem> projects = new Set<SolutionItem> ();
 			foreach (ITreeNavigator node in CurrentNodes) {
 				Project project = node.GetParentDataItem (typeof(Project), true) as Project;
 				if (node.HasChildren ()) {
@@ -319,7 +319,7 @@ namespace MonoDevelop.Ide.Gui.Pads.ProjectPad
 					}
 				}
 			}
-			IdeApp.ProjectOperations.Save (projects);
+			IdeApp.ProjectOperations.SaveAsync (projects);
 		}
 
 		[CommandUpdateHandler (ProjectCommands.IncludeToProject)]
@@ -376,6 +376,10 @@ namespace MonoDevelop.Ide.Gui.Pads.ProjectPad
 					return true;
 			return false;
 		}
-		
+
+		internal static bool ContainsDirectorySeparator (string name)
+		{
+			return name.Contains (Path.DirectorySeparatorChar) || name.Contains (Path.AltDirectorySeparatorChar);
+		}
 	}
 }

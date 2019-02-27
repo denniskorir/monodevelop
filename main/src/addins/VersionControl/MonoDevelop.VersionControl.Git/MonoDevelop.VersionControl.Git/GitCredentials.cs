@@ -34,50 +34,101 @@ using MonoDevelop.Components;
 
 namespace MonoDevelop.VersionControl.Git
 {
+	public enum GitCredentialsType
+	{
+		Normal,
+		Tfs,
+	}
+
+	public class GitCredentialsState
+	{
+		public string UrlUsed { get; set; }
+		public bool AgentUsed { get; set; }
+		public int KeyUsed { get; set; }
+		public bool NativePasswordUsed { get; set; }
+		public Dictionary<string, int> KeyForUrl = new Dictionary<string, int> ();
+		public Dictionary<string, bool> AgentForUrl = new Dictionary<string, bool> ();
+
+		public GitCredentialsState ()
+		{
+			KeyUsed = -1;
+		}
+	}
+
 	static class GitCredentials
 	{
+		internal static readonly string UserCancelledExceptionMessage = GettextCatalog.GetString("Operation cancelled");
+
 		// Gather keys on initialize.
 		static readonly List<string> Keys = new List<string> ();
-		static readonly Dictionary<string, int> KeyForUrl = new Dictionary<string, int> ();
-		static readonly Dictionary<string, bool> AgentForUrl = new Dictionary<string, bool> ();
+		static readonly List<string> PublicKeys = new List<string> ();
 
-		static string urlUsed;
-		static bool agentUsed;
-		static int keyUsed = -1;
-		static bool nativePasswordUsed;
+		static Dictionary<GitCredentialsType, GitCredentialsState> credState = new Dictionary<GitCredentialsType, GitCredentialsState> ();
 
 		static GitCredentials ()
 		{
 			string keyStorage = Path.Combine (Environment.GetFolderPath (Environment.SpecialFolder.Personal), ".ssh");
-			if (!Directory.Exists (keyStorage))
-				return;
+			if (!Directory.Exists (keyStorage)) {
+				keyStorage = Path.Combine (Environment.ExpandEnvironmentVariables ("%HOME%"), ".ssh");
+				if (!Directory.Exists (keyStorage))
+					return;
+			}
 
-			foreach (var privateKey in Directory.EnumerateFiles (keyStorage)) {
+			var defaultKey = FilePath.Null;
+
+			foreach (FilePath privateKey in Directory.EnumerateFiles (keyStorage)) {
+				if (privateKey.Extension == ".pub")
+					continue;
 				string publicKey = privateKey + ".pub";
-				if (File.Exists (publicKey) && !KeyHasPassphrase (privateKey))
-					Keys.Add (privateKey);
+				if (File.Exists (publicKey)) {
+					if (privateKey.FileName == "id_rsa")
+						defaultKey = privateKey;
+					else if (!KeyHasPassphrase (privateKey)) {
+						Keys.Add (privateKey);
+						PublicKeys.Add (publicKey);
+					}
+				}
+			}
+
+			if (defaultKey.IsNotNull) {
+				var publicKey = defaultKey + ".pub";
+				// if the default key has no passphrase, make it the first key to try when authenticating,
+				// or the last one otherwise, to make sure that we try the unprotected keys first, before prompting
+				// for the passphrase.
+				if (KeyHasPassphrase (defaultKey)) {
+					Keys.Add (defaultKey);
+					PublicKeys.Add (publicKey);
+				} else {
+					Keys.Insert (0, defaultKey);
+					PublicKeys.Insert (0, publicKey);
+				}
+
 			}
 		}
 
-		public static Credentials TryGet (string url, string userFromUrl, SupportedCredentialTypes types)
+		public static Credentials TryGet (string url, string userFromUrl, SupportedCredentialTypes types, GitCredentialsType type)
 		{
 			bool result = true;
 			Uri uri = null;
 
-			urlUsed = url;
+			GitCredentialsState state;
+			if (!credState.TryGetValue (type, out state))
+				credState [type] = state = new GitCredentialsState ();
+			state.UrlUsed = url;
 
 			// We always need to run the TryGet* methods as we need the passphraseItem/passwordItem populated even
 			// if the password store contains an invalid password/no password
 			if ((types & SupportedCredentialTypes.UsernamePassword) != 0) {
-				uri = new Uri (url);
-				string username;
-				string password;
-				if (!nativePasswordUsed && TryGetUsernamePassword (uri, out username, out password)) {
-					nativePasswordUsed = true;
-					return new UsernamePasswordCredentials {
-						Username = username,
-						Password = password
-					};
+				if (Uri.TryCreate (url, UriKind.RelativeOrAbsolute, out uri)) {
+					string username;
+					string password;
+					if (!state.NativePasswordUsed && TryGetUsernamePassword (uri, out username, out password)) {
+						state.NativePasswordUsed = true;
+						return new UsernamePasswordCredentials {
+							Username = username,
+							Password = password
+						};
+					}
 				}
 			}
 
@@ -86,82 +137,85 @@ namespace MonoDevelop.VersionControl.Git
 				cred = new UsernamePasswordCredentials ();
 			else {
 				// Try ssh-agent on Linux.
-				if (!Platform.IsWindows && !agentUsed) {
+				if (!Platform.IsWindows && !state.AgentUsed) {
 					bool agentUsable;
-					if (!AgentForUrl.TryGetValue (url, out agentUsable))
-						AgentForUrl [url] = agentUsable = true;
+					if (!state.AgentForUrl.TryGetValue (url, out agentUsable))
+						state.AgentForUrl [url] = agentUsable = true;
 
 					if (agentUsable) {
-						agentUsed = true;
+						state.AgentUsed = true;
 						return new SshAgentCredentials {
 							Username = userFromUrl,
 						};
 					}
 				}
 
-				int key;
-				if (!KeyForUrl.TryGetValue (url, out key)) {
-					if (keyUsed + 1 < Keys.Count)
-						keyUsed++;
+				int keyIndex;
+				if (state.KeyForUrl.TryGetValue (url, out keyIndex))
+					state.KeyUsed = keyIndex;
+				else {
+					if (state.KeyUsed + 1 < Keys.Count)
+						state.KeyUsed++;
 					else {
-						SelectFileDialog dlg = null;
-						bool success = false;
-
-						DispatchService.GuiSyncDispatch (() => {
-							dlg = new SelectFileDialog (GettextCatalog.GetString ("Select a private SSH key to use."));
-							dlg.ShowHidden = true;
-							dlg.CurrentFolder = Environment.GetFolderPath (Environment.SpecialFolder.Personal);
-							success = dlg.Run ();
-						});
-						if (!success || !File.Exists (dlg.SelectedFile + ".pub"))
-							throw new VersionControlException (GettextCatalog.GetString ("Invalid credentials were supplied. Aborting operation."));
-
-						cred = new SshUserKeyCredentials {
+						var sshCred = new SshUserKeyCredentials {
 							Username = userFromUrl,
-							Passphrase = "",
-							PrivateKey = dlg.SelectedFile,
-							PublicKey = dlg.SelectedFile + ".pub",
+							Passphrase = string.Empty
 						};
+						cred = sshCred;
 
-						if (KeyHasPassphrase (dlg.SelectedFile)) {
-							DispatchService.GuiSyncDispatch (delegate {
-								result = MessageService.ShowCustomDialog (new CredentialsDialog (url, types, cred)) == (int)Gtk.ResponseType.Ok;
-							});
-						}
-
-						if (result)
+						if (XwtCredentialsDialog.Run (url, types, cred).Result) {
+							keyIndex = Keys.IndexOf (sshCred.PrivateKey);
+							if (keyIndex < 0) {
+								Keys.Add (sshCred.PrivateKey);
+								PublicKeys.Add (sshCred.PublicKey);
+								state.KeyUsed++;
+							} else
+								state.KeyUsed = keyIndex;
 							return cred;
-						throw new VersionControlException (GettextCatalog.GetString ("Invalid credentials were supplied. Aborting operation."));
+						}
+						throw new UserCancelledException (UserCancelledExceptionMessage);
 					}
-				} else
-					keyUsed = key;
+				}
 
+				var key = Keys [state.KeyUsed];
 				cred = new SshUserKeyCredentials {
 					Username = userFromUrl,
-					Passphrase = "",
-					PrivateKey = Keys [keyUsed],
-					PublicKey = Keys [keyUsed] + ".pub",
+					Passphrase = string.Empty,
+					PrivateKey = key,
+					PublicKey = PublicKeys [state.KeyUsed]
 				};
+
+				if (KeyHasPassphrase (key)) {
+					if (XwtCredentialsDialog.Run (url, types, cred).Result) {
+						var sshCred = (SshUserKeyCredentials)cred;
+						keyIndex = Keys.IndexOf (sshCred.PrivateKey);
+						if (keyIndex < 0) {
+							Keys.Add (sshCred.PrivateKey);
+							PublicKeys.Add (sshCred.PublicKey);
+							state.KeyUsed++;
+						} else
+							state.KeyUsed = keyIndex;
+					} else
+						throw new UserCancelledException (UserCancelledExceptionMessage);
+				}
+
 				return cred;
 			}
 
-			DispatchService.GuiSyncDispatch (delegate {
-				result = MessageService.ShowCustomDialog (new CredentialsDialog (url, types, cred)) == (int)Gtk.ResponseType.Ok;
-			});
-
-			if (result) {
+			if (XwtCredentialsDialog.Run (url, types, cred).Result) {
 				if ((types & SupportedCredentialTypes.UsernamePassword) != 0) {
 					var upcred = (UsernamePasswordCredentials)cred;
-					if (!string.IsNullOrEmpty (upcred.Password)) {
+					if (!string.IsNullOrEmpty (upcred.Password) && uri != null) {
 						PasswordService.AddWebUserNameAndPassword (uri, upcred.Username, upcred.Password);
 					}
 				}
+				return cred;
 			}
 
-			return cred;
+			throw new UserCancelledException (UserCancelledExceptionMessage);
 		}
 
-		static bool KeyHasPassphrase (string key)
+		internal static bool KeyHasPassphrase (string key)
 		{
 			return File.ReadAllText (key).Contains ("Proc-Type: 4,ENCRYPTED");
 		}
@@ -192,31 +246,40 @@ namespace MonoDevelop.VersionControl.Git
 			return false;
 		}
 
-		internal static void StoreCredentials ()
+		internal static void StoreCredentials (GitCredentialsType type)
 		{
-			nativePasswordUsed = false;
+			GitCredentialsState state;
+			if (!credState.TryGetValue (type, out state))
+				return;
 
-			if (!string.IsNullOrEmpty (urlUsed))
-				if (keyUsed != -1)
-					KeyForUrl [urlUsed] = keyUsed;
+			var url = state.UrlUsed;
+			var key = state.KeyUsed;
 
-			Cleanup ();
+			state.NativePasswordUsed = false;
+
+			if (!string.IsNullOrEmpty (url) && key != -1)
+				state.KeyForUrl [url] = key;
+
+			Cleanup (state);
 		}
 
-		internal static void InvalidateCredentials ()
+		internal static void InvalidateCredentials (GitCredentialsType type)
 		{
-			if (!string.IsNullOrEmpty (urlUsed))
-				if (AgentForUrl.ContainsKey (urlUsed))
-					AgentForUrl [urlUsed] &= !agentUsed;
+			GitCredentialsState state;
+			if (!credState.TryGetValue (type, out state))
+				return;
 
-			Cleanup ();
+			if (!string.IsNullOrEmpty (state.UrlUsed) && state.AgentForUrl.ContainsKey (state.UrlUsed))
+				state.AgentForUrl [state.UrlUsed] &= !state.AgentUsed;
+
+			Cleanup (state);
 		}
 
-		static void Cleanup ()
+		static void Cleanup (GitCredentialsState state)
 		{
-			urlUsed = null;
-			agentUsed = false;
-			keyUsed = -1;
+			state.UrlUsed = null;
+			state.AgentUsed = false;
+			state.KeyUsed = -1;
 		}
 	}
 }

@@ -7,32 +7,58 @@ ADDINS=$(MAC_APP_LIB_DIR)/AddIns
 EXTRAS=$(top_srcdir)/../extras
 ARTIFACTS=$(top_srcdir)/../../artifacts
 MD_CONFIGURE=$(top_srcdir)/../scripts/configure.sh
+EXTERNAL=../../external
+MONOSTUB_DEFINES=-DXM_REGISTRAR
+MONOSTUB_STATIC_LINK=$(EXTERNAL)/Xamarin.Mac.registrar.full.a
+EXTERN_C_XM_REGISTRAR_DEFINE=$(shell ./check-xm-extern.sh)
+
+if !RELEASE_BUILDS
+HYBRID_SUSPEND_ABORT=-DHYBRID_SUSPEND_ABORT
+endif
+
 #SDK_PATH=$(shell xcrun --sdk macosx10.8 --show-sdk-path)
 
 PACKAGE_UPDATE_ID=$(shell $(MD_CONFIGURE) get-releaseid)
 BUNDLE_VERSION=$(shell $(MD_CONFIGURE) get-version)
 
-CLEANFILES = render.exe
+CLEANFILES = render.exe monostub monostub-test
 #DISTCLEANFILES =
 EXTRA_DIST = dmg-bg.png DS_Store Info.plist.in make-dmg-bundle.sh render.cs
 
-all: app
+MONOSTUB_EXTRA_SOURCES = monostub-utils.h
+
+all: monostub monostub-nogui monostub-test
 
 render.exe: render.cs
-	gmcs -r:System.Drawing render.cs
+	mcs -r:System.Drawing render.cs
 
 dmg: render.exe app
 	./make-dmg-bundle.sh
 
-monostub: monostub.m $(MONOSTUB_EXTRA_SOURCES)
-	gcc -Wall -mmacosx-version-min=10.9 -m32 -o $@ $^ -framework AppKit
-#	gcc -Wall -mmacosx-version-min=10.9 -m32 -o $@ $^ -framework AppKit -isysroot $(SDK_PATH)
+monostub.o: monostub.mm $(MONOSTUB_EXTRA_SOURCES)
+	g++ -g $(EXTERN_C_XM_REGISTRAR_DEFINE) $(MONOSTUB_DEFINES) $(HYBRID_SUSPEND_ABORT) -c -Wall -mmacosx-version-min=10.10 -m$(MONOSTUB_ARCH) -o $@ monostub.mm
+
+monostub-nogui.o: monostub.mm $(MONOSTUB_EXTRA_SOURCES)
+	g++ -g $(EXTERN_C_XM_REGISTRAR_DEFINE) $(MONOSTUB_DEFINES) $(HYBRID_SUSPEND_ABORT) -DNOGUI -c -Wall -mmacosx-version-min=10.10 -m$(MONOSTUB_ARCH) -o $@ monostub.mm
+
+monostub: monostub.o $(MONOSTUB_STATIC_LINK)
+	clang++ -g -Wall -mmacosx-version-min=10.10 -m$(MONOSTUB_ARCH) -o $@ -Wl,-all_load $^ -framework AppKit -framework Quartz -undefined dynamic_lookup
+	cp $@ ../bin/MonoDevelop
+
+monostub-nogui: monostub-nogui.o $(MONOSTUB_STATIC_LINK)
+	clang++ -g -Wall -mmacosx-version-min=10.10 -m$(MONOSTUB_ARCH) -o $@ -Wl,-all_load $^ -framework AppKit -framework Quartz -undefined dynamic_lookup
+	cp $@ ../bin/mdtool
+
+monostub-test: monostub-test.m $(MONOSTUB_EXTRA_SOURCES)
+	gcc -g -Wall -mmacosx-version-min=10.10 -m$(MONOSTUB_ARCH) -o $@ monostub-test.m -framework AppKit
+	./monostub-test
 
 clean-local:
 	rm -rf MonoDevelop.app
 	rm -f MonoDevelop*.dmg
+	rm -f *.o
 
-app: monostub
+app: monostub monostub-test
 	@echo ""
 	@echo "Creating directories in app bundle"
 	@echo ""
@@ -54,7 +80,6 @@ app: monostub
 	@echo "Copying MonoDevelop into app bundle"
 	@echo ""
 	cp -pR ../AddIns $(MAC_APP_LIB_DIR)
-	cp -pR ../../external/fsharpbinding/monodevelop/bin/mac-linux/Debug $(MAC_APP_LIB_DIR)/AddIns/fsharpbinding
 	cp -pR ../data $(MAC_APP_LIB_DIR)
 	cp -pR ../bin $(MAC_APP_LIB_DIR)
 	cp -pR ../locale $(MAC_APP_DIR)/Contents/MacOS/share

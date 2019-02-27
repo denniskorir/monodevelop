@@ -1,4 +1,4 @@
-﻿//
+//
 // ProjectTemplateHandler.cs
 //
 // Author:
@@ -25,6 +25,7 @@
 // THE SOFTWARE.
 
 using System.IO;
+using LibGit2Sharp;
 using MonoDevelop.Ide.Projects;
 using MonoDevelop.Ide.Templates;
 using MonoDevelop.Core;
@@ -56,13 +57,13 @@ namespace MonoDevelop.VersionControl.Git
 		FilePath GetSourceGitIgnoreFilePath ()
 		{
 			string directory = Path.GetDirectoryName (typeof(ProjectTemplateHandler).Assembly.Location);
-			return new FilePath (directory).Combine ("GitIgnore.txt");
+			return FilePath.Build (directory, "GitIgnore.txt");
 		}
 
 		void CreateGitRepository (FilePath solutionPath)
 		{
-			var repo = GitUtil.Init (solutionPath, null);
-			repo.Stage ("*", new LibGit2Sharp.StageOptions ());
+			using (var repo = GitUtil.Init (solutionPath, null))
+				LibGit2Sharp.Commands.Stage (repo ,"*");
 		}
 	}
 }

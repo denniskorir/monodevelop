@@ -44,6 +44,7 @@ using MonoDevelop.Core;
 using MonoDevelop.Components.PropertyGrid.PropertyEditors;
 using System.Collections.Generic;
 using System.Linq;
+using MonoDevelop.Ide.Fonts;
 
 namespace MonoDevelop.Components.PropertyGrid
 {
@@ -89,18 +90,20 @@ namespace MonoDevelop.Components.PropertyGrid
 			toolbar = tb;
 			
 			catButton = new RadioButton ((Gtk.RadioButton)null);
+			catButton.Name = "MonoDevelop.PropertyGridToolbar.GtkRadioButton";
 			catButton.DrawIndicator = false;
 			catButton.Relief = ReliefStyle.None;
-			catButton.Image = new Gtk.Image (MonoDevelop.Ide.Gui.Stock.GroupByCategory, IconSize.Menu);
+			catButton.Image = new ImageView (MonoDevelop.Ide.Gui.Stock.GroupByCategory, IconSize.Menu);
 			catButton.Image.Show ();
 			catButton.TooltipText = GettextCatalog.GetString ("Sort in categories");
 			catButton.Toggled += new EventHandler (toolbarClick);
 			toolbar.Insert (catButton, 0);
 			
 			alphButton = new RadioButton (catButton);
+			alphButton.Name = "MonoDevelop.PropertyGridToolbar.GtkRadioButton";
 			alphButton.DrawIndicator = false;
 			alphButton.Relief = ReliefStyle.None;
-			alphButton.Image = new Gtk.Image (MonoDevelop.Ide.Gui.Stock.SortAlphabetically, IconSize.Menu);
+			alphButton.Image = new ImageView (MonoDevelop.Ide.Gui.Stock.SortAlphabetically, IconSize.Menu);
 			alphButton.Image.Show ();
 			alphButton.TooltipText = GettextCatalog.GetString ("Sort alphabetically");
 			alphButton.Clicked += new EventHandler (toolbarClick);
@@ -140,7 +143,7 @@ namespace MonoDevelop.Components.PropertyGrid
 			base.PackEnd (vpaned);
 			base.FocusChain = new Gtk.Widget [] { vpaned };
 			
-			Populate ();
+			Populate (saveEditSession: false);
 			UpdateTabs ();
 		}
 
@@ -185,7 +188,7 @@ namespace MonoDevelop.Components.PropertyGrid
 				TabRadioToolButton button = (TabRadioToolButton) sender;
 				if (selectedTab == button.Tab) return;
 				selectedTab = button.Tab;
-				Populate ();
+				Populate (saveEditSession: true);
 			}
 			// If the tree is re-populated while a value is being edited, the focus that the value editor had
 			// is not returned back to the tree. We need to explicitly get it.
@@ -197,7 +200,7 @@ namespace MonoDevelop.Components.PropertyGrid
 			set {
 				if (value != propertySort) {
 					propertySort = value;
-					Populate ();
+					Populate (saveEditSession: true);
 				}
 			}
 		}
@@ -252,10 +255,14 @@ namespace MonoDevelop.Components.PropertyGrid
 		{
 			if (this.currentObject == obj)
 				return;
+			if (this.propertyProviders != null) {
+				foreach (var old in this.propertyProviders.OfType<IDisposable> ())
+					old.Dispose ();
+			}
 			this.currentObject = obj;
 			this.propertyProviders = propertyProviders;
 			UpdateTabs ();
-			Populate();
+			Populate(saveEditSession: false);
 		}
 		
 		public void CommitPendingChanges ()
@@ -276,14 +283,21 @@ namespace MonoDevelop.Components.PropertyGrid
 		//just update that
 		public void Refresh ()
 		{
+			Update (); 
 			QueueDraw ();
 		}
+
+		internal bool IsEditing {
+			get { return tree.IsEditing; } 
+		}
 		
-		internal void Populate ()
+		internal void Populate (bool saveEditSession)
 		{
 			PropertyDescriptorCollection properties;
 			
 			tree.SaveStatus ();
+			if (saveEditSession)
+				tree.SaveEditSession ();
 			tree.Clear ();
 			tree.PropertySort = propertySort;
 			
@@ -298,6 +312,7 @@ namespace MonoDevelop.Components.PropertyGrid
 				}
 			}
 			tree.RestoreStatus ();
+			tree.RestoreEditSession ();
 		}
 		
 		void Update ()
@@ -373,10 +388,7 @@ namespace MonoDevelop.Components.PropertyGrid
 			descTextView.Editable = false;
 			descTextView.LeftMargin = 5;
 			descTextView.RightMargin = 5;
-			
-			Pango.FontDescription font = Style.FontDescription.Copy ();
-			font.Size = (font.Size * 8) / 10;
-			descTextView.ModifyFont (font);
+			descTextView.ModifyFont (FontService.SansFont.CopyModified (Ide.Gui.Styles.FontScale11));
 			
 			textScroll.Add (descTextView);
 			
@@ -445,6 +457,7 @@ namespace MonoDevelop.Components.PropertyGrid
 			DrawIndicator = false;
 			Relief = ReliefStyle.None;
 			NoShowAll = true;
+			Name = "MonoDevelop.PropertyGridToolbar.GtkRadioButton";
 		}
 		
 		public PropertyTab Tab;

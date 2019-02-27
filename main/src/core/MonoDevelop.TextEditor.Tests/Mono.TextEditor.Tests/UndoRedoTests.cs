@@ -44,13 +44,13 @@ namespace Mono.TextEditor.Tests
 		{
 			TextEditorData data = Create ("Hello");
 			Assert.IsFalse (data.Document.CanUndo);
-			data.Caret.Offset = data.Document.TextLength;
+			data.Caret.Offset = data.Document.Length;
 			data.InsertAtCaret ("World");
 			Assert.IsTrue (data.Document.CanUndo);
 			data.Document.Undo ();
 			Assert.IsFalse (data.Document.CanUndo);
 			Assert.AreEqual (data.Document.Text, "Hello");
-			Assert.AreEqual (data.Document.TextLength, data.Caret.Offset);
+			Assert.AreEqual (data.Document.Length, data.Caret.Offset);
 		}
 		
 		[Test()]
@@ -58,9 +58,9 @@ namespace Mono.TextEditor.Tests
 		{
 			TextEditorData data = Create ("Hello");
 			Assert.IsFalse (data.Document.CanUndo);
-			data.Caret.Offset = data.Document.TextLength;
+			data.Caret.Offset = data.Document.Length;
 			data.InsertAtCaret ("World");
-			Assert.AreEqual (data.Caret.Offset, data.Document.TextLength);
+			Assert.AreEqual (data.Caret.Offset, data.Document.Length);
 			Assert.IsTrue (data.Document.CanUndo);
 			data.Document.Undo ();
 			Assert.IsFalse (data.Document.CanUndo);
@@ -68,7 +68,27 @@ namespace Mono.TextEditor.Tests
 			Assert.IsTrue (data.Document.CanUndo);
 			
 			Assert.AreEqual (data.Document.Text, "HelloWorld");
-			Assert.AreEqual (data.Document.TextLength, data.Caret.Offset);
+			Assert.AreEqual (data.Document.Length, data.Caret.Offset);
+		}
+
+		/// <summary>
+		/// VSTS 633531: File save sometimes not working
+		/// </summary>
+		[Test]
+		public void TestVSTS633531 ()
+		{
+			TextEditorData data = Create ("Hello");
+			data.Caret.Offset = data.Document.Length;
+			data.InsertAtCaret ("a");
+			data.Document.OptimizeTypedUndo ();
+			data.Document.SetNotDirtyState ();
+			Assert.IsFalse (data.Document.IsDirty);
+
+			data.InsertAtCaret ("a");
+			data.Document.OptimizeTypedUndo ();
+			Assert.IsTrue (data.Document.IsDirty);
+			data.Document.Undo ();
+			Assert.IsFalse (data.Document.IsDirty);
 		}
 	}
 }

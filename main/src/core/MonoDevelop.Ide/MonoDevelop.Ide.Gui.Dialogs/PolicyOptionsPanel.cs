@@ -31,6 +31,8 @@ using System.Collections.Generic;
 using Gtk;
 using System.Linq;
 
+using MonoDevelop.Components;
+using MonoDevelop.Components.AtkCocoaHelper;
 using MonoDevelop.Core;
 using MonoDevelop.Ide.Gui.Dialogs;
 using MonoDevelop.Projects;
@@ -45,6 +47,7 @@ namespace MonoDevelop.Ide.Gui.Dialogs
 		PolicyBag bag;
 		PolicySet polSet;
 		PolicyContainer policyContainer;
+		PolicyContainer defaultPolicyContainer;
 		bool loading = true;
 		HBox warningMessage;
 		bool isGlobalPolicy;
@@ -56,7 +59,7 @@ namespace MonoDevelop.Ide.Gui.Dialogs
 		{
 		}
 		
-		Widget IOptionsPanel.CreatePanelWidget ()
+		Control IOptionsPanel.CreatePanelWidget ()
 		{
 			HBox hbox = new HBox (false, 6);
 			Label label = new Label ();
@@ -86,7 +89,10 @@ namespace MonoDevelop.Ide.Gui.Dialogs
 			
 			warningMessage = new HBox ();
 			warningMessage.Spacing = 6;
-			Image img = new Image (Stock.Warning, IconSize.LargeToolbar);
+			var img = new ImageView (Stock.Warning, IconSize.LargeToolbar);
+			img.SetCommonAccessibilityAttributes ("PolicyOptionsPanel.Warning",
+			                                      GettextCatalog.GetString ("Warning"),
+			                                      null);
 			warningMessage.PackStart (img, false, false, 0);
 			Label wl = new Label (GettextCatalog.GetString ("Changes done in this section will only be applied to new projects. " +
 				"Settings for existing projects can be modified in the project (or solution) options dialog."));
@@ -116,14 +122,19 @@ namespace MonoDevelop.Ide.Gui.Dialogs
 			}
 			
 			policyCombo.Changed += HandlePolicyComboChanged;
-			
-			return vbox;
+
+			var widget = new PolicyOptionsWidgetContainer (vbox);
+			return widget;
 		}
 		
 		void LoadPolicy (T policy)
 		{
 			if (policy == null) {
 				policyPanel.Sensitive = false;
+				// Policy is not being set, which means the default value will be used.
+				// Show that default value in the panel, so user van see the settings that
+				// are going to be applied.
+				LoadFrom (GetDefaultValue ());
 				return;
 			}
 			policyPanel.Sensitive = true;
@@ -141,16 +152,21 @@ namespace MonoDevelop.Ide.Gui.Dialogs
 				loading = false;
 			}
 		}
+
+		T GetDefaultValue ()
+		{
+			if (defaultPolicyContainer != null)
+				return defaultPolicyContainer.Get<T> ();
+			else
+				return PolicyService.GetDefaultPolicy<T> ();
+		}
 		
 		T GetCurrentValue ()
 		{
 			if (policyUndefined)
 				return null;
-			else if (polSet != null)
-				return polSet.Get<T> () ?? new T ();
-			else
-				return bag.Get<T> ();
-		}	
+			return policyContainer.Get<T> () ?? GetDefaultValue ();
+		}
 		
 		void FillPolicies ()
 		{
@@ -168,6 +184,8 @@ namespace MonoDevelop.Ide.Gui.Dialogs
 			setsInCombo.Clear ();
 			foreach (PolicySet set in PolicyService.GetPolicySets<T> ()) {
 				if (polSet != null && set.Name == polSet.Name)
+					continue;
+				if (IsCustomUserPolicy && set.Name == "Default") // There is already a System Default entry
 					continue;
 				store.AppendValues (set.Name, set);
 				setsInCombo.Add (set);
@@ -249,7 +267,7 @@ namespace MonoDevelop.Ide.Gui.Dialogs
 		
 		bool IsRoot {
 			get {
-				return polSet != null || bag.IsRoot;
+				return policyContainer.IsRoot;
 			}
 		}
 			
@@ -270,6 +288,8 @@ namespace MonoDevelop.Ide.Gui.Dialogs
 			IPolicyProvider provider = dataObject as IPolicyProvider;
 			if (provider == null) {
 				provider = PolicyService.GetUserDefaultPolicySet ();
+				// When editing the global user preferences, the default values for policies are the IDE default values.
+				defaultPolicyContainer = PolicyService.SystemDefaultPolicies;
 				isGlobalPolicy = true;
 			}
 			policyContainer = provider.Policies;
@@ -319,6 +339,22 @@ namespace MonoDevelop.Ide.Gui.Dialogs
 				}
 			} finally {
 				loading = false;
+			}
+		}
+
+		/// <summary>
+		/// Container for the VBox used to  display the options panel information.
+		/// This is needed since using just a VBox causes Voice Over on the Mac to
+		/// read out the UI widgets multiple times with using the arrow keys.
+		/// </summary>
+		class PolicyOptionsWidgetContainer : Bin
+		{
+			public PolicyOptionsWidgetContainer (VBox child)
+			{
+				BinContainer.Attach (this);
+
+				Add (child);
+				ShowAll ();
 			}
 		}
 	}

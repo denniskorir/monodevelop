@@ -7,6 +7,7 @@ using System.Threading;
 using Gtk;
 
 using MonoDevelop.Core;
+using MonoDevelop.Core.Assemblies;
 using MonoDevelop.Ide.Gui;
 using MonoDevelop.Ide.WebBrowser;
 using MonoDevelop.WebReferences;
@@ -149,7 +150,7 @@ namespace MonoDevelop.WebReferences.Dialogs
 		#endregion
 		
 		#region Member Variables
-		const string homeUrl = "http://www.w3schools.com/WebServices/TempConvert.asmx";
+		const string homeUrl = "https://www.w3schools.com/xml/tempconvert.asmx";
 		WebServiceDiscoveryResult selectedService;
 //		protected Gtk.Alignment frmBrowserAlign;
 		#endregion
@@ -169,7 +170,7 @@ namespace MonoDevelop.WebReferences.Dialogs
 			tbxReferenceURL.Text = homeUrl;
 
 			wcfOptions = WebReferencesService.WcfEngine.DefaultClientOptions;
-			if (project is PortableDotNetProject) {
+			if (project.IsPortableLibrary) {
 				wcfOptions.GenerateAsynchronousMethods = false;
 				wcfOptions.GenerateEventBasedAsynchronousMethods = true;
 			}
@@ -377,14 +378,14 @@ namespace MonoDevelop.WebReferences.Dialogs
 				return;
 			}
 			
-			Application.Invoke (delegate {
+			Application.Invoke ((o, args) => {
 				UpdateService (service, url);
 			});
 		}
 		
 		void ShowError (string error)
 		{
-			Application.Invoke (delegate {
+			Application.Invoke ((o, args) => {
 				if (docLabel != null) {
 					docLabel.Text = error;
 					docLabel.LineWrapMode = Pango.WrapMode.Word;
@@ -491,7 +492,15 @@ namespace MonoDevelop.WebReferences.Dialogs
 				btnOK.Sensitive = isWebService;
 				tlbNavigate.Visible = WebBrowserService.CanGetWebBrowser;
 				tbxReferenceName.Sensitive = isWebService;
-				comboModel.Sensitive = !(project is PortableDotNetProject);
+				if (project.IsPortableLibrary)
+					comboModel.Sensitive = false;
+				else if (IsWcfSupported ())
+					comboModel.Sensitive = true;
+				else {
+					// Select web references instead of WCF.
+					comboModel.Active = 1;
+					comboModel.Sensitive = false;
+				}
 				break;
 
 			case DialogState.CreateConfig:
@@ -595,6 +604,15 @@ namespace MonoDevelop.WebReferences.Dialogs
 			}
 		}
 
+		/// <summary>
+		/// PCL or projects that target .NET Framework are considered to support WCF.
+		/// </summary>
+		bool IsWcfSupported ()
+		{
+			return project.TargetFramework.Id.Identifier == TargetFrameworkMoniker.ID_NET_FRAMEWORK ||
+				project.IsPortableLibrary;
+		}
+
 		protected void OnBtnBackClicked (object sender, EventArgs e)
 		{
 			switch (state) {
@@ -609,50 +627,16 @@ namespace MonoDevelop.WebReferences.Dialogs
 			}
 		}
 
-	}
-	
-	class AskCredentials: GuiSyncObject, ICredentials
-	{
-		static readonly Dictionary<string,NetworkCredential> credentials = new Dictionary<string, NetworkCredential> ();
-		
-		readonly Dictionary<string,NetworkCredential> tempCredentials = new Dictionary<string, NetworkCredential> ();
-		
-		public bool Canceled;
-		
-		public void Reset ()
+
+		protected override void OnDestroyed ()
 		{
-			tempCredentials.Clear ();
-		}
-		
-		public void Store ()
-		{
-			foreach (var creds in tempCredentials)
-				credentials [creds.Key] = creds.Value;
-		}
-		
-		public NetworkCredential GetCredential (Uri uri, string authType)
-		{
-			NetworkCredential nc;
-			if (tempCredentials.TryGetValue (uri.Host + uri.AbsolutePath, out nc))
-				return nc; // Exact match
-			
-			var dlg = new UserPasswordDialog (uri.Host);
-			if (tempCredentials.TryGetValue (uri.Host, out nc) || credentials.TryGetValue (uri.Host, out nc)) {
-				dlg.User = nc.UserName;
-				dlg.Password = nc.Password;
-			}
-			try {
-				if (MessageService.RunCustomDialog (dlg) == (int)ResponseType.Ok) {
-					nc = new NetworkCredential (dlg.User, dlg.Password);
-					tempCredentials [uri.Host + uri.AbsolutePath] = nc;
-					tempCredentials [uri.Host] = nc;
-					return nc;
-				}
-				Canceled = true;
-				return null;
-			} finally {
-				dlg.Destroy ();
-			}
+			btnNavBack.Activated -= Browser_BackButtonClicked;
+			btnNavNext.Activated -= Browser_NextButtonClicked;
+			btnRefresh.Activated -= Browser_RefreshButtonClicked;
+			btnStop.Activated -= Browser_StopButtonClicked;
+			btnHome.Activated -= Browser_HomeButtonClicked;
+
+			base.OnDestroyed ();
 		}
 	}
 }

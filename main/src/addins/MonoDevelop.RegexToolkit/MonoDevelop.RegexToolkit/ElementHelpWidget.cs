@@ -36,7 +36,7 @@ using MonoDevelop.Components;
 namespace MonoDevelop.RegexToolkit
 {
 	[System.ComponentModel.ToolboxItem(true)]
-	partial class ElementHelpWidget : Gtk.Bin
+	internal partial class ElementHelpWidget : Gtk.Bin
 	{
 		TreeStore elementsStore;
 //		IWorkbenchWindow workbenchWindow;
@@ -91,7 +91,7 @@ namespace MonoDevelop.RegexToolkit
 			Show ();
 		}
 		
-		void ElementDescriptionFunc (TreeViewColumn column, CellRenderer cell, TreeModel model, TreeIter iter)
+		static void ElementDescriptionFunc (TreeViewColumn column, CellRenderer cell, TreeModel model, TreeIter iter)
 		{
 			string str = (string)model.GetValue (iter, 2);
 			if (string.IsNullOrEmpty (str)) {
@@ -146,10 +146,6 @@ namespace MonoDevelop.RegexToolkit
 		protected override void OnDestroyed ()
 		{
 			base.OnDestroyed ();
-			if (elementsStore != null) {
-				elementsStore.Dispose ();
-				elementsStore = null;
-			}
 			
 			HideTooltipWindow ();
 		}

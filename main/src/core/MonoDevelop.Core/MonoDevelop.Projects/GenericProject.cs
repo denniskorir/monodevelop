@@ -28,6 +28,8 @@
 
 using System.Xml;
 using System.Collections.Generic;
+using System.Collections.Immutable;
+using MonoDevelop.Core;
 
 namespace MonoDevelop.Projects
 {
@@ -42,27 +44,41 @@ namespace MonoDevelop.Projects
 		{
 			Configurations.Add (CreateConfiguration ("Default"));
 		}
-		
-		public override SolutionItemConfiguration CreateConfiguration (string name)
+
+		protected override void OnInitializeFromTemplate (ProjectCreateInformation projectCreateInfo, XmlElement template)
+		{
+			base.OnInitializeFromTemplate (projectCreateInfo, template);
+			Configurations.Add (CreateConfiguration ("Default"));
+		}
+
+		protected override SolutionItemConfiguration OnCreateConfiguration (string name, ConfigurationKind kind)
 		{
 			GenericProjectConfiguration conf = new GenericProjectConfiguration (name);
 			return conf;
 		}
 
-		public override IEnumerable<string> GetProjectTypes ()
+		protected override void OnGetTypeTags (HashSet<string> types)
 		{
-			yield return "GenericProject";
+			base.OnGetTypeTags (types);
+			types.Add ("GenericProject");
+		}
+
+		protected override void OnWriteConfiguration (ProgressMonitor monitor, ProjectConfiguration config, IPropertySet pset)
+		{
+			base.OnWriteConfiguration (monitor, config, pset);
+			pset.SetValue ("OutputPath", config.OutputDirectory);
+		}
+
+		protected override ProjectFeatures OnGetSupportedFeatures ()
+		{
+			return ProjectFeatures.Build | ProjectFeatures.Configurations | ProjectFeatures.Execute;
 		}
 	}
 	
 	[ProjectModelDataItem]
 	public class GenericProjectConfiguration: ProjectConfiguration
 	{
-		public GenericProjectConfiguration ()
-		{
-		}
-		
-		public GenericProjectConfiguration (string name): base (name)
+		public GenericProjectConfiguration (string id): base (id)
 		{
 		}
 	}

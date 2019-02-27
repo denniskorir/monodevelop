@@ -28,6 +28,8 @@
 using System;
 using MonoDevelop.Ide.CodeCompletion;
 using Gtk;
+using MonoDevelop.Ide.Editor.Extension;
+using System.Threading;
 
 namespace MonoDevelop.Debugger
 {
@@ -50,6 +52,12 @@ namespace MonoDevelop.Debugger
 			entry.KeyPressEvent += OnEditKeyPress;
 			entry.FocusOutEvent += OnEditFocusOut;
 			CompletionWindowManager.WindowClosed += HandleCompletionWindowClosed;
+			buttonOk.Clicked += ButtonClose_Clicked;
+		}
+
+		void ButtonClose_Clicked (object sender, EventArgs e)
+		{
+			this.Destroy ();
 		}
 
 		protected override void OnDestroyed ()
@@ -86,22 +94,30 @@ namespace MonoDevelop.Debugger
 			currentCompletionData = null;
 		}
 
-		void PopupCompletion (Entry entry)
+		static bool IsCompletionChar (char c)
 		{
-			Application.Invoke (delegate {
-				char c = (char) Gdk.Keyval.ToUnicode (keyValue);
+			return char.IsLetter (c) || c == '_' || c == '.';
+		}
+		CancellationTokenSource cts = new CancellationTokenSource ();
+		async void PopupCompletion (Entry entry)
+		{
+			try {
+				char c = (char)Gdk.Keyval.ToUnicode (keyValue);
 				if (currentCompletionData == null && IsCompletionChar (c)) {
-					string exp = entry.Text.Substring (0, entry.CursorPosition);
-					currentCompletionData = GetCompletionData (exp);
+					string expr = entry.Text.Substring (0, entry.CursorPosition);
+					cts.Cancel ();
+					cts = new CancellationTokenSource ();
+					if (valueTree.Frame == null)
+						return;
+					currentCompletionData = await DebuggingService.GetCompletionDataAsync (valueTree.Frame, expr, cts.Token);
 					if (currentCompletionData != null) {
 						DebugCompletionDataList dataList = new DebugCompletionDataList (currentCompletionData);
-						ctx = ((ICompletionWidget) this).CreateCodeCompletionContext (entry.CursorPosition - currentCompletionData.ExpressionLength);
+						ctx = ((ICompletionWidget)this).CreateCodeCompletionContext (expr.Length - currentCompletionData.ExpressionLength);
 						CompletionWindowManager.ShowWindow (null, c, dataList, this, ctx);
-					} else {
-						currentCompletionData = null;
 					}
 				}
-			});
+			} catch (OperationCanceledException) {
+			}
 		}
 
 		void OnEditKeyRelease (object sender, EventArgs e)
@@ -109,9 +125,7 @@ namespace MonoDevelop.Debugger
 			if (keyHandled)
 				return;
 
-			string text = ctx == null ? entry.Text : entry.Text.Substring (Math.Max (0, Math.Min (ctx.TriggerOffset, entry.Text.Length)));
-			CompletionWindowManager.UpdateWordSelection (text);
-			CompletionWindowManager.PostProcessKeyEvent (key, keyChar, modifier);
+			CompletionWindowManager.PostProcessKeyEvent (KeyDescriptor.FromGtk (key, keyChar, modifier));
 			PopupCompletion ((Entry) sender);
 		}
 
@@ -130,25 +144,12 @@ namespace MonoDevelop.Debugger
 			}
 
 			if (currentCompletionData != null)
-				args.RetVal = keyHandled = CompletionWindowManager.PreProcessKeyEvent (key, keyChar, modifier);
+				args.RetVal = keyHandled = CompletionWindowManager.PreProcessKeyEvent (KeyDescriptor.FromGtk (key, keyChar, modifier));
 		}
 
 		void OnEditFocusOut (object sender, FocusOutEventArgs args)
 		{
 			CompletionWindowManager.HideWindow ();
-		}
-
-		static bool IsCompletionChar (char c)
-		{
-			return (char.IsLetterOrDigit (c) || char.IsPunctuation (c) || char.IsSymbol (c) || char.IsWhiteSpace (c));
-		}
-
-		Mono.Debugging.Client.CompletionData GetCompletionData (string exp)
-		{
-			if (valueTree.Frame != null)
-				return valueTree.Frame.GetExpressionCompletionData (exp);
-
-			return null;
 		}
 
 		#region ICompletionWidget implementation 
@@ -185,6 +186,9 @@ namespace MonoDevelop.Debugger
 			get {
 				return entry.Position;
 			}
+			set {
+				entry.Position = value;
+			}
 		}
 		
 		char ICompletionWidget.GetChar (int offset)
@@ -198,25 +202,19 @@ namespace MonoDevelop.Debugger
 		
 		CodeCompletionContext ICompletionWidget.CreateCodeCompletionContext (int triggerOffset)
 		{
-			CodeCompletionContext c = new CodeCompletionContext ();
-			c.TriggerLine = 0;
-			c.TriggerOffset = triggerOffset;
-			c.TriggerLineOffset = c.TriggerOffset;
-			c.TriggerTextHeight = entry.SizeRequest ().Height;
-			c.TriggerWordLength = currentCompletionData.ExpressionLength;
-			
 			int x, y;
-			int tx, ty;
 			entry.GdkWindow.GetOrigin (out x, out y);
-			entry.GetLayoutOffsets (out tx, out ty);
+			entry.GetLayoutOffsets (out var tx, out var ty);
 			int cp = entry.TextIndexToLayoutIndex (entry.Position);
 			Pango.Rectangle rect = entry.Layout.IndexToPos (cp);
-			tx += Pango.Units.ToPixels (rect.X) + x;
+			x += Pango.Units.ToPixels (rect.X) + tx;
 			y += entry.Allocation.Height;
-			
-			c.TriggerXCoord = tx;
-			c.TriggerYCoord = y;
-			return c;
+
+			return new CodeCompletionContext (
+				x, y, entry.SizeRequest ().Height,
+				triggerOffset, 0, triggerOffset,
+				currentCompletionData.ExpressionLength
+			);
 		}
 		
 		string ICompletionWidget.GetCompletionText (CodeCompletionContext ctx)
@@ -226,18 +224,20 @@ namespace MonoDevelop.Debugger
 		
 		void ICompletionWidget.SetCompletionText (CodeCompletionContext ctx, string partial_word, string complete_word)
 		{
-			int sp = entry.Position - partial_word.Length;
+			int cursorOffset = entry.Position - (ctx.TriggerOffset + partial_word.Length);
+			int sp = ctx.TriggerOffset;
 			entry.DeleteText (sp, sp + partial_word.Length);
 			entry.InsertText (complete_word, ref sp);
-			entry.Position = sp; // sp is incremented by InsertText
+			entry.Position = sp + cursorOffset; // sp is incremented by InsertText
 		}
 		
 		void ICompletionWidget.SetCompletionText (CodeCompletionContext ctx, string partial_word, string complete_word, int offset)
 		{
-			int sp = entry.Position - partial_word.Length;
+			int cursorOffset = entry.Position - (ctx.TriggerOffset + partial_word.Length);
+			int sp = ctx.TriggerOffset;
 			entry.DeleteText (sp, sp + partial_word.Length);
 			entry.InsertText (complete_word, ref sp);
-			entry.Position = sp + offset; // sp is incremented by InsertText
+			entry.Position = sp + offset + cursorOffset; // sp is incremented by InsertText
 		}
 		
 		int ICompletionWidget.TextLength {
@@ -255,6 +255,12 @@ namespace MonoDevelop.Debugger
 		Style ICompletionWidget.GtkStyle {
 			get {
 				return entry.Style;
+			}
+		}
+
+		double ICompletionWidget.ZoomLevel {
+			get {
+				return 1;
 			}
 		}
 		#endregion 

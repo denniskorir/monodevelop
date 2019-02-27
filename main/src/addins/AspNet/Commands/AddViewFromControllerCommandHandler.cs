@@ -26,8 +26,10 @@
 
 using System;
 using MonoDevelop.Components.Commands;
+using MonoDevelop.Core;
 using MonoDevelop.Ide;
 using MonoDevelop.AspNet.Projects;
+using MonoDevelop.Projects;
 
 namespace MonoDevelop.AspNet.Commands
 {
@@ -41,20 +43,16 @@ namespace MonoDevelop.AspNet.Commands
 		protected override void Run ()
 		{
 			var doc = IdeApp.Workbench.ActiveDocument;
-			var project = (AspNetAppProject)doc.Project;
-			var currentLocation = doc.Editor.Caret.Location;
+			var project = (DotNetProject)doc.Project;
 
-			string controllerName = doc.ParsedDocument.GetTopLevelTypeDefinition (currentLocation).Name;
-			int pos = controllerName.LastIndexOf ("Controller", StringComparison.Ordinal);
-			if (pos > 0)
-				controllerName = controllerName.Remove (pos);
-
+			var method = MethodDeclarationAtCaret.Create (doc);
+			string controllerName = method.GetParentMvcControllerName ();
 			string path = doc.FileName.ParentDirectory.ParentDirectory.Combine ("Views", controllerName);
-			string actionName = doc.ParsedDocument.GetMember (currentLocation).Name;
-			AddView (project, path, actionName);
+
+			AddView (project, path, method.Name);
 		}
 
-		public static void AddView (AspNetAppProject project, string path, string name)
+		public static void AddView (DotNetProject project, string path, string name)
 		{
 			var provider = project.LanguageBinding.GetCodeDomProvider ();
 			if (provider == null)
@@ -85,9 +83,9 @@ namespace MonoDevelop.AspNet.Commands
 					outputFile = System.IO.Path.Combine (path, dialog.ViewName) + ext;
 
 					if (System.IO.File.Exists (outputFile)) {
-						fileGood = MessageService.AskQuestion ("Overwrite file?",
-							String.Format ("The file '{0}' already exists.\n", dialog.ViewName) +
-							"Would you like to overwrite it?", AlertButton.OverwriteFile, AlertButton.Cancel)
+						fileGood = MessageService.AskQuestion (GettextCatalog.GetString ("Overwrite file?"),
+							GettextCatalog.GetString ("The file '{0}' already exists.\n", dialog.ViewName) +
+							GettextCatalog.GetString ("Would you like to overwrite it?"), AlertButton.OverwriteFile, AlertButton.Cancel)
 							!= AlertButton.Cancel;
 					} else
 						break;
@@ -119,13 +117,15 @@ namespace MonoDevelop.AspNet.Commands
 			} finally {
 				if (host != null)
 					host.Dispose ();
-				if (dialog != null)
+				if (dialog != null) {
 					dialog.Destroy ();
+					dialog.Dispose ();
+				}
 			}
 
 			if (System.IO.File.Exists (outputFile)) {
 				project.AddFile (outputFile);
-				IdeApp.ProjectOperations.Save (project);
+				IdeApp.ProjectOperations.SaveAsync (project);
 			}
 		}
 	}

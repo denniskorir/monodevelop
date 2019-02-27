@@ -27,14 +27,14 @@
 //
 
 
-using System;
+using System.Threading.Tasks;
 using MonoDevelop.Projects;
 
 namespace MonoDevelop.Ide.Templates
 {
 	internal interface ISolutionItemDescriptor
 	{
-		SolutionEntityItem CreateItem (ProjectCreateInformation projectCreateInformation, string defaultLanguage);
-		void InitializeItem (SolutionItem policyParent, ProjectCreateInformation projectCreateInformation, string defaultLanguage, SolutionEntityItem item);
+		SolutionItem CreateItem (ProjectCreateInformation projectCreateInformation, string defaultLanguage);
+		Task InitializeItem (SolutionFolderItem policyParent, ProjectCreateInformation projectCreateInformation, string defaultLanguage, SolutionItem item);
 	}
 }

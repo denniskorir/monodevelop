@@ -592,7 +592,7 @@ namespace Stetic {
 					}
 					if (curDef.Module.Assembly != adef) {
 						
-						LibraryInfo li = Refresh (resolver, curDef.Module.FullyQualifiedName, basePath);
+						LibraryInfo li = Refresh (resolver, curDef.Module.FileName, basePath);
 						if (li.HasWidgets && li.GetToolboxItem (curDef.FullName, curDef.Module.Assembly.Name.Name) != null) {
 							tbinfo.BaseType = curDef.FullName;
 							break;
@@ -712,13 +712,14 @@ namespace Stetic {
 			info.Timestamp = File.GetLastWriteTime (info.File).ToUniversalTime ();
 			info.Guid = Guid.NewGuid ();
 			Save ();
-			AssemblyDefinition adef = AssemblyDefinition.ReadAssembly (info.File);
-			XmlDocument objects = GetObjectsDoc (resolver, adef, info.File, baseDirectory);
-			if (objects != null) {
-				info.ObjectsDocument = objects;
-				XmlDocument gui = GetGuiDoc (adef);
-				if (gui != null)
-					info.GuiDocument = gui;
+			using (AssemblyDefinition adef = AssemblyDefinition.ReadAssembly (info.File)) {
+				XmlDocument objects = GetObjectsDoc (resolver, adef, info.File, baseDirectory);
+				if (objects != null) {
+					info.ObjectsDocument = objects;
+					XmlDocument gui = GetGuiDoc (adef);
+					if (gui != null)
+						info.GuiDocument = gui;
+				}
 			}
 			info.OnChanged ();
 			return info;

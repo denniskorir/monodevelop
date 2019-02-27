@@ -34,6 +34,8 @@ using MonoDevelop.Core;
 using MonoDevelop.Ide.Gui.Dialogs;
 using Gtk;
 using MonoDevelop.Components;
+using MonoDevelop.Components.AtkCocoaHelper;
+
 
 namespace MonoDevelop.Ide.Projects.OptionPanels
 {
@@ -41,7 +43,7 @@ namespace MonoDevelop.Ide.Projects.OptionPanels
 	{
 		CombineInformationWidget widget;
 
-		public override Widget CreatePanelWidget()
+		public override Control CreatePanelWidget()
 		{
 			return widget = new  CombineInformationWidget (ConfiguredSolution);
 		}
@@ -63,7 +65,16 @@ namespace MonoDevelop.Ide.Projects.OptionPanels
 
 			versEntry.Text = solution.Version;
 			descView.Buffer.Text = solution.Description;
-		}			
+			SetupAccessibility ();
+		}
+
+		void SetupAccessibility ()
+		{
+			versEntry.SetCommonAccessibilityAttributes ("CombineInformationPanel.versEntry",
+														 "",
+														 GettextCatalog.GetString ("Enter the version"));
+			versEntry.SetAccessibilityLabelRelationship (versLabel);
+		}
 		
 		public void Store (Solution solution)
 		{

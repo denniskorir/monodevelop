@@ -2,51 +2,84 @@
 using System;
 using System.Threading;
 using System.Diagnostics;
+using System.Threading.Tasks;
 
 namespace MonoDevelop.Core.Execution
 {
 	public delegate void ProcessEventHandler(object sender, string message);
 
 	[System.ComponentModel.DesignerCategory ("Code")]
-	public class ProcessWrapper : Process, IProcessAsyncOperation
+	public class ProcessWrapper : Process
 	{
-		private Thread captureOutputThread;
-		private Thread captureErrorThread;
-		ManualResetEvent endEventOut = new ManualResetEvent (false);
-		ManualResetEvent endEventErr = new ManualResetEvent (false);
-		bool done;
-		object lockObj = new object ();
+		bool disposed;
+		readonly object lockObj = new object ();
+		ProcessAsyncOperation operation;
+		IDisposable customCancelToken;
+		readonly TaskCompletionSource<int> taskCompletionSource = new TaskCompletionSource<int> ();
 		
 		public ProcessWrapper ()
 		{
+			EnableRaisingEvents = true;
+			Exited += OnExited;
 		}
+
 		public bool CancelRequested { get; private set; }
-		
+
+		public Task Task => taskCompletionSource.Task;
+		public ProcessAsyncOperation ProcessAsyncOperation => operation;
+
 		public new void Start ()
 		{
 			CheckDisposed ();
+
 			base.Start ();
-			
-			captureOutputThread = new Thread (new ThreadStart(CaptureOutput));
-			captureOutputThread.Name = "Process output reader";
-			captureOutputThread.IsBackground = true;
-			captureOutputThread.Start ();
-			
-			if (ErrorStreamChanged != null) {
-				captureErrorThread = new Thread (new ThreadStart(CaptureError));
-				captureErrorThread.Name = "Process error reader";
-				captureErrorThread.IsBackground = true;
-				captureErrorThread.Start ();
-			} else {
-				endEventErr.Set ();
+
+			var cs = new CancellationTokenSource ();
+			cs.Token.Register (() => taskCompletionSource.TrySetResult (operation.ExitCode));
+			cs.Token.Register (Cancel);
+
+			// We need these wrappers, as the alternatives are not good enough.
+			// OutputDataReceived does not persist newlines.
+			if (OutputStreamChanged != null) {
+				Task.Run (CaptureOutput, cs.Token);
 			}
+
+			if (ErrorStreamChanged != null) {
+				Task.Run (CaptureError, cs.Token);
+			}
+
+			operation = new ProcessAsyncOperation (Task, cs) {
+				ProcessId = Id,
+			};
+		}
+
+		async Task CaptureOutput ()
+		{
+			char [] buffer = new char [1024];
+			int nr;
+			while ((nr = await StandardOutput.ReadAsync (buffer, 0, buffer.Length).ConfigureAwait (false)) > 0) {
+				OutputStreamChanged?.Invoke (this, new string (buffer, 0, nr));
+			}
+		}
+
+		async Task CaptureError ()
+		{
+			char [] buffer = new char [1024];
+			int nr;
+			while ((nr = await StandardError.ReadAsync (buffer, 0, buffer.Length).ConfigureAwait (false)) > 0) {
+				ErrorStreamChanged?.Invoke (this, new string (buffer, 0, nr));
+			}
+		}
+
+		public void SetCancellationToken (CancellationToken cancelToken)
+		{
+			customCancelToken = cancelToken.Register (Cancel);
 		}
 		
 		public void WaitForOutput (int milliseconds)
 		{
 			CheckDisposed ();
 			WaitForExit (milliseconds);
-			endEventOut.WaitOne ();
 		}
 		
 		public void WaitForOutput ()
@@ -54,165 +87,54 @@ namespace MonoDevelop.Core.Execution
 			WaitForOutput (-1);
 		}
 		
-		private void CaptureOutput ()
-		{
-			try {
-				if (OutputStreamChanged != null) {
-					char[] buffer = new char [1024];
-					int nr;
-					while ((nr = StandardOutput.Read (buffer, 0, buffer.Length)) > 0) {
-						if (OutputStreamChanged != null)
-							OutputStreamChanged (this, new string (buffer, 0, nr));
-					}
-				}
-			} catch (ThreadAbortException) {
-				// There is no need to keep propagating the abort exception
-				Thread.ResetAbort ();
-			} finally {
-				// WORKAROUND for "Bug 410743 - wapi leak in System.Diagnostic.Process"
-				// Process leaks when an exit event is registered
-				if (endEventErr != null)
-					endEventErr.WaitOne ();
-
-				OnExited (this, EventArgs.Empty);
-
-				lock (lockObj) {
-					//call this AFTER the exit event, or the ProcessWrapper may get disposed and abort this thread
-					if (endEventOut != null)
-						endEventOut.Set ();
-				}
-			}
-		}
-		
-		private void CaptureError ()
-		{
-			try {
-				char[] buffer = new char [1024];
-				int nr;
-				while ((nr = StandardError.Read (buffer, 0, buffer.Length)) > 0) {
-					if (ErrorStreamChanged != null)
-						ErrorStreamChanged (this, new string (buffer, 0, nr));
-				}					
-			} finally {
-				lock (lockObj) {
-					if (endEventErr != null)
-						endEventErr.Set ();
-				}
-			}
-		}
-		
 		protected override void Dispose (bool disposing)
 		{
 			lock (lockObj) {
-				if (endEventOut == null)
-					return;
-				
-				if (!done)
-					((IAsyncOperation)this).Cancel ();
-				
-				captureOutputThread = captureErrorThread = null;
-				endEventOut.Close ();
-				endEventErr.Close ();
-				endEventOut = endEventErr = null;
+				Cancel ();
+				disposed = true;
 			}
 
-			// HACK: try/catch is a workaround for broken Process.Dispose implementation in Mono < 3.2.7
-			// https://bugzilla.xamarin.com/show_bug.cgi?id=10883
-			try {
-				base.Dispose (disposing);
-			} catch {
-				if (disposing)
-					throw;
-			}
+			base.Dispose (disposing);
 		}
 		
 		void CheckDisposed ()
 		{
-			if (endEventOut == null)
-				throw new ObjectDisposedException ("ProcessWrapper");
+			lock (lockObj)
+				if (disposed)
+					throw new ObjectDisposedException ("ProcessWrapper");
 		}
 		
-		int IProcessAsyncOperation.ExitCode {
-			get { return ExitCode; }
-		}
-		
-		int IProcessAsyncOperation.ProcessId {
-			get { return Id; }
-		}
-		
-		void IAsyncOperation.Cancel ()
+		public void Cancel ()
 		{
 			try {
-				if (!done) {
-					try {
-						CancelRequested = true;
-						this.KillProcessTree ();
-					} catch {
-						// Ignore
-					}
+				if (!HasExited) {
+					CancelRequested = true;
+					this.KillProcessTree ();
 				}
 			} catch (Exception ex) {
 				LoggingService.LogError (ex.ToString ());
 			}
 		}
 
-		void IAsyncOperation.WaitForCompleted ()
+		static void OnExited (object sender, EventArgs args)
 		{
-			WaitForOutput ();
+			var pw = (ProcessWrapper)sender;
+			pw.OnProcessWrapperExited ();
 		}
-		
-		void OnExited (object sender, EventArgs args)
+
+		void OnProcessWrapperExited ()
 		{
+			customCancelToken?.Dispose ();
+			customCancelToken = null;
+
 			try {
 				if (!HasExited)
 					WaitForExit ();
+				taskCompletionSource.TrySetResult (operation.ExitCode = ExitCode);
 			} catch {
 				// Ignore
-			} finally {
-				lock (lockObj) {
-					done = true;
-					try {
-						if (completedEvent != null)
-							completedEvent (this);
-					} catch {
-						// Ignore
-					}
-				}
 			}
 		}
-		
-		event OperationHandler IAsyncOperation.Completed {
-			add {
-				bool raiseNow = false;
-				lock (lockObj) {
-					if (done)
-						raiseNow = true;
-					else
-						completedEvent += value;
-				}
-				if (raiseNow)
-					value (this);
-			}
-			remove {
-				lock (lockObj) {
-					completedEvent -= value;
-				}
-			}
-		}
-	
-		bool IAsyncOperation.Success {
-			get { return done ? ExitCode == 0 : false; }
-		}
-		
-		bool IAsyncOperation.SuccessWithWarnings {
-			get { return false; }
-		}
-		
-		bool IAsyncOperation.IsCompleted {
-			get { return done; }
-		}
-		
-		event OperationHandler completedEvent;
 		
 		public event ProcessEventHandler OutputStreamChanged;
 		public event ProcessEventHandler ErrorStreamChanged;

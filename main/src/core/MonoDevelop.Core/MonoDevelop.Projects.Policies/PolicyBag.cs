@@ -42,7 +42,7 @@ namespace MonoDevelop.Projects.Policies
 	[DataItem ("Policies")]
 	public class PolicyBag: PolicyContainer, ICustomDataItem
 	{
-		public PolicyBag (SolutionItem owner)
+		public PolicyBag (SolutionFolderItem owner)
 		{
 			this.Owner = owner;
 		}
@@ -51,7 +51,7 @@ namespace MonoDevelop.Projects.Policies
 		{
 		}
 		
-		public SolutionItem Owner { get; internal set; }
+		public SolutionFolderItem Owner { get; internal set; }
 		
 		public override bool IsRoot {
 			get { return Owner == null || Owner.ParentFolder == null; }
@@ -66,11 +66,6 @@ namespace MonoDevelop.Projects.Policies
 			}
 		}
 		
-		bool DirectHas (Type type, string scope)
-		{
-			return policies != null && policies.ContainsKey (new PolicyKey (type, scope));
-		}
-		
 		DataCollection ICustomDataItem.Serialize (ITypeSerializer handler)
 		{
 			if (policies == null)
@@ -78,7 +73,7 @@ namespace MonoDevelop.Projects.Policies
 			
 			DataCollection dc = new DataCollection ();
 			foreach (KeyValuePair<PolicyKey,object> p in policies)
-				dc.Add (PolicyService.DiffSerialize (p.Key.PolicyType, p.Value, p.Key.Scope));
+				dc.Add (PolicyService.DiffSerialize (p.Key.PolicyType, p.Value, p.Key.Scope, keepDeletedNodes: true));
 			return dc;
 		}
 
@@ -107,7 +102,7 @@ namespace MonoDevelop.Projects.Policies
 		{
 			SolutionFolder solFol = Owner as SolutionFolder;
 			if (solFol != null)
-				foreach (SolutionItem item in solFol.Items)
+				foreach (SolutionFolderItem item in solFol.Items)
 					if (!item.Policies.DirectHas (args.PolicyType, args.Scope))
 						item.Policies.OnPolicyChanged (args.PolicyType, args.Scope);
 		}

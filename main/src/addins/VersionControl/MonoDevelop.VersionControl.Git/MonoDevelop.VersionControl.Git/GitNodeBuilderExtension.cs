@@ -35,7 +35,7 @@ namespace MonoDevelop.VersionControl.Git
 {
 	sealed class GitNodeBuilderExtension: NodeBuilderExtension
 	{
-		readonly Dictionary<FilePath,IWorkspaceObject> repos = new Dictionary<FilePath, IWorkspaceObject> ();
+		readonly Dictionary<FilePath,WorkspaceObject> repos = new Dictionary<FilePath, WorkspaceObject> ();
 
 		protected override void Initialize ()
 		{
@@ -53,25 +53,31 @@ namespace MonoDevelop.VersionControl.Git
 
 		public override bool CanBuildNode (Type dataType)
 		{
-			return typeof(IWorkspaceObject).IsAssignableFrom (dataType);
+			return typeof(WorkspaceObject).IsAssignableFrom (dataType);
 		}
 
 		public override void BuildNode (ITreeBuilder treeBuilder, object dataObject, NodeInfo nodeInfo)
 		{
-			var ob = (IWorkspaceObject) dataObject;
+			var ob = (WorkspaceObject) dataObject;
 			var rep = VersionControlService.GetRepository (ob) as GitRepository;
 			if (rep != null) {
-				IWorkspaceObject rob;
+				WorkspaceObject rob;
 				if (repos.TryGetValue (rep.RootPath, out rob)) {
-					if (ob == rob)
-						nodeInfo.Label += " (" + rep.GetCurrentBranch () + ")";
+					if (ob == rob) {
+						string branch = rep.GetCurrentBranch ();
+						if (branch == "(no branch)") {
+							using (var RootRepository = new LibGit2Sharp.Repository (rep.RootPath))
+								branch = RootRepository.ObjectDatabase.ShortenObjectId (RootRepository.Head.Tip);
+						}
+						nodeInfo.Label += " (" + branch + ")";
+					}
 				}
 			}
 		}
 
 		public override void OnNodeAdded (object dataObject)
 		{
-			var ob = (IWorkspaceObject) dataObject;
+			var ob = (WorkspaceObject) dataObject;
 			var rep = VersionControlService.GetRepository (ob) as GitRepository;
 			if (rep != null && !repos.ContainsKey (rep.RootPath)) {
 				repos [rep.RootPath] = ob;
@@ -80,9 +86,9 @@ namespace MonoDevelop.VersionControl.Git
 
 		public override void OnNodeRemoved (object dataObject)
 		{
-			var ob = (IWorkspaceObject) dataObject;
+			var ob = (WorkspaceObject) dataObject;
 			var rep = VersionControlService.GetRepository (ob) as GitRepository;
-			IWorkspaceObject rob;
+			WorkspaceObject rob;
 			if (rep != null && repos.TryGetValue (rep.RootPath, out rob)) {
 				if (ob == rob)
 					repos.Remove (rep.RootPath);

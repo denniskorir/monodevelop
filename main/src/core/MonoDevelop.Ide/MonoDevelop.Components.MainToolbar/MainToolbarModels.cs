@@ -43,6 +43,21 @@ namespace MonoDevelop.Components.MainToolbar
 		string DisplayString { get; }
 	}
 
+	public interface IRunConfigurationModel
+	{
+		/// <summary>
+		/// Gets the original identifier for the configuration.
+		/// </summary>
+		/// <value>The original identifier.</value>
+		string OriginalId { get; }
+
+		/// <summary>
+		/// Gest the display string to be used inside a context menu.
+		/// </summary>
+		/// <value>The display string.</value>
+		string DisplayString { get; }
+	}
+
 	public interface IRuntimeModel
 	{
 		/// <summary>
@@ -50,6 +65,51 @@ namespace MonoDevelop.Components.MainToolbar
 		/// </summary>
 		IEnumerable<IRuntimeModel> Children { get; }
 
+		/// <summary>
+		/// Gets whether the menu item is a separator.
+		/// </summary>
+		/// <value><c>true</c> if this instance is separator; otherwise, <c>false</c>.</value>
+		bool IsSeparator { get; }
+
+		/// <summary>
+		/// Gets whether the menu item is indented.
+		/// </summary>
+		/// <value><c>true</c> if this instance is indented; otherwise, <c>false</c>.</value>
+		bool IsIndented { get; }
+
+		/// <summary>
+		/// Gets whether the menu item is notable (bold text).
+		/// </summary>
+		/// <value><c>true</c> if notable; otherwise, <c>false</c>.</value>
+		bool Notable { get; }
+
+		/// <summary>
+		/// Gets the menu item's image.
+		/// </summary>
+		/// <value>The image name.</value>
+		string Image { get; }
+
+		/// <summary>
+		/// Gets the menu item's tooltip.
+		/// </summary>
+		/// <value>The tooltip text</value>
+		string Tooltip { get; }
+
+		/// <summary>
+		/// Gets the project to which this runtime belongs.
+		/// </summary>
+		/// <value>The project.</value>
+		MonoDevelop.Projects.SolutionItem Project { get; }
+
+		/// <summary>
+		/// Gets the runtime combo item model.
+		/// </summary>
+		/// <value>The runtime combo item.</value>
+		IRuntimeMutableModel GetMutableModel();
+	}
+
+	public interface IRuntimeMutableModel : IDisposable
+	{
 		/// <summary>
 		/// Gets the display string to be used inside a context menu.
 		/// </summary>
@@ -73,33 +133,6 @@ namespace MonoDevelop.Components.MainToolbar
 		/// </summary>
 		/// <value><c>true</c> if enabled; otherwise, <c>false</c>.</value>
 		bool Enabled { get; }
-
-		/// <summary>
-		/// Gets whether the menu item is a separator.
-		/// </summary>
-		/// <value><c>true</c> if this instance is separator; otherwise, <c>false</c>.</value>
-		bool IsSeparator { get; }
-
-		/// <summary>
-		/// Gets whether the menu item is indented.
-		/// </summary>
-		/// <value><c>true</c> if this instance is indented; otherwise, <c>false</c>.</value>
-		bool IsIndented { get; }
-
-		/// <summary>
-		/// Gets whether the menu item is notable (bold text).
-		/// </summary>
-		/// <value><c>true</c> if notable; otherwise, <c>false</c>.</value>
-		bool Notable { get; }
-
-		/// <summary>
-		/// Gets a value indicating whether this instance has a parent.
-		/// </summary>
-		/// <remarks>
-		/// If a menu item has a parent, it means it is in this list just for easier traversal and it should not be displayed.
-		/// </remarks>
-		/// <value><c>true</c> if this instance has a parent; otherwise, <c>false</c>.</value>
-		bool HasParent { get; }
 	}
 
 	public interface ISearchMenuModel

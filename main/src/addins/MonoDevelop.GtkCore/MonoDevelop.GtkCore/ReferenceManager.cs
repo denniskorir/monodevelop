@@ -156,16 +156,17 @@ namespace MonoDevelop.GtkCore {
 				if (version != assm_version) {
 					project.References.Remove (r);
 					if (name == "gnome-sharp" && assm_version == "Version=2.12.0.0, Culture=neutral, PublicKeyToken=35e10195dab3c99f") {
-						project.References.Add (new ProjectReference (ReferenceType.Package, name + ", Version=2.24.0.0, Culture=neutral, PublicKeyToken=35e10195dab3c99f"));
+						project.References.Add (ProjectReference.CreateAssemblyReference (name + ", Version=2.24.0.0, Culture=neutral, PublicKeyToken=35e10195dab3c99f"));
 					} else {
-						project.References.Add (new ProjectReference (ReferenceType.Package, name + ", " + assm_version));
+						project.References.Add (ProjectReference.CreateAssemblyReference (name + ", " + assm_version));
 					}
 					changed = true;
 				}
 			}
 
 			if (!gtk) {
-				project.References.Add (new ProjectReference (ReferenceType.Package, "gtk-sharp" + ", " + assm_version));
+				project.References.Add (ProjectReference.CreateAssemblyReference ("gtk-sharp" + ", " + assm_version));
+				project.ExtendedProperties ["GtkReferenceExists"] = true;
 				changed = true;
 			}
 
@@ -174,7 +175,7 @@ namespace MonoDevelop.GtkCore {
 
 			GtkDesignInfo info = GtkDesignInfo.FromProject (project);
 			if (!gdk) {
-				project.References.Add (new ProjectReference (ReferenceType.Package, "gdk-sharp" + ", " + assm_version));
+				project.References.Add (ProjectReference.CreateAssemblyReference ("gdk-sharp" + ", " + assm_version));
 				changed = true;
 			}
 				
@@ -184,7 +185,7 @@ namespace MonoDevelop.GtkCore {
 				if (aname != null) {
 					aname = project.AssemblyContext.GetAssemblyNameForVersion (aname, project.TargetFramework);
 					if (aname != null) {
-						project.References.Add (new ProjectReference (ReferenceType.Package, aname));
+						project.References.Add (ProjectReference.CreateAssemblyReference (aname));
 						changed = true;
 					}
 				}
@@ -230,13 +231,13 @@ namespace MonoDevelop.GtkCore {
 				dnp.ExtendedProperties ["GtkReferenceExists"] = false;
 				GtkDesignInfo.DisableProject (dnp);
 			} else
-				dnp.References.Add (new ProjectReference (ReferenceType.Package, args.ProjectReference.StoredReference));
+				dnp.References.Add (ProjectReference.CreateAssemblyReference (args.ProjectReference.StoredReference));
 		}
 
 		static string GetReferenceName (ProjectReference pref)
 		{
 			string stored = pref.StoredReference;
-			int idx =stored.IndexOf (",");
+			int idx = stored.IndexOf (",");
 			if (idx == -1)
 				return stored.Trim ();
 
@@ -248,7 +249,7 @@ namespace MonoDevelop.GtkCore {
 			if (pref.ReferenceType != ReferenceType.Package)
 				return false;
 
-			return GetReferenceName (pref) == "gtk-sharp";
+			return pref.StoredReference.StartsWith ("gtk-sharp,", StringComparison.Ordinal);
 		}
 
 		public static bool HasGtkReference (DotNetProject project)

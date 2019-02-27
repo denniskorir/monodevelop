@@ -1,16 +1,19 @@
 using System;
 using System.Collections;
+using System.Collections.Generic;
 
 using Gtk;
 
 using MonoDevelop.Core;
 using MonoDevelop.Ide.Gui;
+using MonoDevelop.Components;
+using MonoDevelop.Components.AtkCocoaHelper;
+using System.Threading.Tasks;
 
 namespace MonoDevelop.Ide.Gui.Dialogs
 {
-	internal class DirtyFilesDialog : Gtk.Dialog
+	internal class DirtyFilesDialog : IdeDialog
 	{
-
 		Button btnSaveAndQuit;
 		Button btnQuit;
 		Button btnCancel;
@@ -18,21 +21,39 @@ namespace MonoDevelop.Ide.Gui.Dialogs
 		TreeStore tsFiles;
 		CellRendererToggle togRender;
 		CellRendererText textRender;
-		
-		public DirtyFilesDialog () : base (GettextCatalog.GetString ("Save Files"), IdeApp.Workbench.RootWindow, DialogFlags.Modal)
+
+		public DirtyFilesDialog () : this (IdeApp.Workbench.Documents, true, true)
 		{
+		}
+
+		public DirtyFilesDialog (IReadOnlyList<Document> docs, bool closeWorkspace, bool groupByProject) :
+			base (GettextCatalog.GetString ("Save Files"), IdeApp.Workbench.RootWindow, DialogFlags.Modal)
+		{
+			Accessible.Name = "Dialog.DirtyFiles";
+
+			string description;
+			if (closeWorkspace) {
+				description = GettextCatalog.GetString ("Select which files should be saved before closing the workspace");
+			} else {
+				description = GettextCatalog.GetString ("Select which files should be saved before quitting the application");
+			}
+			Accessible.Description = description;
+
 			tsFiles = new TreeStore (typeof(string), typeof(bool), typeof(SdiWorkspaceWindow), typeof(bool));
 			tvFiles = new TreeView (tsFiles);
 			TreeIter topCombineIter = TreeIter.Zero;
 			Hashtable projectIters = new Hashtable ();
-			
-			foreach (Document doc in IdeApp.Workbench.Documents) {
+
+			tvFiles.Accessible.Name = "Dialog.DirtyFiles.FileList";
+			tvFiles.Accessible.SetLabel (GettextCatalog.GetString ("Dirty Files"));
+			tvFiles.Accessible.Description = GettextCatalog.GetString ("The list of files which have changes and need saving");
+			foreach (Document doc in docs) {
 				if (!doc.IsDirty)
 					continue;
 				
-				IViewContent viewcontent = doc.Window.ViewContent;
+				ViewContent viewcontent = doc.Window.ViewContent;
 				 
-				if (viewcontent.Project != null) {
+				if (groupByProject && viewcontent.Project != null) {
 					TreeIter projIter = TreeIter.Zero;
 					if (projectIters.ContainsKey (viewcontent.Project))
 						projIter = (TreeIter)projectIters [viewcontent.Project];
@@ -45,10 +66,7 @@ namespace MonoDevelop.Ide.Gui.Dialogs
 					}
 					tsFiles.AppendValues (projIter, viewcontent.PathRelativeToProject, true, viewcontent.WorkbenchWindow);
 				} else {
-					if (viewcontent.ContentName == null) {
-						viewcontent.ContentName = System.IO.Path.Combine (Environment.GetFolderPath (Environment.SpecialFolder.Personal), viewcontent.UntitledName);
-					}
-					tsFiles.AppendValues (viewcontent.ContentName, true, viewcontent.WorkbenchWindow);
+					tsFiles.AppendValues (GetContentFileName (viewcontent), true, viewcontent.WorkbenchWindow);
 				}
 			}
 			if (!topCombineIter.Equals (TreeIter.Zero)) {
@@ -74,15 +92,40 @@ namespace MonoDevelop.Ide.Gui.Dialogs
 			tvFiles.ExpandAll ();
 
 			ScrolledWindow sc = new ScrolledWindow ();
+			sc.Accessible.SetShouldIgnore (true);
 			sc.Add (tvFiles);
 			sc.ShadowType = ShadowType.In;
 
 			sc.BorderWidth = 6;
 			this.VBox.PackStart (sc, true, true, 6);
-			
-			btnSaveAndQuit = new Button (GettextCatalog.GetString ("_Save and Quit"));
-			btnQuit = new Button (Gtk.Stock.Quit);
+
+			btnSaveAndQuit = new Button (closeWorkspace ? GettextCatalog.GetString ("_Save and Quit") : GettextCatalog.GetString ("_Save and Close"));
+			btnSaveAndQuit.Accessible.Name = "Dialog.DirtyFiles.SaveAndQuit";
+
+			if (closeWorkspace) {
+				description = GettextCatalog.GetString ("Save the selected files and close the workspace");
+			} else {
+				description = GettextCatalog.GetString ("Save the selected files and quit the application");
+			}
+			btnSaveAndQuit.Accessible.Description = description;
+
+			btnQuit = new Button (closeWorkspace ? Gtk.Stock.Quit : Gtk.Stock.Close);
+			btnQuit.Accessible.Name = "Dialog.DirtyFiles.Quit";
+			if (closeWorkspace) {
+				description = GettextCatalog.GetString ("Close the workspace");
+			} else {
+				description = GettextCatalog.GetString ("Quit the application");
+			}
+			btnQuit.Accessible.Description = description;
+
 			btnCancel = new Button (Gtk.Stock.Cancel);
+			btnCancel.Accessible.Name = "Dialog.DirtyFiles.Cancel";
+			if (closeWorkspace) {
+				description = GettextCatalog.GetString ("Cancel closing the workspace");
+			} else {
+				description = GettextCatalog.GetString ("Cancel quitting the application");
+			}
+			btnCancel.Accessible.Description = description;
 
 			btnSaveAndQuit.Clicked += SaveAndQuit;
 			btnQuit.Clicked += Quit;
@@ -94,7 +137,12 @@ namespace MonoDevelop.Ide.Gui.Dialogs
 			this.SetDefaultSize (300, 200);
 			this.Child.ShowAll ();
 		}
-		
+
+		static string GetContentFileName (ViewContent viewcontent)
+		{
+			return viewcontent.ContentName ?? System.IO.Path.Combine (Environment.GetFolderPath (Environment.SpecialFolder.Personal), viewcontent.UntitledName);
+		}
+
 		protected override void OnDestroyed ()
 		{
 			btnSaveAndQuit.Clicked -= SaveAndQuit;
@@ -109,26 +157,31 @@ namespace MonoDevelop.Ide.Gui.Dialogs
 				textRender.Destroy ();
 				textRender = null;
 			}
-			if (tsFiles != null) {
-				tsFiles.Dispose ();
-				tsFiles = null;
-			}
 			base.OnDestroyed ();
 		}
 		
-		void SaveAndQuit (object o, EventArgs e)
+		async void SaveAndQuit (object o, EventArgs e)
 		{
+			Sensitive = false;
+
+			List<Task> saveTasks = new List<Task> ();
 			tsFiles.Foreach (delegate (TreeModel model, TreePath path, TreeIter iter) {
 				var window = tsFiles.GetValue (iter, 2) as SdiWorkspaceWindow;
 				if (window == null)
 					return false;
 				if ((bool)tsFiles.GetValue (iter, 1)) {
-					window.ViewContent.Save (window.ViewContent.ContentName);
+					saveTasks.Add (window.ViewContent.Save (GetContentFileName(window.ViewContent)));
 				} else {
 					window.ViewContent.DiscardChanges ();
 				}
 				return false;
 			});
+
+			try {
+				await Task.WhenAll (saveTasks);
+			} finally {
+				Sensitive = true;
+			}
 	
 			Respond (Gtk.ResponseType.Ok);
 			Hide ();

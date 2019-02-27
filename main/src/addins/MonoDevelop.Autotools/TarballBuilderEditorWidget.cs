@@ -17,7 +17,7 @@ namespace MonoDevelop.Autotools
 			alignment1.Xscale = 0.04f;
 			
 			this.target = target;
-			SolutionItem targetCombine = target.RootSolutionItem;
+			SolutionFolderItem targetCombine = target.RootSolutionItem;
 			folderEntry.Path = target.TargetDir;
 			
 			if (string.IsNullOrEmpty (target.DefaultConfiguration)) {
@@ -80,9 +80,10 @@ namespace MonoDevelop.Autotools
 
 		protected virtual void OnAutofooPropertiesClicked (object sender, System.EventArgs e)
 		{
-			MakefileSwitchEditor editor = new MakefileSwitchEditor (target);
-			editor.ShowAll ();
-			MonoDevelop.Ide.MessageService.ShowCustomDialog (editor, this.Toplevel as Gtk.Window);
+			using (MakefileSwitchEditor editor = new MakefileSwitchEditor (target)) {
+				editor.ShowAll ();
+				MonoDevelop.Ide.MessageService.ShowCustomDialog (editor, this.Toplevel as Gtk.Window);
+			}
 		}
 	}
 }

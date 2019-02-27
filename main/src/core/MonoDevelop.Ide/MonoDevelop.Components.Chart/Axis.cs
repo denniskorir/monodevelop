@@ -33,7 +33,7 @@ namespace MonoDevelop.Components.Chart
 	public abstract class Axis
 	{
 		int tickSize = 6;
-		internal BasicChart Owner;
+		internal ChartWidget Owner;
 		AxisPosition position;
 		AxisDimension dim;
 		bool showLabels = true;
@@ -81,7 +81,8 @@ namespace MonoDevelop.Components.Chart
 		public TickEnumerator GetTickEnumerator (double minTickStep)
 		{
 			TickEnumerator e = CreateTickEnumerator (minTickStep);
-			e.axis = this;
+			if (e != null)
+				e.axis = this;
 			return e;
 		}
 		

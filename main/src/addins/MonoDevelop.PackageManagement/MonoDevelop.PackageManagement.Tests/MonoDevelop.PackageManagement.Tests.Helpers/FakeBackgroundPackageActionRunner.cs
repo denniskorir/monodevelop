@@ -26,14 +26,14 @@
 
 using System;
 using System.Collections.Generic;
-using ICSharpCode.PackageManagement;
+using System.Threading.Tasks;
 using MonoDevelop.Projects;
 
 namespace MonoDevelop.PackageManagement.Tests.Helpers
 {
-	public class FakeBackgroundPackageActionRunner : IBackgroundPackageActionRunner
+	class FakeBackgroundPackageActionRunner : IBackgroundPackageActionRunner
 	{
-		public IEnumerable<InstallPackageAction> PendingInstallActionsForProject (DotNetProject project)
+		public IEnumerable<IInstallNuGetPackageAction> PendingInstallActionsForProject (DotNetProject project)
 		{
 			throw new NotImplementedException ();
 		}
@@ -46,14 +46,29 @@ namespace MonoDevelop.PackageManagement.Tests.Helpers
 
 		public void Run (ProgressMonitorStatusMessage progressMessage, IPackageAction action)
 		{
+			Run (progressMessage, action, true);
+		}
+
+		public void Run (ProgressMonitorStatusMessage progressMessage, IPackageAction action, bool clearConsole)
+		{
 			RunProgressMessage = progressMessage;
 			ActionRun = action;
 
 			RunAction (progressMessage, action);
 		}
 
+		public Action<ProgressMonitorStatusMessage, IEnumerable<IPackageAction>, bool> RunActions =
+			(progressMessage, action, clearConsole) => { };
+
 		public void Run (ProgressMonitorStatusMessage progressMessage, IEnumerable<IPackageAction> actions)
 		{
+			Run (progressMessage, actions, true);
+		}
+
+		public void Run (ProgressMonitorStatusMessage progressMessage, IEnumerable<IPackageAction> actions, bool clearConsole)
+		{
+			RunProgressMessage = progressMessage;
+			RunActions (progressMessage, actions, clearConsole);
 		}
 
 		public void ShowError (ProgressMonitorStatusMessage progressMessage, Exception exception)
@@ -68,15 +83,40 @@ namespace MonoDevelop.PackageManagement.Tests.Helpers
 			ShowErrorMessage = message;
 		}
 
+		public Action<ProgressMonitorStatusMessage, IEnumerable<IPackageAction>> RunAsyncAction =
+			(progressMessage, actions) => { };
+
+		public Task RunAsync (ProgressMonitorStatusMessage progressMessage, IEnumerable<IPackageAction> actions)
+		{
+			RunAsyncAction (progressMessage, actions);
+			return Task.FromResult (0);
+		}
+
+		public Task RunAsync (ProgressMonitorStatusMessage progressMessage, IEnumerable<IPackageAction> actions, bool clearConsole)
+		{
+			throw new NotImplementedException ();
+		}
+
+		public void Cancel ()
+		{
+		}
+
+		public PendingPackageActionsInformation GetPendingActionsInfo ()
+		{
+			throw new NotImplementedException ();
+		}
+
 		public ProgressMonitorStatusMessage ShowErrorProgressMessage;
 		public string ShowErrorMessage;
 		public Exception ShowErrorException;
 
-		public IEnumerable<InstallPackageAction> PendingInstallActions {
+		public IEnumerable<IInstallNuGetPackageAction> PendingInstallActions {
 			get {
 				throw new NotImplementedException ();
 			}
 		}
+
+		public bool IsRunning { get; set; }
 	}
 }
 

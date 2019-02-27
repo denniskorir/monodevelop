@@ -34,7 +34,7 @@ namespace MonoDevelop.Components
 
 		public ContextMenu ()
 		{
-			items = new ContextMenuItemCollection (this);
+			items = new ContextMenuItemCollection ();
 		}
 
 		public ContextMenuItemCollection Items {
@@ -62,14 +62,68 @@ namespace MonoDevelop.Components
 
 		public void Show (Gtk.Widget parent, Gdk.EventButton evt)
 		{
+			Show (parent, evt, null);
+		}
+
+		public void Show (Gtk.Widget parent, Gdk.EventButton evt, Action closeHandler)
+		{
 			#if MAC
 			if (Platform.IsMac) {
-				ContextMenuExtensionsMac.ShowContextMenu (parent, evt, this);
+				ContextMenuExtensionsMac.ShowContextMenu (parent, evt, this, closeHandler);
 				return;
 			}
 			#endif
 
-			ContextMenuExtensionsGtk.ShowContextMenu (parent, evt, this);
+			ContextMenuExtensionsGtk.ShowContextMenu (parent, evt, this, closeHandler);
+		}
+
+		public void Show (Gtk.Widget parent, int x, int y, Action closeHandler, bool selectFirstItem = false)
+		{
+			#if MAC
+			if (Platform.IsMac) {
+				ContextMenuExtensionsMac.ShowContextMenu (parent, x, y, this, closeHandler, selectFirstItem);
+				return;
+			}
+			#endif
+
+			ContextMenuExtensionsGtk.ShowContextMenu (parent, x, y, this, closeHandler, selectFirstItem);
+		}
+
+		internal void Show (Xwt.Widget parent, int x, int y, Action closeHandler, bool selectFirstItem = false)
+		{
+			if (parent.Surface.NativeWidget is Gtk.Widget widget) {
+				Show (widget, x, y, closeHandler, selectFirstItem);
+				return;
+			}
+			#if MAC
+			if (parent.Surface.NativeWidget is AppKit.NSView view) {
+				ContextMenuExtensionsMac.ShowContextMenu ((AppKit.NSView)view, x, y, this, closeHandler, selectFirstItem);
+				return;
+			}
+			#endif
+			throw new NotSupportedException ();
+		}
+
+		public void Show (Gtk.Widget parent, int x, int y)
+		{
+			Show (parent, x, y, null);
+		}
+
+		internal void Show (Xwt.Widget parent, int x, int y)
+		{
+			Show (parent, x, y, null);
+		}
+
+		public void Add (ContextMenuItem menuItem)
+		{
+			items.Add (menuItem);
+		}
+
+		public event EventHandler Closed;
+
+		internal void FireClosedEvent ()
+		{
+			Closed?.Invoke (this, EventArgs.Empty);
 		}
 	}
 }

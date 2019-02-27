@@ -85,7 +85,7 @@ namespace MonoDevelop.Components.Extensions
 			
 			if (data.Message.CancellationToken.CanBeCanceled) {
 				data.Message.CancellationToken.Register (delegate {
-					 Gtk.Application.Invoke (delegate {
+					 Gtk.Application.Invoke ((o, args) => {
 						if (alertDialog != null) {
 							alertDialog.Respond (Gtk.ResponseType.DeleteEvent);
 						}
@@ -94,10 +94,12 @@ namespace MonoDevelop.Components.Extensions
 			}
 			
 			if (!data.Message.CancellationToken.IsCancellationRequested) {
-				MessageService.ShowCustomDialog (alertDialog, data.TransientFor);
-				if (alertDialog.ApplyToAll)
-					data.ApplyToAll = true;
-				data.ResultButton = alertDialog.ResultButton;
+				using (alertDialog) {
+					MessageService.ShowCustomDialog (alertDialog, data.TransientFor);
+					if (alertDialog.ApplyToAll)
+						data.ApplyToAll = true;
+					data.ResultButton = alertDialog.ResultButton;
+				}
 			}
 			alertDialog = null;
 			

@@ -29,7 +29,6 @@ using System.Collections.Generic;
 using Gtk;
 using Gdk;
 using Cairo;
-using Mono.TextEditor;
 
 namespace MonoDevelop.Components
 {
@@ -91,7 +90,7 @@ namespace MonoDevelop.Components
 		
 		public SectionList ()
 		{
-			Mono.TextEditor.GtkWorkarounds.FixContainerLeak (this);
+			GtkWorkarounds.FixContainerLeak (this);
 			
 			this.WidgetFlags |= WidgetFlags.NoWindow;
 			WidthRequest = 100;
@@ -182,6 +181,12 @@ namespace MonoDevelop.Components
 				return;
 			layout.Dispose ();
 			layout = null;
+		}
+
+		protected override void OnDestroyed ()
+		{
+			KillLayout ();
+			base.OnDestroyed ();
 		}
 
 		protected override void OnAdded (Widget widget)
@@ -385,7 +390,7 @@ namespace MonoDevelop.Components
 		{
 			trackingHover = false;
 			SetHoverIndex (-1);
-			return base.OnEnterNotifyEvent (evnt);
+			return base.OnLeaveNotifyEvent (evnt);
 		}
 		
 		protected override bool OnMotionNotifyEvent (EventMotion evnt)

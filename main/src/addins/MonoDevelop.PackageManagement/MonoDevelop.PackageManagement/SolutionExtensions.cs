@@ -29,18 +29,13 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using MonoDevelop.Core.ProgressMonitoring;
+using MonoDevelop.Core;
 using MonoDevelop.Projects;
 
-namespace ICSharpCode.PackageManagement
+namespace MonoDevelop.PackageManagement
 {
-	public static class SolutionExtensions
+	internal static class SolutionExtensions
 	{
-		public static void Save(this Solution solution)
-		{
-			solution.Save(new NullProgressMonitor());
-		}
-
 		public static IEnumerable<DotNetProject> GetAllDotNetProjects (this Solution solution)
 		{
 			return solution.GetAllProjects ().OfType<DotNetProject> ();
@@ -56,6 +51,13 @@ namespace ICSharpCode.PackageManagement
 		public static bool HasAnyProjectWithPackages (this Solution solution)
 		{
 			return solution.GetAllProjectsWithPackages ().Any ();
+		}
+
+		public static bool CanUpdatePackages (this Solution solution)
+		{
+			return solution
+				.GetAllDotNetProjects ()
+				.Any (project => project.CanUpdatePackages ());
 		}
 	}
 }

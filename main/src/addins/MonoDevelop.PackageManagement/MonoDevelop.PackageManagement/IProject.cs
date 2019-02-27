@@ -24,21 +24,26 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 // THE SOFTWARE.
 
-using System;
 using System.Collections;
+using System.Collections.Generic;
+using System.Threading.Tasks;
 using MonoDevelop.Core;
+using MonoDevelop.Projects.MSBuild;
 
 namespace MonoDevelop.PackageManagement
 {
-	public interface IProject
+	internal interface IProject
 	{
 		string Name { get; }
 		FilePath FileName { get; }
 		FilePath BaseDirectory { get; }
+		FilePath BaseIntermediateOutputPath { get; }
 		ISolution ParentSolution { get; }
 		IDictionary ExtendedProperties { get; }
+		IEnumerable<string> FlavorGuids { get; }
+		IMSBuildEvaluatedPropertyCollection EvaluatedProperties { get; }
 
-		void Save ();
+		Task SaveAsync ();
 	}
 }
 

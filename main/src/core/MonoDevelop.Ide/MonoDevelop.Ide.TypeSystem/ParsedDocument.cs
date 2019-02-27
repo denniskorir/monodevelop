@@ -29,10 +29,9 @@ using System.Collections.Generic;
 using System.Text;
 using System.Linq;
 using System.Threading;
-using ICSharpCode.NRefactory;
-using ICSharpCode.NRefactory.Semantics;
-using Mono.TextEditor;
-
+using MonoDevelop.Ide.Editor;
+using System.Threading.Tasks;
+using MonoDevelop.Core.Text;
 
 namespace MonoDevelop.Ide.TypeSystem
 {
@@ -40,9 +39,18 @@ namespace MonoDevelop.Ide.TypeSystem
 	public enum ParsedDocumentFlags
 	{
 		None            = 0,
-		NonSerializable = 1
-	}
+		NonSerializable = 1,
 
+		/// <summary>
+		/// Used for files where a custom folding extension is taken.
+		/// </summary>
+		SkipFoldings   = 2,
+
+		/// <summary>
+		/// Used for files that have a custom completion extension.
+		/// </summary>
+		HasCustomCompletionExtension = 4
+	}
 
 	public abstract class ParsedDocument
 	{
@@ -51,63 +59,8 @@ namespace MonoDevelop.Ide.TypeSystem
 			get { return lastWriteTimeUtc; }
 			set { lastWriteTimeUtc = value; }
 		}
-		
-		[NonSerialized]
-		List<Comment> comments = new List<Comment> ();
-		
-		public virtual IUnresolvedFile ParsedFile {
-			get { return null; }
-			set { throw new InvalidOperationException (); }
-		}
 
-		public IList<Comment> Comments {
-			get {
-				return comments;
-			}
-		}
 
-		/// <summary>
-		/// Gets or sets a value indicating whether this instance is invalid and needs to be reparsed.
-		/// </summary>
-		public bool IsInvalid {
-			get;
-			set;
-		}
-
-		List<Tag> tagComments = new List<Tag> ();
-		public IList<Tag> TagComments {
-			get {
-				return tagComments;
-			}
-		}
-		
-		IEnumerable<FoldingRegion> foldings = null;
-		public virtual IEnumerable<FoldingRegion> Foldings {
-			get {
-				return foldings ?? Enumerable.Empty<FoldingRegion> ();
-			}
-		}
-		
-		public IEnumerable<FoldingRegion> UserRegions {
-			get {
-				return Foldings.Where (f => f.Type == FoldType.UserRegion);
-			}
-		}
-		
-		List<PreProcessorDefine> defines = new List<PreProcessorDefine> ();
-		public IList<PreProcessorDefine> Defines {
-			get {
-				return defines;
-			}
-		}
-		
-		List<ConditionalRegion> conditionalRegions = new List<ConditionalRegion> ();
-		public IList<ConditionalRegion> ConditionalRegions {
-			get {
-				return conditionalRegions;
-			}
-		}
-		
 		[NonSerialized]
 		ParsedDocumentFlags flags;
 		public ParsedDocumentFlags Flags {
@@ -128,16 +81,36 @@ namespace MonoDevelop.Ide.TypeSystem
 				fileName = value;
 			}
 		}
-		
-		public virtual IList<Error> Errors {
-			get {
-				return new Error[0];
-			}
+
+		/// <summary>
+		/// Gets or sets a value indicating whether this instance is invalid and needs to be reparsed.
+		/// </summary>
+		public bool IsInvalid {
+			get;
+			set;
 		}
-		
+
+		public abstract Task<IReadOnlyList<Comment>> GetCommentsAsync (CancellationToken cancellationToken = default(CancellationToken));
+		public abstract Task<IReadOnlyList<Tag>> GetTagCommentsAsync (CancellationToken cancellationToken = default(CancellationToken));
+		public abstract Task<IReadOnlyList<FoldingRegion>> GetFoldingsAsync (CancellationToken cancellationToken = default(CancellationToken));
+
+		public async Task<IEnumerable<FoldingRegion>> GetUserRegionsAsync (CancellationToken cancellationToken = default(CancellationToken))
+		{
+			var foldings = await GetFoldingsAsync (cancellationToken).ConfigureAwait (false);
+			return foldings.Where (f => f.Type == FoldType.UserRegion);
+		}
+
+		public abstract Task<IReadOnlyList<Error>> GetErrorsAsync (CancellationToken cancellationToken = default(CancellationToken));
+
+		public async Task<bool> HasErrorsAsync (CancellationToken cancellationToken = default (CancellationToken))
+		{
+			return (await GetErrorsAsync (cancellationToken).ConfigureAwait (false)).Any (e => e.ErrorType == ErrorType.Error);
+		}
+
+		[Obsolete ("Use the HasErrorsAsync method for cancellation and async support.")]
 		public bool HasErrors {
 			get {
-				return Errors.Any (e => e.ErrorType == ErrorType.Error);
+				return GetErrorsAsync ().Result.Any (e => e.ErrorType == ErrorType.Error);
 			}
 		}
 		
@@ -148,7 +121,9 @@ namespace MonoDevelop.Ide.TypeSystem
 			get;
 			set;
 		}
-		
+
+
+		[Obsolete("Do not use this system anymore. Use the analysisDocument.GetSemanticModelAsync () instead.")]
 		public T GetAst<T> () where T : class
 		{
 			return Ast as T;
@@ -162,244 +137,93 @@ namespace MonoDevelop.Ide.TypeSystem
 		{
 			this.fileName = fileName;
 		}
-		
-		
-		public void Add (Comment comment)
-		{
-			comments.Add (comment);
-		}
-		
-		public void Add (Tag tagComment)
-		{
-			tagComments.Add (tagComment);
-		}
-		
-		public void Add (PreProcessorDefine define)
-		{
-			defines.Add (define);
-		}
-		
-		public void Add (ConditionalRegion region)
-		{
-			conditionalRegions.Add (region);
-		}
-
-		List<FoldingRegion> EnsureFoldingList ()
-		{
-			if (this.foldings == null || !(foldings is List<FoldingRegion>))
-				this.foldings = new List<FoldingRegion> ();
-			return (List<FoldingRegion>)foldings;
-		}
-		
-		public void Add (FoldingRegion region)
-		{
-			EnsureFoldingList ().Add (region);
-		}
-		
-		public void Add (IEnumerable<Comment> comments)
-		{
-			this.comments.AddRange (comments);
-		}
-		
-		public void Add (IEnumerable<Tag> tagComments)
-		{
-			this.tagComments.AddRange (tagComments);
-		}
-		
-		public void Add (IEnumerable<PreProcessorDefine> defines)
-		{
-			this.defines.AddRange (defines);
-		}
-		
-		public void Add (IEnumerable<FoldingRegion> folds)
-		{
-			if (foldings == null) {
-				this.foldings = folds;
-				return;
-			}
-			if (foldings != null && !(foldings is List<FoldingRegion>))
-				EnsureFoldingList ().AddRange (foldings);
-			EnsureFoldingList ().AddRange (folds);
-		}
-		
-		public void Add (IEnumerable<ConditionalRegion> conditionalRegions)
-		{
-			this.conditionalRegions.AddRange (conditionalRegions);
-		}
-		
-		#region IUnresolvedFile delegation
-		public virtual IUnresolvedTypeDefinition GetTopLevelTypeDefinition (TextLocation location)
-		{
-			return null;
-		}
-		
-		public virtual IUnresolvedTypeDefinition GetInnermostTypeDefinition (TextLocation location)
-		{
-			return null;
-		}
-
-		public virtual IUnresolvedMember GetMember (TextLocation location)
-		{
-			return null;
-		}
-
-		public virtual IList<IUnresolvedTypeDefinition> TopLevelTypeDefinitions {
-			get {
-				return new List<IUnresolvedTypeDefinition> ();
-			}
-		}
-
-		#endregion
-
-		public Func<MonoDevelop.Ide.Gui.Document, CancellationToken, IRefactoringContext> CreateRefactoringContext;
-		public Func<TextEditorData, object, CancellationToken, IRefactoringContext> CreateRefactoringContextWithEditor;
 	}
 	
-	public class DefaultParsedDocument : ParsedDocument, IUnresolvedFile
+	public class DefaultParsedDocument : ParsedDocument
 	{
-
-		public override IUnresolvedFile ParsedFile {
-			get { return this; }
-		}
-		
-		List<Error> errors = new List<Error> ();
-		
-		public override IList<Error> Errors {
-			get {
-				return errors;
-			} 
-		}
-
 		public DefaultParsedDocument (string fileName) : base (fileName)
 		{
 			Flags |= ParsedDocumentFlags.NonSerializable;
 		}
-		
-		#region IUnresolvedFile implementation
-		public override IUnresolvedTypeDefinition GetTopLevelTypeDefinition(TextLocation location)
+
+		List<Comment> comments = new List<Comment> ();
+
+		public void Add (Comment comment)
 		{
-			return TopLevelTypeDefinitions.FirstOrDefault (t => t.Region.IsInside (location));
-		}
-		
-		public override IUnresolvedTypeDefinition GetInnermostTypeDefinition(TextLocation location)
-		{
-			IUnresolvedTypeDefinition parent = null;
-			var type = GetTopLevelTypeDefinition(location);
-			while (type != null) {
-				parent = type;
-				type = parent.NestedTypes.FirstOrDefault (t => t.Region.IsInside (location));
-			}
-			return parent;
-		}
-		
-		public override IUnresolvedMember GetMember(TextLocation location)
-		{
-			var type = GetInnermostTypeDefinition(location);
-			if (type == null)
-				return null;
-			return type.Members.FirstOrDefault (e => e.Region.IsInside(location));
-		}
-		
-		List<IUnresolvedTypeDefinition> types = new List<IUnresolvedTypeDefinition> ();
-		public override IList<IUnresolvedTypeDefinition> TopLevelTypeDefinitions {
-			get {
-				return types;
-			}
-		}
-		
-		List<IUnresolvedAttribute> attributes = new List<IUnresolvedAttribute> ();
-		public IList<IUnresolvedAttribute> AssemblyAttributes {
-			get {
-				return attributes;
-			}
+			comments.Add (comment);
 		}
 
-		public IList<IUnresolvedAttribute> ModuleAttributes {
-			get {
-				return new List<IUnresolvedAttribute> ();
-			}
+		public void AddRange (IEnumerable<Comment> comments)
+		{
+			this.comments.AddRange (comments);
 		}
-		#endregion
-		
+
+		public override Task<IReadOnlyList<Comment>> GetCommentsAsync (CancellationToken cancellationToken = default(CancellationToken))
+		{
+			return Task.FromResult<IReadOnlyList<Comment>> (comments);
+		}
+
+		List<Tag> tagComments = new List<Tag> ();
+
+		public void Add (Tag tagComment)
+		{
+			tagComments.Add (tagComment);
+		}
+
+		public void AddRange (IEnumerable<Tag> tagComments)
+		{
+			this.tagComments.AddRange (tagComments);
+		}
+
+		public override Task<IReadOnlyList<Tag>> GetTagCommentsAsync (CancellationToken cancellationToken = default(CancellationToken))
+		{
+			return Task.FromResult<IReadOnlyList<Tag>> (tagComments);
+		}
+
+		List<FoldingRegion> foldingRegions = new List<FoldingRegion> ();
+
+		public void Add (FoldingRegion foldingRegion)
+		{
+			foldingRegions.Add (foldingRegion);
+		}
+
+		public void AddRange (IEnumerable<FoldingRegion> foldingRegions)
+		{
+			this.foldingRegions.AddRange (foldingRegions);
+		}
+
+		public override Task<IReadOnlyList<FoldingRegion>> GetFoldingsAsync (CancellationToken cancellationToken = default(CancellationToken))
+		{
+			return Task.FromResult<IReadOnlyList<FoldingRegion>> (foldingRegions);
+		}
+
+		List<Error> errors = new List<Error> ();
+
 		public void Add (Error error)
 		{
 			errors.Add (error);
 		}
-		
-		public void Add (IEnumerable<Error> errors)
+
+		public void AddRange (IEnumerable<Error> errors)
 		{
 			this.errors.AddRange (errors);
 		}
 
-		#region IUnresolvedFile implementation
-		DateTime? IUnresolvedFile.LastWriteTime {
-			get {
-				return LastWriteTimeUtc;
-			}
-			set {
-				LastWriteTimeUtc = value.HasValue ? value.Value : DateTime.UtcNow;
-			}
+		public override Task<IReadOnlyList<Error>> GetErrorsAsync (CancellationToken cancellationToken = default(CancellationToken))
+		{
+			return Task.FromResult<IReadOnlyList<Error>> (errors);
 		}
-		#endregion
 	}
-	
-	[Serializable]
-	public class ParsedDocumentDecorator : ParsedDocument
-	{
-		IUnresolvedFile parsedFile;
-		
-		public override IUnresolvedFile ParsedFile {
-			get { return parsedFile; }
-			set { parsedFile = value; FileName = parsedFile.FileName; }
-		}
-		
-		public override IList<Error> Errors {
-			get {
-				return parsedFile.Errors;
-			}
-		}
-		
-		public ParsedDocumentDecorator (IUnresolvedFile parsedFile) : base (parsedFile.FileName)
-		{
-			this.parsedFile = parsedFile;
-		}
-		
-		public ParsedDocumentDecorator () : base ("")
-		{
-		}
-		
-		#region IUnresolvedFile implementation
-		public override IUnresolvedTypeDefinition GetTopLevelTypeDefinition (TextLocation location)
-		{
-			return parsedFile.GetTopLevelTypeDefinition (location);
-		}
 
-		public override IUnresolvedTypeDefinition GetInnermostTypeDefinition (TextLocation location)
-		{
-			return parsedFile.GetInnermostTypeDefinition (location);
-		}
-
-		public override IUnresolvedMember GetMember (TextLocation location)
-		{
-			return parsedFile.GetMember (location);
-		}
-
-		public override IList<IUnresolvedTypeDefinition> TopLevelTypeDefinitions {
-			get {
-				return parsedFile.TopLevelTypeDefinitions;
-			}
-		}
-		#endregion
-	}
-	
 	public static class FoldingUtilities
 	{
 		static bool IncompleteOrSingleLine (DomRegion region)
 		{
 			return region.BeginLine <= 0 || region.EndLine <= region.BeginLine;
 		}
-		
-		public static IEnumerable<FoldingRegion> ToFolds (this IList<Comment> comments)
+
+		[Obsolete("Language backends need to implement a custom version.")]
+		public static IEnumerable<FoldingRegion> ToFolds (this IReadOnlyList<Comment> comments)
 		{
 			for (int i = 0; i < comments.Count; i++) {
 				Comment comment = comments [i];
@@ -424,7 +248,7 @@ namespace MonoDevelop.Ide.TypeSystem
 					
 					string txt;
 					if (endOffset > startOffset) {
-						txt = "/* " + SubstrEllipsize (comment.Text, startOffset, endOffset - startOffset) + " */";
+						txt = "/* " + GetFirstLine (comment.Text) + " ...";
 					} else {
 						txt = "/* */";
 					}
@@ -449,14 +273,13 @@ namespace MonoDevelop.Ide.TypeSystem
 					curLine = curComment.Region.BeginLine;
 				}
 				
-				if (j - i > 1) {
-					string txt;
+				if (j - i > 1 || (comment.IsDocumentation && comment.Region.BeginLine < comment.Region.EndLine)) {
+					string txt = null;
 					if (comment.IsDocumentation) {
-						txt = "/// ..."; 
 						string cmtText = commentText.ToString ();
-						int idx = cmtText.IndexOf ("<summary>");
+						int idx = cmtText.IndexOf ("<summary>", StringComparison.Ordinal);
 						if (idx >= 0) {
-							int maxOffset = cmtText.IndexOf ("</summary>");
+							int maxOffset = cmtText.IndexOf ("</summary>", StringComparison.Ordinal);
 							while (maxOffset > 0 && cmtText[maxOffset-1] == ' ')
 								maxOffset--;
 							if (maxOffset < 0)
@@ -476,48 +299,42 @@ namespace MonoDevelop.Ide.TypeSystem
 								endOffset++;
 							}
 							if (endOffset > startOffset)
-								txt = "/// " + SubstrEllipsize (cmtText, startOffset, endOffset - startOffset);
+								txt = "/// <summary> " + cmtText.Substring (startOffset, endOffset - startOffset).Trim()+ " ...";
 						}
+						if (txt == null)
+							txt = "/// " + comment.Text.Trim () + " ...";
 					} else {
-						txt = "// " + SubstrEllipsize (comment.Text, 0, comment.Text.Length);
+						txt = "// " + comment.Text.Trim () + " ...";
 					}
 					
 					yield return new FoldingRegion (txt,
-						new DomRegion (comment.Region.Begin, end),
+						new DocumentRegion (comment.Region.Begin, end),
 						FoldType.Comment);
 					i = j - 1;
 				}
 			}
 		}
-		
-		static string SubstrEllipsize (string str, int start, int length)
-		{
-			//TODO: would be nice to ellipsize fold labels to a specific column, ideally the the formatting 
-			// policy's desired width. However, we would have to know the "real" start column, i.e. respecting 
-			// tab widths. Maybe that would work best by performing the ellipsis in the editor, instead of the parser.
-			const int TRUNC_LEN = 60;
-			
-			if (start == 0 && length == str.Length)
-				return str;
 
-			if (str.Length == 0 || length == 0)
-				return " ...";
-			
-			if (!(start == 0 && length <= TRUNC_LEN)) {
-				if (length > TRUNC_LEN) {
-					length = TRUNC_LEN;
-					int wordBoundaryLen = str.LastIndexOf (' ', length) - start;
-					if (wordBoundaryLen > TRUNC_LEN - 20)
-						length = wordBoundaryLen;
-				}
+		static string GetFirstLine (string text)
+		{
+			int start = 0;
+			while (start < text.Length) {
+				char ch = text [start];
+				if (ch != ' ' && ch != '\t')
+					break;
+				start++;
 			}
-			str = str.Substring (start, length);
-				
-			if (str [str.Length - 1] == '.')
-				return str + "..";
-			else if (char.IsPunctuation (str [str.Length - 1]))
-				return str + " ...";
-			return str + "...";
+			int end = start;
+
+			while (end < text.Length) {
+				char ch = text [end];
+				if (NewLine.IsNewLine (ch))
+					break;
+				end++;
+			}
+			if (end <= start)
+				return "";
+			return text.Substring (start, end - start);
 		}
 		
 		public static IEnumerable<FoldingRegion> FlagIfInsideMembers (this IEnumerable<FoldingRegion> folds,
@@ -542,6 +359,23 @@ namespace MonoDevelop.Ide.TypeSystem
 				if (member.BodyRegion.IsEmpty)
 					continue;
 				if (member.BodyRegion.IsInside (region.Begin) && member.BodyRegion.IsInside (region.End)) 
+					return true;
+			}
+			foreach (var inner in cl.NestedTypes) {
+				if (region.IsInsideMember (inner))
+					return true;
+			}
+			return false;
+		}
+
+		static bool IsInsideMember (this DocumentRegion region, IUnresolvedTypeDefinition cl)
+		{
+			if (region.IsEmpty || cl == null || !cl.BodyRegion.IsInside (region.Begin.Line, region.Begin.Column))
+				return false;
+			foreach (var member in cl.Members) {
+				if (member.BodyRegion.IsEmpty)
+					continue;
+				if (member.BodyRegion.IsInside (region.Begin.Line, region.Begin.Column) && member.BodyRegion.IsInside (region.End.Line, region.End.Column)) 
 					return true;
 			}
 			foreach (var inner in cl.NestedTypes) {

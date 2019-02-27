@@ -27,6 +27,7 @@
 using System;
 using Gtk;
 using MonoDevelop.Ide.Gui.Dialogs;
+using MonoDevelop.Components;
 using MonoDevelop.Core;
 using MonoDevelop.Core.LogReporting;
 
@@ -36,7 +37,7 @@ namespace MonoDevelop.Ide.Gui.OptionPanels
 	{
 		LogAgentPanelWidget widget;
 
-		public override Widget CreatePanelWidget ()
+		public override Control CreatePanelWidget ()
 		{
 			return widget = new  LogAgentPanelWidget ();
 		}
@@ -55,7 +56,7 @@ namespace MonoDevelop.Ide.Gui.OptionPanels
 		
 		public LogAgentPanelWidget ()
 		{
-			global::Stetic.BinContainer.Attach (this);
+			BinContainer.Attach (this);
 
 			var reportingLabel = GettextCatalog.GetString ("Report errors and usage information to help {0} improve my experience.", BrandingService.SuiteName);
 
@@ -66,7 +67,14 @@ namespace MonoDevelop.Ide.Gui.OptionPanels
 			chkUsage.Toggled += (sender, e) => reportUsage = chkUsage.Active;
 			
 			container = new Gtk.VBox ();
-			container.Add (chkUsage);
+			container.PackStart (chkUsage, false, false, 0);
+
+			var privacyStatement = BrandingService.PrivacyStatement;
+			if (!string.IsNullOrEmpty (privacyStatement)) {
+				var privacyLabel = new Xwt.Label { Markup = privacyStatement, Wrap = Xwt.WrapMode.Word };
+				container.Add (new HBox ());
+				container.PackEnd (privacyLabel.ToGtkWidget (), false, false, 30);
+			}
 			
 			Add (container);
 			ShowAll ();

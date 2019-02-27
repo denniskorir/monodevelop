@@ -31,79 +31,103 @@ using System.Collections.Generic;
 using MonoDevelop.Core;
 using MonoDevelop.Ide.ProgressMonitoring;
 using MonoDevelop.Ide.Gui;
+using System.Threading;
 
 namespace MonoDevelop.Ide.FindInFiles
 {
-	class SearchProgressMonitor : BaseProgressMonitor, ISearchProgressMonitor
+	public class SearchProgressMonitor : ProgressMonitor, ISearchProgressMonitor
 	{
 		SearchResultPad outputPad;
-		readonly IProgressMonitor statusMonitor;
 
-		public SearchProgressMonitor (Pad pad)
-		{
-			outputPad = (SearchResultPad) pad.Content;
-			outputPad.AsyncOperation = AsyncOperation;
-			outputPad.BeginProgress (pad.Title);
-			statusMonitor = IdeApp.Workbench.ProgressMonitors.GetStatusProgressMonitor (GettextCatalog.GetString ("Searching..."), Stock.StatusSearch, false, true, false, pad);
+		internal SearchResultPad ResultPad {
+			get {
+				return outputPad;
+			}
 		}
-		
-		[FreeDispatch]
-		public bool AllowReuse {
-			get { return outputPad.AllowReuse; }
+
+		// Used for unit testing
+		internal SearchProgressMonitor() { }
+
+		internal SearchProgressMonitor (Pad pad, CancellationTokenSource cancellationTokenSource = null) : base (Runtime.MainSynchronizationContext, cancellationTokenSource)
+		{
+			var stMon = IdeApp.Workbench.ProgressMonitors.GetStatusProgressMonitor (GettextCatalog.GetString ("Searching..."), Stock.StatusSearch, false, true, false, pad, true);
+			stMon.CancellationToken.Register (() => { CancellationTokenSource.Cancel (); });
+			AddFollowerMonitor (stMon);
+
+			outputPad = (SearchResultPad) pad.Content;
+			outputPad.CancellationTokenSource = CancellationTokenSource;
+			outputPad.BeginProgress (pad.Title);
 		}
 
 		public PathMode PathMode {
-			set { outputPad.PathMode = value; }
+			set { Runtime.RunInMainThread (delegate { outputPad.PathMode = value; }); }
 		}
 
-		[AsyncDispatch]
+		protected virtual void OnReportResult (SearchResult result)
+		{
+			Runtime.RunInMainThread (delegate {
+				try {
+					outputPad.ReportResult (result);
+				} catch (Exception ex) {
+					LoggingService.LogError ("Error adding search result for file {0}:{1} to result pad:\n{2}",
+						result.FileName, result.Offset, ex.ToString ());
+				}
+			});
+		}
+
 		public void ReportResult (SearchResult result)
 		{
-			try {
-				outputPad.ReportResult (result);
-			} catch (Exception ex) {
-				LoggingService.LogError ("Error adding search result for file {0}:{1} to result pad:\n{2}",
-				                         result.FileName, result.Offset, ex.ToString ());
-			}
+			OnReportResult (result);
 		}
 		
-		[AsyncDispatch]
+		protected virtual void OnReportResults (IEnumerable<SearchResult> results)
+		{
+			Runtime.RunInMainThread (delegate {
+				try {
+					outputPad.ReportResults (results);
+				} catch (Exception ex) {
+					LoggingService.LogError ("Error adding search results.", ex.ToString ());
+				}
+			});
+		}
+
 		public void ReportResults (IEnumerable<SearchResult> results)
 		{
-			try {
-				outputPad.ReportResults (results);
-			} catch (Exception ex) {
-				LoggingService.LogError ("Error adding search results.", ex.ToString ());
-			}
+			OnReportResults (results);
 		}
 		
-		[AsyncDispatch]
 		public void ReportStatus (string resultMessage)
 		{
-			outputPad.ReportStatus (resultMessage);
+			Runtime.RunInMainThread (delegate {
+				outputPad.ReportStatus (resultMessage);
+			});
 		}
 		
 		protected override void OnWriteLog (string text)
 		{
 			if (outputPad == null) throw GetDisposedException ();
-			outputPad.WriteText (text);
+			Runtime.RunInMainThread (delegate {
+				outputPad.WriteText (text);
+			});
 		}
 		
 		protected override void OnCompleted ()
 		{
-			statusMonitor.Dispose ();
-			
 			if (outputPad == null) throw GetDisposedException ();
+
 			outputPad.WriteText ("\n");
 			
 			foreach (string msg in SuccessMessages)
 				outputPad.WriteText (msg + "\n");
 			
+			if (CancellationToken.IsCancellationRequested)
+				ReportWarning (GettextCatalog.GetString ("Search operation canceled"));
+
 			foreach (string msg in Warnings)
 				outputPad.WriteText (msg + "\n");
-			
-			foreach (string msg in Errors)
-				outputPad.WriteText (msg + "\n");
+
+			foreach (var msg in Errors)
+				outputPad.WriteText (msg.DisplayMessage + "\n");
 			
 			outputPad.EndProgress ();
 			base.OnCompleted ();
@@ -114,48 +138,6 @@ namespace MonoDevelop.Ide.FindInFiles
 		static Exception GetDisposedException ()
 		{
 			return new InvalidOperationException ("Search progress monitor already disposed.");
-		}
-
-		public override void ReportError (string message, Exception ex)
-		{
-			base.ReportError (message, ex);
-			statusMonitor.ReportError (message, ex);
-		}
-		
-		public override void ReportSuccess (string message)
-		{
-			base.ReportSuccess (message);
-			statusMonitor.ReportSuccess (message);
-		}
-		
-		public override void ReportWarning (string message)
-		{
-			base.ReportWarning (message);
-			statusMonitor.ReportWarning (message);
-		}
-		
-		public override void Step (int work)
-		{
-			base.Step (work);
-			statusMonitor.Step (work);
-		}
-		
-		public override void BeginStepTask (string name, int totalWork, int stepSize)
-		{
-			base.BeginStepTask (name, totalWork, stepSize);
-			statusMonitor.BeginStepTask (name, totalWork, stepSize);
-		}
-		
-		public override void BeginTask (string name, int totalWork)
-		{
-			base.BeginTask (name, totalWork);
-			statusMonitor.BeginTask (name, totalWork);
-		}
-		
-		public override void EndTask ()
-		{
-			base.EndTask ();
-			statusMonitor.EndTask ();
 		}
 	}
 }

@@ -75,7 +75,7 @@ namespace MonoDevelop.VersionControl
 			}
 		}
 
-		private class RevertWorker : Task {
+		private class RevertWorker : VersionControlTask {
 			Repository vc;
 			string path;
 			Revision revision;
@@ -115,19 +115,18 @@ namespace MonoDevelop.VersionControl
 				if (!(isDir || Directory.Exists (path)))
 					isDir = false;
 				
-				Monitor.ReportSuccess (GettextCatalog.GetString ("Revert operation completed."));
-				Gtk.Application.Invoke (delegate {
+				Gtk.Application.Invoke ((o, args) => {
 					if (!isDir) {
 						// Reload reverted files
 						Document doc = IdeApp.Workbench.GetDocument (path);
 						if (doc != null)
 							doc.Reload ();
 						VersionControlService.NotifyFileStatusChanged (new FileUpdateEventArgs (vc, path, false));
-						FileService.NotifyFileChanged (path);
 					} else {
 						VersionControlService.NotifyFileStatusChanged (new FileUpdateEventArgs (vc, path, true));
 					}
 				});
+				Monitor.ReportSuccess (GettextCatalog.GetString ("Revert operation completed."));
 			}
 		}
 		

@@ -26,17 +26,28 @@
 
 using System;
 using Gtk;
-using ICSharpCode.PackageManagement;
+using MonoDevelop.PackageManagement;
 using MonoDevelop.Components;
 using MonoDevelop.Ide;
 using Gdk;
 
 namespace MonoDevelop.PackageManagement
 {
-	public class PackageSourceCellRenderer : CellRenderer
+	internal class PackageSourceCellRenderer : CellRenderer
 	{
 		[GLib.Property("package-source")]
 		public PackageSourceViewModel PackageSourceViewModel { get; set; }
+
+		[GLib.Property("text")]
+		public string Text {
+			get {
+				if (PackageSourceViewModel == null) {
+					return "";
+				}
+
+				return PackageSourceViewModel.Name + " - " + PackageSourceViewModel.Source;
+			}
+		}
 
 		static Xwt.Drawing.Image warningImage = ImageService.GetIcon (MonoDevelop.Ide.Gui.Stock.Warning, Gtk.IconSize.Menu);
 		const int imageSpacing = 5;
@@ -56,7 +67,7 @@ namespace MonoDevelop.PackageManagement
 				int packageSourceNameWidth = GetLayoutWidth (layout);
 				StateType state = GetState (widget, flags);
 
-				layout.SetMarkup (GetPackageSourceDescriptionMarkup ());
+				layout.SetMarkup (GetPackageSourceDescriptionMarkup (flags));
 
 				window.DrawLayout (widget.Style.TextGC (state), cell_area.X + textSpacing, cell_area.Y + textTopSpacing, layout);
 
@@ -65,7 +76,7 @@ namespace MonoDevelop.PackageManagement
 						ctx.DrawImage (widget, warningImage, cell_area.X + textSpacing + packageSourceNameWidth + imageSpacing, cell_area.Y + textTopSpacing);
 					}
 
-					layout.SetMarkup (GetPackageSourceErrorMarkup ());
+					layout.SetMarkup (GetPackageSourceErrorMarkup (flags));
 					int packageSourceErrorTextX = cell_area.X + textSpacing + packageSourceNameWidth + (int)warningImage.Width + (2 * imageSpacing);
 					window.DrawLayout (widget.Style.TextGC (state), packageSourceErrorTextX, cell_area.Y + textTopSpacing, layout);
 				}
@@ -104,18 +115,20 @@ namespace MonoDevelop.PackageManagement
 			return new Size (width, height);
 		}
 
-		string GetPackageSourceDescriptionMarkup ()
+		string GetPackageSourceDescriptionMarkup (CellRendererState flags = CellRendererState.Focused)
 		{
 			return MarkupString.Format (
-				"<b>{0}</b>\n<span foreground='#747474'>{1}</span>",
+				"<b>{0}</b>\n<span foreground='{2}'>{1}</span>",
 				PackageSourceViewModel.Name,
-				PackageSourceViewModel.SourceUrl);
+				PackageSourceViewModel.Source,
+				Ide.Gui.Styles.ColorGetHex (flags.HasFlag (CellRendererState.Selected) ? Styles.PackageSourceUrlSelectedTextColor : Styles.PackageSourceUrlTextColor));
 		}
 
-		string GetPackageSourceErrorMarkup ()
+		string GetPackageSourceErrorMarkup (CellRendererState flags = CellRendererState.Focused)
 		{
 			return MarkupString.Format (
-				"<span foreground='#656565'>{0}</span>",
+				"<span foreground='{0}'>{1}</span>",
+				Ide.Gui.Styles.ColorGetHex (flags.HasFlag (CellRendererState.Selected) ? Styles.PackageSourceErrorSelectedTextColor : Styles.PackageSourceErrorTextColor),
 				PackageSourceViewModel.ValidationFailureMessage);
 		}
 

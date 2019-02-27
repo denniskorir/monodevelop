@@ -25,8 +25,11 @@
 
 using System;
 using MonoDevelop.Ide.Gui.Dialogs;
+using MonoDevelop.Components;
+using MonoDevelop.Components.AtkCocoaHelper;
 using MonoDevelop.Core;
-using MonoDevelop.Ide.Gui.Content; 
+using MonoDevelop.Ide.Gui.Content;
+using MonoDevelop.Ide.Editor; 
 
 namespace MonoDevelop.SourceEditor.OptionPanels
 {
@@ -40,9 +43,23 @@ namespace MonoDevelop.SourceEditor.OptionPanels
 			this.comboboxLineEndings.AppendText (GettextCatalog.GetString ("Leave line endings as is"));
 			this.comboboxLineEndings.AppendText (GettextCatalog.GetString ("Always convert line endings"));
 			this.comboboxLineEndings.Active = (int)DefaultSourceEditorOptions.Instance.LineEndingConversion;
+
+			SetupAccessibility ();
 		}
 
-		public virtual Gtk.Widget CreatePanelWidget ()
+		void SetupAccessibility ()
+		{
+			comboboxLineEndings.SetCommonAccessibilityAttributes ("SourceEditorGeneral.lineEndings", label1,
+			                                                      GettextCatalog.GetString ("Select how to handle line ending conversions"));
+			foldingCheckbutton.SetCommonAccessibilityAttributes ("SourceEditorGeneral.folding", "",
+			                                                     GettextCatalog.GetString ("Check to enable line folding"));
+			foldregionsCheckbutton.SetCommonAccessibilityAttributes ("SourceEditorGeneral.regions", "",
+			                                                         GettextCatalog.GetString ("Check to fold regions by default"));
+			foldCommentsCheckbutton.SetCommonAccessibilityAttributes ("SourceEditorGeneral.commens", "",
+			                                                          GettextCatalog.GetString ("Check to fold comments by default"));
+		}
+
+		public virtual Control CreatePanelWidget ()
 		{
 			this.foldingCheckbutton.Active = DefaultSourceEditorOptions.Instance.ShowFoldMargin;
 			this.foldregionsCheckbutton.Active = DefaultSourceEditorOptions.Instance.DefaultRegionsFolding;
@@ -58,7 +75,7 @@ namespace MonoDevelop.SourceEditor.OptionPanels
 		{
 			DefaultSourceEditorOptions.Instance.DefaultRegionsFolding = this.foldregionsCheckbutton.Active;
 			DefaultSourceEditorOptions.Instance.DefaultCommentFolding = this.foldCommentsCheckbutton.Active;
-			DefaultSourceEditorOptions.Instance.LineEndingConversion = (LineEndingConversion)this.comboboxLineEndings.Active;
+			DefaultSourceEditorOptions.Instance.LineEndingConversion = (MonoDevelop.Ide.Editor.LineEndingConversion)this.comboboxLineEndings.Active;
 			if (DefaultSourceEditorOptions.Instance.ShowFoldMargin != this.foldingCheckbutton.Active) {
 				DefaultSourceEditorOptions.Instance.ShowFoldMargin = this.foldingCheckbutton.Active;
 				HighlightingPanel.UpdateActiveDocument ();

@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
@@ -58,6 +58,12 @@ namespace MonoDevelop.Configuration
                     case "gen-buildinfo":
                         GenerateBuildInfo(args);
                         break;
+                    case "is-preview":
+                        GetIsPreview(args);
+                        break;
+                    case "is-major-preview":
+                        GetIsMajorPreview(args);
+                        break;
                     default:
                         Console.WriteLine("Unknown command: " + cmd);
                         return 1;
@@ -79,6 +85,15 @@ namespace MonoDevelop.Configuration
 			Console.WriteLine (config.ProductVersion);
 		}
 
+		static void GetIsPreview (string[] args)
+		{
+			Console.WriteLine (config.IsPreview);
+		}
+
+		static void GetIsMajorPreview (string[] args)
+		{
+			Console.WriteLine (config.IsMajorPreview);
+		}
 		static void GetReleaseId (string[] args)
 		{
 			Console.WriteLine (config.ReleaseId);
@@ -109,6 +124,7 @@ namespace MonoDevelop.Configuration
             Console.WriteLine("Commands:");
             Console.WriteLine("\tget-version: Prints the version of this release");
             Console.WriteLine("\tget-releaseid: Prints the release id");
+            Console.WriteLine("\tis-preview: Prints `True` if this is a preview or `False` otherwise");
             Console.WriteLine("\tgen-updateinfo <config-file> <path>: Generates the updateinfo file");
             Console.WriteLine("\t\tin the provided path");
             Console.WriteLine("\tgen-buildinfo <path>: Generates the buildinfo file in the provided path");
@@ -123,10 +139,13 @@ namespace MonoDevelop.Configuration
         public readonly string ProductVersion;
         public readonly string ProductVersionText;
         public readonly string CompatVersion;
+		public readonly string SourceUrl;
         public readonly string AssemblyVersion = "4.0.0.0";
         public readonly string ReleaseId;
         public readonly PlatformInfo PlatformInfo;
-       
+        public readonly bool IsPreview;
+        public readonly bool IsMajorPreview;
+
         public IdeConfigurationTool(string monoDevelopPath)
         {
             MonoDevelopPath = monoDevelopPath;
@@ -135,6 +154,17 @@ namespace MonoDevelop.Configuration
             Version = SystemUtil.Grep(versionTxt, @"Version=(.*)");
             ProductVersionText = SystemUtil.Grep(versionTxt, "Label=(.*)");
             CompatVersion = SystemUtil.Grep(versionTxt, "CompatVersion=(.*)");
+			SourceUrl = SystemUtil.Grep(versionTxt, "SourceUrl=(.*)", true);
+            IsPreview = SystemUtil.Grep(versionTxt, "IsPreview=(.*)") == "true";
+            IsMajorPreview = SystemUtil.Grep(versionTxt, "IsMajorPreview=(.*)") == "true";
+
+			var customSource = Environment.GetEnvironmentVariable ("MONODEVELOP_UPDATEINFO_SOURCE_URL");
+			if (!string.IsNullOrEmpty (customSource))
+				SourceUrl = customSource;
+
+			var customLabel = Environment.GetEnvironmentVariable ("MONODEVELOP_UPDATEINFO_LABEL");
+			if (!string.IsNullOrEmpty (customLabel))
+				ProductVersionText = customLabel;
 
             Version ver = new Version(Version);
             int vbuild = ver.Build != -1 ? ver.Build : 0;
@@ -153,8 +183,12 @@ namespace MonoDevelop.Configuration
 				pinfo = (PlatformInfo)ser.Deserialize (sr);
 			}
 
-			if (pinfo.AppId != null)
-				File.WriteAllText (Path.Combine (targetDir, "updateinfo"), pinfo.AppId + " " + ReleaseId);
+			if (pinfo.AppId != null) {
+				var content = pinfo.AppId + " " + ReleaseId;
+				if (!string.IsNullOrEmpty (SourceUrl))
+					content += "\nsource-url:" + SourceUrl;
+				File.WriteAllText (Path.Combine (targetDir, "updateinfo"), content);
+			}
 
 			if (pinfo.UpdaterId != null)
 				File.WriteAllText (Path.Combine (targetDir, "updateinfo.updater"), pinfo.UpdaterId + " " + pinfo.UpdaterVersion);
@@ -167,6 +201,10 @@ namespace MonoDevelop.Configuration
 			var txt = "Release ID: " + ReleaseId + "\n";
 			txt += "Git revision: " + head + "\n";
 			txt += "Build date: " + DateTime.Now.ToString ("yyyy-MM-dd HH:mm:sszz") + "\n";
+
+			var buildBranch = Environment.GetEnvironmentVariable ("BUILD_SOURCEBRANCHNAME");
+			if (!string.IsNullOrWhiteSpace (buildBranch))
+				txt += "Build branch: " + buildBranch;
 
             File.WriteAllText(Path.Combine(targetDir, "buildinfo"), txt);
 		}
@@ -264,12 +302,15 @@ namespace MonoDevelop.Configuration
 
 		public static Platform Platform { get; private set; }
 
-        public static string Grep(string file, string regex)
+        public static string Grep(string file, string regex, bool optional = false)
         {
             string txt = File.ReadAllText(file);
             var m = Regex.Match(txt, regex);
-            if (m == null)
-                throw new UserException("Match not found for regex: " + regex);
+			if (m == null || !m.Success) {
+				if (!optional)
+					throw new UserException ("Match not found for regex: " + regex);
+				return null;
+			}
             if (m.Groups.Count != 2)
                 throw new UserException("Invalid regex: expression must have a single capture group: " + regex);
             Group cap = m.Groups[1];

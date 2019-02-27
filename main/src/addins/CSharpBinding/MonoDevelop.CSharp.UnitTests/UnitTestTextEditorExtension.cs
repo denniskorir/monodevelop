@@ -24,74 +24,100 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 // THE SOFTWARE.
 using System;
-using ICSharpCode.NRefactory.CSharp;
+using System.Linq;
 using MonoDevelop.Refactoring;
-using ICSharpCode.NRefactory.CSharp.Resolver;
 using System.Collections.Generic;
-using MonoDevelop.NUnit;
+using MonoDevelop.UnitTesting;
 using MonoDevelop.Core;
-using ICSharpCode.NRefactory.Semantics;
-using ICSharpCode.NRefactory.TypeSystem;
 using System.Text;
+using System.Threading;
+using System.Threading.Tasks;
+using Microsoft.CodeAnalysis;
+using Microsoft.CodeAnalysis.CSharp;
+using Microsoft.CodeAnalysis.CSharp.Syntax;
+using ICSharpCode.NRefactory6.CSharp;
+using MonoDevelop.Ide.Editor;
+using MonoDevelop.Ide.TypeSystem;
+using ICSharpCode.NRefactory.CSharp.Refactoring;
+using System.Collections.Immutable;
+using Microsoft.CodeAnalysis.Shared.Extensions;
 
 namespace MonoDevelop.CSharp
 {
 	class UnitTestTextEditorExtension : AbstractUnitTestTextEditorExtension
 	{
-		public override IList<UnitTestLocation> GatherUnitTests ()
-		{
-			var resolver = document.GetSharedResolver ();
-			if (resolver == null || resolver.Result == null)
-				return null;
-			var parsedDocument = document.ParsedDocument;
-			if (parsedDocument == null)
-				return null;
-			var syntaxTree = parsedDocument.GetAst<SyntaxTree> ();
-			if (syntaxTree == null)
-				return null;
+		static readonly IList<UnitTestLocation> emptyList = new UnitTestLocation[0];
 
-			var visitor = new NUnitVisitor (resolver.Result);
+		static bool HasMethodMarkerAttribute (SemanticModel model, IUnitTestMarkers[] markers)
+		{
+			var compilation = model.Compilation;
+			foreach (var marker in markers)
+				if (compilation.GetTypeByMetadataName (marker.TestMethodAttributeMarker) != null)
+					return true;
+			return false;
+		}
+
+		public override async Task<IList<UnitTestLocation>> GatherUnitTests (IUnitTestMarkers[] unitTestMarkers, CancellationToken token)
+		{
+			var analysisDocument = DocumentContext.AnalysisDocument;
+			if (analysisDocument == null)
+				return emptyList;
+			
+			var semanticModel = await analysisDocument.GetSemanticModelAsync (token);
+			if (semanticModel == null)
+				return emptyList;
+
+			if (!HasMethodMarkerAttribute (semanticModel, unitTestMarkers))
+				return emptyList;
+
+			var visitor = new NUnitVisitor (semanticModel, unitTestMarkers, token);
 			try {
-				visitor.VisitSyntaxTree (syntaxTree);
-			} catch (Exception ex) {
+				visitor.Visit (semanticModel.SyntaxTree.GetRoot (token));
+			} catch (OperationCanceledException) {
+				throw;
+			}catch (Exception ex) {
 				LoggingService.LogError ("Exception while analyzing ast for unit tests.", ex);
-				return null;
+				return emptyList;
 			}
 			return visitor.FoundTests;
 		}
 
-		class NUnitVisitor : DepthFirstAstVisitor
+		class NUnitVisitor : CSharpSyntaxWalker
 		{
-			readonly CSharpAstResolver resolver;
+			readonly SemanticModel semanticModel;
+			readonly CancellationToken token;
+			readonly IUnitTestMarkers [] unitTestMarkers;
 			List<UnitTestLocation> foundTests = new List<UnitTestLocation> ();
-
+			HashSet<ClassDeclarationSyntax> unitTestClasses = new HashSet<ClassDeclarationSyntax> ();
 			public IList<UnitTestLocation> FoundTests {
 				get {
 					return foundTests;
 				}
 			}
 
-			public NUnitVisitor (CSharpAstResolver resolver)
+			public NUnitVisitor (SemanticModel semanticModel, IUnitTestMarkers[] unitTestMarkers, CancellationToken token)
 			{
-				this.resolver = resolver;
+				this.semanticModel = semanticModel;
+				this.token = token;
+				this.unitTestMarkers = unitTestMarkers;
 			}
 
-			static string GetFullName (TypeDeclaration typeDeclaration)
+			static string GetFullName (ClassDeclarationSyntax typeDeclaration)
 			{
 				var parts = new List<string> ();
 				while (true) {
-					parts.Add (typeDeclaration.Name);
-					if (typeDeclaration.Parent is TypeDeclaration) {
-						typeDeclaration = (TypeDeclaration)typeDeclaration.Parent;
+					parts.Add (typeDeclaration.Identifier.ToString ());
+					if (typeDeclaration.Parent is ClassDeclarationSyntax) {
+						typeDeclaration = (ClassDeclarationSyntax)typeDeclaration.Parent;
 					}
 					else {
 						break;
 					}
 				}
 				;
-				var ns = typeDeclaration.Parent as NamespaceDeclaration;
+				var ns = typeDeclaration.Parent as NamespaceDeclarationSyntax;
 				if (ns != null)
-					parts.Add (ns.FullName);
+					parts.Add (ns.Name.ToString ());
 				parts.Reverse ();
 				return string.Join (".", parts);
 			}
@@ -109,77 +135,124 @@ namespace MonoDevelop.CSharp
 					sb.Append ('\"');
 			}
 
-			static string BuildArguments (IAttribute attr)
+			static string BuildArguments (AttributeData attr)
 			{
-				var sb = new StringBuilder ();
-				foreach (var arg in attr.PositionalArguments) {
-					if (sb.Length > 0)
+				var sb = StringBuilderCache.Allocate ();
+				ImmutableArray<TypedConstant> args;
+				if (attr.ConstructorArguments.Length == 1 && attr.ConstructorArguments [0].Kind == TypedConstantKind.Array)
+					args = attr.ConstructorArguments [0].Values;
+				else
+					args = attr.ConstructorArguments;
+
+				for (int i = 0; i < args.Length; i++)
+				{
+					if (i > 0)
 						sb.Append (", ");
-					var cr = arg as ConversionResolveResult;
-					if (cr != null) {
-						AppendConstant (sb, cr.Input.ConstantValue);
-						continue;
-					}
-					AppendConstant (sb, arg.ConstantValue);
+
+					AddArgument (args [i], sb);
 				}
-				return sb.ToString ();
+				return StringBuilderCache.ReturnAndFree (sb);
 			}
 
-			public override void VisitMethodDeclaration (MethodDeclaration methodDeclaration)
+			static void AddArgument(TypedConstant arg, StringBuilder sb)
 			{
-				var result = resolver.Resolve (methodDeclaration) as MemberResolveResult;
-				if (result == null)
-					return;
-				var method = result.Member as IMethod;
+				switch (arg.Kind) {
+				case TypedConstantKind.Array:
+					sb.Append ("[");
+					for (int i = 0; i < arg.Values.Length; i++) {
+						if (i > 0)
+							sb.Append (", ");
+
+						AddArgument (arg.Values [i], sb);
+					}
+					sb.Append ("]");
+					break;
+				case TypedConstantKind.Enum:
+					ulong constant;
+					try {
+						constant = Convert.ToUInt64 (arg.Value);
+					} catch (Exception e) {
+						LoggingService.LogError ("Error while converting enum constant to uint: " + arg.Value, e);
+						goto default;
+					}
+					int num = 0;
+					foreach (var member in arg.Type.GetMembers ()) {
+						if (member is IFieldSymbol field && field.HasConstantValue) {
+							try {
+								var fieldValue = Convert.ToUInt64 (field.ConstantValue);
+								var IsDefaultEnum = constant == 0 && fieldValue == 0;
+								if (IsDefaultEnum || fieldValue != 0 && (constant & fieldValue) == fieldValue) {
+									if (num++ > 0)
+										sb.Append (", ");
+									sb.Append (field.Name);
+								}
+							} catch (Exception e) {
+								LoggingService.LogError ("Error while converting enum field constant to uint: " + field.ConstantValue + " enum type:" + arg.Type.ToDisplayString (), e);
+							}
+						}
+					}
+					break;
+				default:
+					AppendConstant (sb, arg.Value);
+					break;
+				}
+			}
+
+			public override void VisitMethodDeclaration (MethodDeclarationSyntax node)
+			{
+				var method = semanticModel.GetDeclaredSymbol (node);
 				if (method == null)
 					return;
-
+				var parentClass = node.Parent as ClassDeclarationSyntax;
+				if (parentClass == null)
+					return;
 				UnitTestLocation test = null;
-				foreach (var attr in method.Attributes) {
-					if (attr.AttributeType.ReflectionName == "NUnit.Framework.TestAttribute") {
+				IUnitTestMarkers markers = null;
+				foreach (var attr in method.GetAttributes ()) {
+					var cname = attr.AttributeClass.GetFullName ();
+					markers = unitTestMarkers.FirstOrDefault (m => (m.TestMethodAttributeMarker == cname || m.TestCaseMethodAttributeMarker == cname || (m as IUnitTestMarkers2)?.TestCaseSourceAttributeMarker == cname));
+					if (markers != null) {
 						if (test == null) {
-							test = new UnitTestLocation (methodDeclaration.NameToken.StartLocation.Line);
-							test.UnitTestIdentifier = GetFullName ((TypeDeclaration)methodDeclaration.Parent) + "." + methodDeclaration.Name;
+							TagClass (parentClass, markers);
+							test = new UnitTestLocation (node.Identifier.SpanStart);
+							test.UnitTestIdentifier = GetFullName (parentClass) + "." + method.Name;
 							foundTests.Add (test);
 						}
+						break;
 					}
 				}
 				if (test != null) {
-					foreach (var attr in method.Attributes) {
-						if (attr.AttributeType.ReflectionName == "NUnit.Framework.TestCaseAttribute") {
+					foreach (var attr in method.GetAttributes ()) {
+						if (attr.AttributeClass.GetFullName () == markers.TestCaseMethodAttributeMarker) {
 							test.TestCases.Add ("(" + BuildArguments (attr) + ")");
 						} else
-							test.IsIgnored |= attr.AttributeType.ReflectionName == "NUnit.Framework.IgnoreAttribute";
+							test.IsIgnored |= attr.AttributeClass.GetFullName () == markers.IgnoreTestMethodAttributeMarker;
 					}
 				}
 			}
 
-			public override void VisitTypeDeclaration (TypeDeclaration typeDeclaration)
+			void TagClass (ClassDeclarationSyntax c, IUnitTestMarkers markers)
 			{
-				if (typeDeclaration.HasModifier (Modifiers.Abstract))
+				if (unitTestClasses.Contains (c))
 					return;
-				var result = resolver.Resolve (typeDeclaration);
-				if (result == null || result.Type.GetDefinition () == null)
-					return;
-				UnitTestLocation unitTest = null;
-				bool isIgnored = false;
-				foreach (var attr in result.Type.GetDefinition ().GetAttributes ()) {
-					if (attr.AttributeType.ReflectionName == "NUnit.Framework.TestFixtureAttribute") {
-						unitTest = new UnitTestLocation (typeDeclaration.NameToken.StartLocation.Line);
-						unitTest.IsFixture = true;
-						unitTest.UnitTestIdentifier = GetFullName (typeDeclaration);
-						foundTests.Add (unitTest);
-					} else
-						isIgnored |= attr.AttributeType.ReflectionName == "NUnit.Framework.IgnoreAttribute";
-				}
-				if (unitTest != null) {
-					unitTest.IsIgnored = isIgnored;
-					base.VisitTypeDeclaration (typeDeclaration);
+				unitTestClasses.Add (c);
+
+				var type = semanticModel.GetDeclaredSymbol (c);
+				var test = new UnitTestLocation (c.Identifier.SpanStart);
+				test.IsFixture = true;
+				test.UnitTestIdentifier = GetFullName (c);
+				foundTests.Add (test);
+
+				if (test != null) {
+					foreach (var attr in type.GetAttributes ()) {
+						test.IsIgnored |= attr.AttributeClass.GetFullName () == markers.IgnoreTestClassAttributeMarker;
+					}
 				}
 			}
 
-			public override void VisitBlockStatement (BlockStatement blockStatement)
+			public override void VisitBlock (BlockSyntax node)
 			{
+				token.ThrowIfCancellationRequested ();
 			}
 		}
 	}

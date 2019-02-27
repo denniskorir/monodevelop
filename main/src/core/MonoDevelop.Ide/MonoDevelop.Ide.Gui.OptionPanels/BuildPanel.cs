@@ -27,9 +27,11 @@
 
 
 using System;
-using Gtk;
+using MonoDevelop.Core;
+using MonoDevelop.Components;
+using MonoDevelop.Components.AtkCocoaHelper;
 using MonoDevelop.Ide.Gui.Dialogs;
-using MonoDevelop.Projects.Formats.MSBuild;
+using MonoDevelop.Projects.MSBuild;
 
 namespace MonoDevelop.Ide.Gui.OptionPanels
 {
@@ -37,7 +39,7 @@ namespace MonoDevelop.Ide.Gui.OptionPanels
 	{
 		BuildPanelWidget widget;
 
-		public override Widget CreatePanelWidget ()
+		public override Control CreatePanelWidget ()
 		{
 			return (widget = new  BuildPanelWidget ());
 		}
@@ -59,22 +61,52 @@ namespace MonoDevelop.Ide.Gui.OptionPanels
 			noSaveRadioButton.Active = action == BeforeCompileAction.Nothing;
 			runWithWarningsCheckBox.Active = IdeApp.Preferences.RunWithWarnings;
 			buildBeforeRunCheckBox.Active = IdeApp.Preferences.BuildBeforeExecuting;
-			verbosityCombo.Active = (int)IdeApp.Preferences.MSBuildVerbosity;
+			verbosityCombo.Active = (int)IdeApp.Preferences.MSBuildVerbosity.Value;
 			buildBeforeTestCheckBox.Active = IdeApp.Preferences.BuildBeforeRunningTests;
+			skipBuildingUnmodifiedProjectsCheckbox.Active = Runtime.Preferences.SkipBuildingUnmodifiedProjects;
+			parallelBuildCheckbox.Active = MonoDevelop.Core.Runtime.Preferences.ParallelBuild.Value;
+
+			SetupAccessibility ();
+		}
+
+		void SetupAccessibility ()
+		{
+			buildBeforeRunCheckBox.SetCommonAccessibilityAttributes ("BuildPanel.buildBeforeRun", "",
+			                                                         GettextCatalog.GetString ("Check to build the solution before running"));
+			runWithWarningsCheckBox.SetCommonAccessibilityAttributes ("BuildPanel.runWithWarnings", "",
+			                                                          GettextCatalog.GetString ("Check to run the solution even if the build had warnings"));
+			buildBeforeTestCheckBox.SetCommonAccessibilityAttributes ("BuildPanel.buildBeforeTest", "",
+			                                                          GettextCatalog.GetString ("Check to build the solution before running tests"));
+			skipBuildingUnmodifiedProjectsCheckbox.SetCommonAccessibilityAttributes ("BuildPanel.skipUnmodifiedProject", "",
+																					 GettextCatalog.GetString ("Check to skip building unmodified projects"));
+			parallelBuildCheckbox.SetCommonAccessibilityAttributes ("BuildPanel.parallelBuild", "",
+			                                                        GettextCatalog.GetString ("Check to enable parallel building"));
+
+			saveChangesRadioButton.SetCommonAccessibilityAttributes ("BuildPanel.saveChanges", "",
+			                                                         GettextCatalog.GetString ("Check to save changes before building"));
+			noSaveRadioButton.SetCommonAccessibilityAttributes ("BuildPanel.noSave", "",
+			                                                    GettextCatalog.GetString ("Check to not save changes before building"));
+			promptChangesRadioButton.SetCommonAccessibilityAttributes ("BuildPanel.promptSave", "",
+			                                                           GettextCatalog.GetString ("Check to be prompted to save changes before building"));
+
+			verbosityCombo.SetCommonAccessibilityAttributes ("BuildPanel.verbosity", "",
+			                                                 GettextCatalog.GetString ("Select the verbosity level of the build"));
 		}
 		
 		public void Store ()
 		{
-			IdeApp.Preferences.RunWithWarnings = runWithWarningsCheckBox.Active;
-			IdeApp.Preferences.BuildBeforeExecuting = buildBeforeRunCheckBox.Active;
-			IdeApp.Preferences.MSBuildVerbosity = (MSBuildVerbosity) verbosityCombo.Active;
+			IdeApp.Preferences.RunWithWarnings.Value = runWithWarningsCheckBox.Active;
+			IdeApp.Preferences.BuildBeforeExecuting.Value = buildBeforeRunCheckBox.Active;
+			IdeApp.Preferences.MSBuildVerbosity.Value = (MSBuildVerbosity)verbosityCombo.Active;
 			IdeApp.Preferences.BuildBeforeRunningTests.Value = buildBeforeTestCheckBox.Active;
+			Runtime.Preferences.SkipBuildingUnmodifiedProjects.Value = skipBuildingUnmodifiedProjectsCheckbox.Active;
+			MonoDevelop.Core.Runtime.Preferences.ParallelBuild.Value = parallelBuildCheckbox.Active;
 			if (saveChangesRadioButton.Active)
-				IdeApp.Preferences.BeforeBuildSaveAction = BeforeCompileAction.SaveAllFiles;
+				IdeApp.Preferences.BeforeBuildSaveAction.Value = BeforeCompileAction.SaveAllFiles;
 			else if (promptChangesRadioButton.Active)
-				IdeApp.Preferences.BeforeBuildSaveAction = BeforeCompileAction.PromptForSave;
+				IdeApp.Preferences.BeforeBuildSaveAction.Value = BeforeCompileAction.PromptForSave;
 			else if (noSaveRadioButton.Active)
-				IdeApp.Preferences.BeforeBuildSaveAction = BeforeCompileAction.Nothing;
+				IdeApp.Preferences.BeforeBuildSaveAction.Value = BeforeCompileAction.Nothing;
 		}
 	}
 }

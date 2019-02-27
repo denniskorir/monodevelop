@@ -32,14 +32,17 @@ using System.Collections;
 using System.Collections.Generic;
 using Gtk;
 
+using MonoDevelop.Components;
 using MonoDevelop.Core;
 using MonoDevelop.Projects;
 using MonoDevelop.Ide;
 using MonoDevelop.Ide.Gui;
-using MonoDevelop.Projects.Text;
+using MonoDevelop.Ide.Gui.Components;
 using MonoDevelop.Ide.TypeSystem;
-using ICSharpCode.NRefactory.TypeSystem;
 using System.Linq;
+using MonoDevelop.Ide.Editor;
+using System.Threading;
+using System.Threading.Tasks;
 
 namespace MonoDevelop.Ide.Tasks
 {
@@ -57,13 +60,15 @@ namespace MonoDevelop.Ide.Tasks
 			Count
 		}
 
-		MonoDevelop.Ide.Gui.Components.PadTreeView view;
+		static readonly string restoreID = "Monodevelop.CommentTasksColumns";
+
+		PadTreeView view;
 		ListStore store;
 		TreeModelSort sortModel;
 
 		Gdk.Color highPrioColor, normalPrioColor, lowPrioColor;
 
-		Dictionary<ToggleAction, int> columnsActions = new Dictionary<ToggleAction, int> ();
+		Dictionary<ContextMenuItem, int> columnsActions;
 		Clipboard clipboard;
 		
 		TaskStore comments = new TaskStore ();
@@ -83,19 +88,21 @@ namespace MonoDevelop.Ide.Tasks
 			
 			TaskService.CommentTasksChanged += OnCommentTasksChanged;
 			CommentTag.SpecialCommentTagsChanged += OnCommentTagsChanged;
-			IdeApp.Workspace.WorkspaceItemLoaded += OnWorkspaceItemLoaded;
+
+			IdeApp.Workspace.LastWorkspaceItemClosed += LastWorkspaceItemClosed;
+			MonoDevelopWorkspace.LoadingFinished += OnWorkspaceItemLoaded;
 			IdeApp.Workspace.WorkspaceItemUnloaded += OnWorkspaceItemUnloaded;
-			
-			highPrioColor = StringToColor ((string)PropertyService.Get ("Monodevelop.UserTasksHighPrioColor", ""));
-			normalPrioColor = StringToColor ((string)PropertyService.Get ("Monodevelop.UserTasksNormalPrioColor", ""));
-			lowPrioColor = StringToColor ((string)PropertyService.Get ("Monodevelop.UserTasksLowPrioColor", ""));
+
+			highPrioColor = StringToColor (IdeApp.Preferences.UserTasksHighPrioColor);
+			normalPrioColor = StringToColor (IdeApp.Preferences.UserTasksNormalPrioColor);
+			lowPrioColor = StringToColor (IdeApp.Preferences.UserTasksLowPrioColor);
 
 			store = new Gtk.ListStore (
 				typeof (int),        // line
 				typeof (string),     // desc
 				typeof (string),     // file
 				typeof (string),     // path
-				typeof (Task),       // task
+				typeof (TaskListEntry),       // task
 				typeof (Gdk.Color),  // foreground color
 				typeof (int));       // font weight
 
@@ -104,7 +111,7 @@ namespace MonoDevelop.Ide.Tasks
 			view = new MonoDevelop.Ide.Gui.Components.PadTreeView (sortModel);
 			view.RulesHint = true;
 			view.SearchColumn = (int)Columns.Description;
-			view.DoPopupMenu = (evt) => IdeApp.CommandService.ShowContextMenu (view, evt, CreateMenu ());
+			view.DoPopupMenu = ShowPopupMenu;
 			view.RowActivated += new RowActivatedHandler (OnRowActivated);
 
 			TreeViewColumn col;
@@ -124,41 +131,38 @@ namespace MonoDevelop.Ide.Tasks
 			col.Resizable = true;
 
 			LoadColumnsVisibility ();
-			
-			comments.BeginTaskUpdates ();
-			try {
-				foreach (var item in IdeApp.Workspace.Items) {
-					LoadWorkspaceItemContents (item);
-				}
-			} finally {
-				comments.EndTaskUpdates ();
-			}
 
-			comments.TasksAdded += DispatchService.GuiDispatch<TaskEventHandler> (GeneratedTaskAdded);
-			comments.TasksRemoved += DispatchService.GuiDispatch<TaskEventHandler> (GeneratedTaskRemoved);
+			OnWorkspaceItemLoaded (null, EventArgs.Empty);
 
-			PropertyService.PropertyChanged += DispatchService.GuiDispatch<EventHandler<PropertyChangedEventArgs>> (OnPropertyUpdated);
+			comments.TasksAdded += GeneratedTaskAdded;
+			comments.TasksRemoved += GeneratedTaskRemoved;
+
+			IdeApp.Preferences.UserTasksHighPrioColor.Changed += OnPropertyUpdated;
+			IdeApp.Preferences.UserTasksNormalPrioColor.Changed += OnPropertyUpdated;
+			IdeApp.Preferences.UserTasksLowPrioColor.Changed += OnPropertyUpdated;
 			
 			// Initialize with existing tags.
-			foreach (Task t in comments)
+			foreach (TaskListEntry t in comments)
 				AddGeneratedTask (t);
 
 			view.Destroyed += delegate {
 				view.RowActivated -= OnRowActivated;
 				TaskService.CommentTasksChanged -= OnCommentTasksChanged;
 				CommentTag.SpecialCommentTagsChanged -= OnCommentTagsChanged;
-				IdeApp.Workspace.WorkspaceItemLoaded -= OnWorkspaceItemLoaded;
+				MonoDevelopWorkspace.LoadingFinished -= OnWorkspaceItemLoaded;
 				IdeApp.Workspace.WorkspaceItemUnloaded -= OnWorkspaceItemUnloaded;
-				comments.TasksAdded -= DispatchService.GuiDispatch<TaskEventHandler> (GeneratedTaskAdded);
-				comments.TasksRemoved -= DispatchService.GuiDispatch<TaskEventHandler> (GeneratedTaskRemoved);
+				comments.TasksAdded -= GeneratedTaskAdded;
+				comments.TasksRemoved -= GeneratedTaskRemoved;
 
-				PropertyService.PropertyChanged -= DispatchService.GuiDispatch<EventHandler<PropertyChangedEventArgs>> (OnPropertyUpdated);
+				IdeApp.Preferences.UserTasksHighPrioColor.Changed -= OnPropertyUpdated;
+				IdeApp.Preferences.UserTasksNormalPrioColor.Changed -= OnPropertyUpdated;
+				IdeApp.Preferences.UserTasksLowPrioColor.Changed -= OnPropertyUpdated;
 			};
 		}
 
 		void LoadColumnsVisibility ()
 		{
-			string columns = (string)PropertyService.Get ("Monodevelop.CommentTasksColumns", "TRUE;TRUE;TRUE;TRUE");
+			string columns = (string)PropertyService.Get (restoreID, "TRUE;TRUE;TRUE;TRUE");
 			string[] tokens = columns.Split (new char[] {';'}, StringSplitOptions.RemoveEmptyEntries);
 			if (tokens.Length == 4 && view != null && view.Columns.Length == 4)
 			{
@@ -170,100 +174,48 @@ namespace MonoDevelop.Ide.Tasks
 				}
 			}
 		}
-
-		void StoreColumnsVisibility ()
-		{
-			string columns = String.Format ("{0};{1};{2};{3}",
-			                                view.Columns[(int)Columns.Line].Visible,
-			                                view.Columns[(int)Columns.Description].Visible,
-			                                view.Columns[(int)Columns.File].Visible,
-			                                view.Columns[(int)Columns.Path].Visible);
-			PropertyService.Set ("Monodevelop.CommentTasksColumns", columns);
-		}
 		
-		void OnWorkspaceItemLoaded (object sender, WorkspaceItemEventArgs e)
+		void OnWorkspaceItemLoaded (object sender, EventArgs e)
 		{
 			comments.BeginTaskUpdates ();
 			try {
-				LoadWorkspaceItemContents (e.Item);
+				CommentTasksProvider.LoadCachedContents ();
+				foreach (var sln in IdeApp.Workspace.GetAllSolutions ()) {
+					CommentTasksProvider.Legacy.LoadSolutionContents (sln);
+					loadedSlns.Add (sln);
+				}
 			}
 			finally {
 				comments.EndTaskUpdates ();
 			}
 		}
-		
-		void LoadWorkspaceItemContents (WorkspaceItem wob)
-		{
-			foreach (var sln in wob.GetAllSolutions ())
-				LoadSolutionContents (sln);
-		}
 
-		void UpdateCommentTagsForProject (Solution solution, Project project)
-		{
-			var ctx = TypeSystemService.GetProjectContentWrapper (project);
-			if (ctx == null)
-				return;
-			var tags = ctx.GetExtensionObject<ProjectCommentTags> ();
-			if (tags == null) {
-				tags = new ProjectCommentTags ();
-				ctx.UpdateExtensionObject (tags);
-				tags.Update (ctx.Project);
-			} else {
-				foreach (var kv in tags.Tags) {
-					UpdateCommentTags (solution, kv.Key, kv.Value);
-				}
-			}
-		}
-
-		void HandleSolutionItemAdded (object sender, SolutionItemChangeEventArgs e)
-		{
-			var newProject = e.SolutionItem as Project;
-			if (newProject == null)
-				return;
-			UpdateCommentTagsForProject (e.Solution, newProject);
-		}
-		
-		void LoadSolutionContents (Solution sln)
-		{
-			loadedSlns.Add (sln);
-			System.Threading.ThreadPool.QueueUserWorkItem (delegate {
-				sln.SolutionItemAdded += HandleSolutionItemAdded;
-
-				// Load all tags that are stored in pidb files
-				foreach (Project p in sln.GetAllProjects ()) {
-					UpdateCommentTagsForProject (sln, p);
-				}
-			});
-		}
-		
-		
-		static IEnumerable<Tag> GetSpecialComments (IProjectContent ctx, string name)
-		{
-			var doc = ctx.GetFile (name) as ParsedDocument;
-			if (doc == null)
-				return Enumerable.Empty<Tag> ();
-			return (IEnumerable<Tag>)doc.TagComments;
-		}
-		
 		void OnWorkspaceItemUnloaded (object sender, WorkspaceItemEventArgs e)
 		{
-			foreach (var sln in e.Item.GetAllSolutions ()) {
-				if (loadedSlns.Remove (sln))
-					sln.SolutionItemAdded -= HandleSolutionItemAdded;
-			}
 			comments.RemoveItemTasks (e.Item, true);
-		}		
 
-		void OnCommentTasksChanged (object sender, CommentTasksChangedEventArgs e)
-		{
-			//because of parse queueing, it's possible for this event to come in after the solution is closed
-			//so we track which solutions are currently open so that we don't leak memory by holding 
-			// on to references to closed projects
-			if (e.Project != null && e.Project.ParentSolution != null && loadedSlns.Contains (e.Project.ParentSolution)) {
-				Application.Invoke (delegate {
-					UpdateCommentTags (e.Project.ParentSolution, e.FileName, e.TagComments);
-				});
+			if (e.Item is Solution solution) {
+				loadedSlns.Remove (solution);
 			}
+		}
+		
+		void LastWorkspaceItemClosed (object sender, EventArgs e)
+		{
+			loadedSlns.Clear ();
+		}
+
+		void OnCommentTasksChanged (object sender, CommentTasksChangedEventArgs args)
+		{
+			Application.Invoke ((o, a) => {
+				foreach (var e in args.Changes) {
+					//because of parse queueing, it's possible for this event to come in after the solution is closed
+					//so we track which solutions are currently open so that we don't leak memory by holding 
+					// on to references to closed projects
+					if (e.Project != null && e.Project.ParentSolution != null && loadedSlns.Contains (e.Project.ParentSolution)) {
+						UpdateCommentTags (e.Project.ParentSolution, e.FileName, e.TagComments);
+					}
+				}
+			});
 		}
 		
 		void OnCommentTagsChanged (object sender, EventArgs e)
@@ -278,7 +230,7 @@ namespace MonoDevelop.Ide.Tasks
 			
 			fileName = fileName.FullPath;
 			
-			List<Task> newTasks = new List<Task> ();
+			List<TaskListEntry> newTasks = new List<TaskListEntry> ();
 			if (tagComments != null) {  
 				foreach (Tag tag in tagComments) {
 					TaskPriority priority;
@@ -299,13 +251,13 @@ namespace MonoDevelop.Ide.Tasks
 						}
 					}
 					
-					Task t = new Task (fileName, desc, tag.Region.BeginColumn, tag.Region.BeginLine,
+					TaskListEntry t = new TaskListEntry (fileName, desc, tag.Region.BeginColumn, tag.Region.BeginLine,
 					                   TaskSeverity.Information, priority, wob);
 					newTasks.Add (t);
 				}
 			}
 			
-			List<Task> oldTasks = new List<Task> (comments.GetFileTasks (fileName));
+			List<TaskListEntry> oldTasks = new List<TaskListEntry> (comments.GetFileTasks (fileName));
 
 			for (int i = 0; i < newTasks.Count; ++i) {
 				for (int j = 0; j < oldTasks.Count; ++j) {
@@ -341,11 +293,11 @@ namespace MonoDevelop.Ide.Tasks
 		
 		void GeneratedTaskAdded (object sender, TaskEventArgs e)
 		{
-			foreach (Task t in e.Tasks)
+			foreach (TaskListEntry t in e.Tasks)
 				AddGeneratedTask (t);
 		}
 
-		void AddGeneratedTask (Task t)
+		void AddGeneratedTask (TaskListEntry t)
 		{
 			FilePath tmpPath = t.FileName;
 			if (t.WorkspaceObject != null)
@@ -356,25 +308,25 @@ namespace MonoDevelop.Ide.Tasks
 
 		void GeneratedTaskRemoved (object sender, TaskEventArgs e)
 		{
-			foreach (Task t in e.Tasks)
+			foreach (TaskListEntry t in e.Tasks)
 				RemoveGeneratedTask (t);
 		}
 
-		void RemoveGeneratedTask (Task t)
+		void RemoveGeneratedTask (TaskListEntry t)
 		{
 			TreeIter iter = FindTask (store, t);
 			if (!iter.Equals (TreeIter.Zero))
 				store.Remove (ref iter);
 		}
 
-		static TreeIter FindTask (ListStore store, Task task)
+		static TreeIter FindTask (ListStore store, TaskListEntry task)
 		{
 			TreeIter iter;
 			if (!store.GetIterFirst (out iter))
 				return TreeIter.Zero;
 			
 			do {
-				Task t = store.GetValue (iter, (int)Columns.Task) as Task;
+				TaskListEntry t = store.GetValue (iter, (int)Columns.Task) as TaskListEntry;
 				if (t == task)
 					return iter;
 			}
@@ -383,92 +335,39 @@ namespace MonoDevelop.Ide.Tasks
 			return TreeIter.Zero;
 		}
 
-		Menu CreateMenu ()
+		void ShowPopupMenu (Gdk.EventButton evnt)
 		{
-			var group = new ActionGroup ("Popup");
+			var menu = new ContextMenu ();
+			columnsActions = new Dictionary<ContextMenuItem, int> ();
+
+			var copy = new ContextMenuItem (GettextCatalog.GetString ("Copy Task"));
+			copy.Clicked += OnGenTaskCopied;
+			menu.Add (copy);
+
+			var jump = new ContextMenuItem (GettextCatalog.GetString ("_Go to Task"));
+			jump.Clicked += OnGenTaskJumpto;
+			menu.Add (jump);
+
+			var delete = new ContextMenuItem (GettextCatalog.GetString ("_Delete Task"));
+			delete.Clicked += OnGenTaskDelete;
+			menu.Add (delete);
+
+			var columns = new ContextMenuItem (GettextCatalog.GetString ("Columns"));
+			var columnsMenu = new ColumnSelectorMenu (view, restoreID);
+			columns.SubMenu = columnsMenu;
+			menu.Add (columns);
+
+			copy.Sensitive = jump.Sensitive = delete.Sensitive =
+				view.Selection != null &&
+				view.Selection.CountSelectedRows () > 0 &&
+				view.IsAColumnVisible ();
 			
-			var copy = new Gtk.Action ("copy", GettextCatalog.GetString ("_Copy"),
-				GettextCatalog.GetString ("Copy comment task"), Gtk.Stock.Copy);
-			copy.Activated += OnGenTaskCopied;
-			group.Add (copy, "<Control><Mod2>c");
-
-			var jump = new Gtk.Action ("jump", GettextCatalog.GetString ("_Go to"),
-				GettextCatalog.GetString ("Go to comment task"), Gtk.Stock.JumpTo);
-			jump.Activated += OnGenTaskJumpto;
-			group.Add (jump);
-
-			var delete = new Gtk.Action ("delete", GettextCatalog.GetString ("_Delete"),
-				GettextCatalog.GetString ("Delete comment task"), Gtk.Stock.Delete);
-			delete.Activated += OnGenTaskDelete;
-			group.Add (delete);
-
-			var columns = new Gtk.Action ("columns", GettextCatalog.GetString ("Columns"));
-			group.Add (columns, null);
-
-			var columnLine = new ToggleAction ("columnLine", GettextCatalog.GetString ("Line"),
-				GettextCatalog.GetString ("Toggle visibility of Line column"), null);
-			columnLine.Toggled += OnColumnVisibilityChanged;
-			columnsActions[columnLine] = (int)Columns.Line;
-			group.Add (columnLine);
-
-			var columnDescription = new ToggleAction ("columnDescription", GettextCatalog.GetString ("Description"),
-				GettextCatalog.GetString ("Toggle visibility of Description column"), null);
-			columnDescription.Toggled += OnColumnVisibilityChanged;
-			columnsActions[columnDescription] = (int)Columns.Description;
-			group.Add (columnDescription);
-
-			var columnFile = new ToggleAction ("columnFile", GettextCatalog.GetString ("File"),
-				GettextCatalog.GetString ("Toggle visibility of File column"), null);
-			columnFile.Toggled += OnColumnVisibilityChanged;
-			columnsActions[columnFile] = (int)Columns.File;
-			group.Add (columnFile);
-
-			var columnPath = new ToggleAction ("columnPath", GettextCatalog.GetString ("Path"),
-				GettextCatalog.GetString ("Toggle visibility of Path column"), null);
-			columnPath.Toggled += OnColumnVisibilityChanged;
-			columnsActions[columnPath] = (int)Columns.Path;
-			group.Add (columnPath);
-
-			UIManager uiManager = new UIManager ();
-			uiManager.InsertActionGroup (group, 0);
-			
-			string uiStr = "<ui><popup name='popup'>"
-				+ "<menuitem action='copy'/>"
-				+ "<menuitem action='jump'/>"
-				+ "<menuitem action='delete'/>"
-				+ "<separator/>"
-				+ "<menu action='columns'>"
-				+ "<menuitem action='columnLine' />"
-				+ "<menuitem action='columnDescription' />"
-				+ "<menuitem action='columnFile' />"
-				+ "<menuitem action='columnPath' />"
-				+ "</menu>"
-				+ "</popup></ui>";
-
-			uiManager.AddUiFromString (uiStr);
-			var menu = (Menu)uiManager.GetWidget ("/popup");
-			menu.ShowAll ();
-
-			menu.Shown += delegate (object o, EventArgs args)
-			{
-				columnLine.Active = view.Columns[(int)Columns.Line].Visible;
-				columnDescription.Active = view.Columns[(int)Columns.Description].Visible;
-				columnFile.Active = view.Columns[(int)Columns.File].Visible;
-				columnPath.Active = view.Columns[(int)Columns.Path].Visible;
-				copy.Sensitive = jump.Sensitive = delete.Sensitive =
-					view.Selection != null &&
-					view.Selection.CountSelectedRows () > 0 &&
-					(columnLine.Active ||
-					columnDescription.Active ||
-					columnFile.Active ||
-					columnPath.Active);
-			};
-			return menu;
+			menu.Show (view, evnt);
 		}
 
 		void OnGenTaskCopied (object o, EventArgs args)
 		{
-			Task task = SelectedTask;
+			TaskListEntry task = SelectedTask;
 			if (task != null) {
 				clipboard = Clipboard.Get (Gdk.Atom.Intern ("CLIPBOARD", false));
 				clipboard.Text = task.Description;
@@ -477,14 +376,14 @@ namespace MonoDevelop.Ide.Tasks
 			}
 		}
 
-		Task SelectedTask
+		TaskListEntry SelectedTask
 		{
 			get {
 				TreeModel model;
 				TreeIter iter;
 				if (view.Selection.GetSelected (out model, out iter))
 				{
-					return (Task)model.GetValue (iter, (int)Columns.Task);
+					return (TaskListEntry)model.GetValue (iter, (int)Columns.Task);
 				}
 				else return null; // no one selected
 			}
@@ -492,7 +391,7 @@ namespace MonoDevelop.Ide.Tasks
 
 		void OnGenTaskJumpto (object o, EventArgs args)
 		{
-			Task task = SelectedTask;
+			TaskListEntry task = SelectedTask;
 			if (task != null)
 				task.JumpToPosition ();
 		}
@@ -502,11 +401,11 @@ namespace MonoDevelop.Ide.Tasks
 			OnGenTaskJumpto (null, null);
 		}
 
-		void OnGenTaskDelete (object o, EventArgs args)
+		async void OnGenTaskDelete (object o, EventArgs args)
 		{
-			Task task = SelectedTask;
+			TaskListEntry task = SelectedTask;
 			if (task != null && ! String.IsNullOrEmpty (task.FileName)) {
-				Document doc = IdeApp.Workbench.OpenDocument (task.FileName, Math.Max (1, task.Line), Math.Max (1, task.Column));
+				var doc = await IdeApp.Workbench.OpenDocument (task.FileName, null, Math.Max (1, task.Line), Math.Max (1, task.Column));
 				if (doc != null && doc.HasProject && doc.Project is DotNetProject) {
 					string[] commentTags = doc.CommentTags;
 					if (commentTags != null && commentTags.Length == 1) {
@@ -515,25 +414,16 @@ namespace MonoDevelop.Ide.Tasks
 							string line = doc.Editor.GetLineText (task.Line);
 							int index = line.IndexOf (commentTags[0]);
 							if (index != -1) {
-								doc.Editor.SetCaretTo (task.Line, task.Column);
+								doc.Editor.CaretLocation = new DocumentLocation (task.Line, task.Column);
+								doc.Editor.StartCaretPulseAnimation ();
 								line = line.Substring (0, index);
-								var ls = doc.Editor.Document.GetLine (task.Line);
-								doc.Editor.Replace (ls.Offset, ls.Length, line);
+								var ls = doc.Editor.GetLine (task.Line);
+								doc.Editor.ReplaceText (ls.Offset, ls.Length, line);
 								comments.Remove (task);
 							}
 						}); 
 					}
 				}
-			}
-		}
-
-		void OnColumnVisibilityChanged (object o, EventArgs args)
-		{
-			ToggleAction action = o as ToggleAction;
-			if (action != null)
-			{
-				view.Columns[columnsActions[action]].Visible = action.Active;
-				StoreColumnsVisibility ();
 			}
 		}
 
@@ -569,48 +459,32 @@ namespace MonoDevelop.Ide.Tasks
 			return color;
 		}
 		
-		void OnPropertyUpdated (object sender, PropertyChangedEventArgs e)
+		void OnPropertyUpdated (object sender, EventArgs e)
 		{
-			bool change = false;
-			if (e.Key == "Monodevelop.UserTasksHighPrioColor" && e.NewValue != e.OldValue)
+			highPrioColor = StringToColor (IdeApp.Preferences.UserTasksHighPrioColor);
+			normalPrioColor = StringToColor (IdeApp.Preferences.UserTasksNormalPrioColor);
+			lowPrioColor = StringToColor (IdeApp.Preferences.UserTasksLowPrioColor);
+
+			TreeIter iter;
+			if (store.GetIterFirst (out iter))
 			{
-				highPrioColor = StringToColor ((string)e.NewValue);
-				change = true;
-			}
-			if (e.Key == "Monodevelop.UserTasksNormalPrioColor" && e.NewValue != e.OldValue)
-			{
-				normalPrioColor = StringToColor ((string)e.NewValue);
-				change = true;
-			}
-			if (e.Key == "Monodevelop.UserTasksLowPrioColor" && e.NewValue != e.OldValue)
-			{
-				lowPrioColor = StringToColor ((string)e.NewValue);
-				change = true;
-			}
-			
-			if (change)
-			{
-				TreeIter iter;
-				if (store.GetIterFirst (out iter))
+				do
 				{
-					do
-					{
-						Task task = (Task) store.GetValue (iter, (int)Columns.Task);
-						store.SetValue (iter, (int)Columns.Foreground, GetColorByPriority (task.Priority));
-					} while (store.IterNext (ref iter));
-				}
+					TaskListEntry task = (TaskListEntry) store.GetValue (iter, (int)Columns.Task);
+					store.SetValue (iter, (int)Columns.Foreground, GetColorByPriority (task.Priority));
+				} while (store.IterNext (ref iter));
 			}
 		}
 		
 		#region ITaskListView members
-		TreeView ITaskListView.Content {
+		Control ITaskListView.Content {
 			get {
 				CreateView ();
 				return view; 
 			} 
 		}
 		
-		Widget[] ITaskListView.ToolBarItems {
+		Control[] ITaskListView.ToolBarItems {
 			get { return null; } 
 		}
 		#endregion

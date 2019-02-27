@@ -37,14 +37,14 @@ namespace MonoDevelop.Ide.Gui.Pads.ProjectPad
 	public class SystemFile: IFileItem
 	{
 		FilePath absolutePath;
-		IWorkspaceObject parent;
+		WorkspaceObject parent;
 		bool showTransparent;
 		
-		public SystemFile (FilePath absolutePath, IWorkspaceObject parent): this (absolutePath, parent, true)
+		public SystemFile (FilePath absolutePath, WorkspaceObject parent): this (absolutePath, parent, true)
 		{
 		}
 
-		public SystemFile (FilePath absolutePath, IWorkspaceObject parent, bool showTransparent)
+		public SystemFile (FilePath absolutePath, WorkspaceObject parent, bool showTransparent)
 		{
 			this.parent = parent;
 			this.absolutePath = absolutePath;
@@ -53,6 +53,7 @@ namespace MonoDevelop.Ide.Gui.Pads.ProjectPad
 		
 		public FilePath Path {
 			get { return absolutePath; }
+			internal set { absolutePath = value; }
 		}
 		
 		FilePath IFileItem.FileName {
@@ -63,7 +64,7 @@ namespace MonoDevelop.Ide.Gui.Pads.ProjectPad
 			get { return System.IO.Path.GetFileName (absolutePath); }
 		}
 
-		public IWorkspaceObject ParentWorkspaceObject {
+		public WorkspaceObject ParentWorkspaceObject {
 			get { return parent; }
 		}
 		

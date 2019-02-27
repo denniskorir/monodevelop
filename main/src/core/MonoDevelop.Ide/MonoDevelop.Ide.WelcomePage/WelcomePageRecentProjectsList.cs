@@ -28,35 +28,36 @@ using System;
 using System.Linq;
 using Gtk;
 using MonoDevelop.Core;
+using MonoDevelop.Components.AtkCocoaHelper;
 using System.Collections.Generic;
 using MonoDevelop.Ide.Desktop;
 using System.Xml.Linq;
+
+using MonoDevelop.Components;
 
 namespace MonoDevelop.Ide.WelcomePage
 {
 	public class WelcomePageRecentProjectsList : WelcomePageSection
 	{
 		bool destroyed;
-		readonly EventHandler recentChangesHandler;
 		readonly VBox box;
 		int itemCount = 10;
 		readonly Xwt.Drawing.Image openProjectIcon;
 		readonly Xwt.Drawing.Image newProjectIcon;
-		
+
 		public WelcomePageRecentProjectsList (string title = null, int count = 10): base (title)
 		{
-			openProjectIcon = Xwt.Drawing.Image.FromResource ("open_solution.png");
-			newProjectIcon = Xwt.Drawing.Image.FromResource ("new_solution.png");
-
+			openProjectIcon = Xwt.Drawing.Image.FromResource ("welcome-open-solution-16.png");
+			newProjectIcon = Xwt.Drawing.Image.FromResource ("welcome-new-solution-16.png");
 			box = new VBox ();
 
 			itemCount = count;
 			
-			recentChangesHandler = DispatchService.GuiDispatch (new EventHandler (RecentFilesChanged));
-			DesktopService.RecentFiles.Changed += recentChangesHandler;
-			RecentFilesChanged (null, null);
+			DesktopService.RecentFiles.Changed += RecentFilesChanged;
 
 			SetContent (box);
+			RecentFilesChanged (null, null);
+
 			TitleAlignment.BottomPadding = Styles.WelcomeScreen.Pad.Solutions.LargeTitleMarginBottom;
 			ContentAlignment.LeftPadding = 0;
 			ContentAlignment.RightPadding = 0;
@@ -66,7 +67,7 @@ namespace MonoDevelop.Ide.WelcomePage
 		{
 			destroyed = true;
 			base.OnDestroyed ();
-			DesktopService.RecentFiles.Changed -= recentChangesHandler;
+			DesktopService.RecentFiles.Changed -= RecentFilesChanged;
 		}
 
 		void RecentFilesChanged (object sender, EventArgs e)
@@ -76,34 +77,49 @@ namespace MonoDevelop.Ide.WelcomePage
 				return;
 			
 			foreach (var c in box.Children) {
+				RemoveAccessibiltyTitledWidget (c);
 				box.Remove (c);
 				c.Destroy ();
 			}
 
 			Gtk.HBox hbox = new HBox ();
+			hbox.Accessible.SetShouldIgnore (true);
+
 			var btn = new WelcomePageListButton (GettextCatalog.GetString ("New..."), null, newProjectIcon, "monodevelop://MonoDevelop.Ide.Commands.FileCommands.NewProject");
+			btn.Accessible.Description = "Create a new solution";
+			btn.Accessible.Name = "WelcomePage.RecentSolutions.NewButton";
 			btn.WidthRequest = (int) (Styles.WelcomeScreen.Pad.Solutions.SolutionTile.Width / 2.3);
 			btn.BorderPadding = 6;
 			btn.LeftTextPadding = 24;
 			hbox.PackStart (btn, false, false, 0);
+
+			SetTitledWidget (btn);
 
 			btn = new WelcomePageListButton (GettextCatalog.GetString ("Open..."), null, openProjectIcon, "monodevelop://MonoDevelop.Ide.Commands.FileCommands.OpenFile");
+			btn.Accessible.Description = "Open an existing solution";
+			btn.Accessible.Name = "WelcomePage.RecentSolutions.OpenButton";
 			btn.WidthRequest = (int) (Styles.WelcomeScreen.Pad.Solutions.SolutionTile.Width / 2.3);
 			btn.BorderPadding = 6;
 			btn.LeftTextPadding = 24;
 			hbox.PackStart (btn, false, false, 0);
 
+			SetTitledWidget (btn);
+
 			box.PackStart (hbox, false, false, 0);
-			
+
 			//TODO: pinned files
+			int idx = 1;
 			foreach (var recent in DesktopService.RecentFiles.GetProjects ().Take (itemCount)) {
 				var filename = recent.FileName;
-				if (!System.IO.File.Exists (filename))
-					continue;
 
 				var accessed = recent.TimeStamp;
 				var pixbuf = ImageService.GetIcon (GetIcon (filename), IconSize.Dnd);
 				var button = new WelcomePageListButton (recent.DisplayName, System.IO.Path.GetDirectoryName (filename), pixbuf, "project://" + filename);
+
+				button.Accessible.SetUrl ("file://" + filename);
+				button.Accessible.Name = string.Format ("WelcomePage.RecentSolutions.RecentFile{0}", idx);
+				idx++;
+
 				button.BorderPadding = 2;
 				button.AllowPinning = true;
 				button.Pinned = recent.IsFavorite;
@@ -115,22 +131,59 @@ namespace MonoDevelop.Ide.WelcomePage
 				//button.HasTooltip = true;
 				button.TooltipText = filename + "\n" + TimeSinceEdited (accessed);
 				box.PackStart (button, false, false, 0);
-				button.PinClicked += delegate {
-					DesktopService.RecentFiles.SetFavoriteFile (filename, button.Pinned);
-				};
-			}
-			
+				var pinClickHandler = new PinClickHandler (filename);
+				pinClickHandler.Register (button);
 
+				SetTitledWidget (button);
+			}
 
 			this.ShowAll ();
 		}
-		
+
+		class PinClickHandler : IDisposable
+		{
+			WelcomePageListButton button;
+			string filename;
+
+			public PinClickHandler (string filename)
+			{
+				this.filename = filename;
+			}
+
+			public void Dispose ()
+			{
+				if (button == null)
+					return;
+				button.PinClicked -= Button_PinClicked;
+				button.Destroyed -= Button_Destroyed;
+				button = null;
+			}
+
+			internal void Register (WelcomePageListButton button)
+			{
+				this.button = button;
+				button.PinClicked += Button_PinClicked;
+				button.Destroyed += Button_Destroyed;
+			}
+
+			void Button_PinClicked (object sender, EventArgs e)
+			{
+				DesktopService.RecentFiles.SetFavoriteFile (filename, button.Pinned);
+			}
+
+			void Button_Destroyed (object sender, EventArgs e)
+			{
+				Dispose ();
+			}
+		}
+
+
 		static string TimeSinceEdited (DateTime prjtime)
 		{
 			TimeSpan sincelast = DateTime.UtcNow - prjtime;
 
 			if (sincelast.Days >= 1)
-				return GettextCatalog.GetPluralString ("Last opened {0} days ago", "Last opened {0} days ago", sincelast.Days, sincelast.Days);
+				return GettextCatalog.GetPluralString ("Last opened {0} day ago", "Last opened {0} days ago", sincelast.Days, sincelast.Days);
 			if (sincelast.Hours >= 1)
 				return GettextCatalog.GetPluralString ("Last opened {0} hour ago", "Last opened {0} hours ago", sincelast.Hours, sincelast.Hours);
 			if (sincelast.Minutes > 0)

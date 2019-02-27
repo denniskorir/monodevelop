@@ -39,19 +39,19 @@ namespace MonoDevelop.Gettext
 {
 	class MakefileHandler: IMakefileHandler
 	{
-		public bool CanDeploy (SolutionItem entry, MakefileType type)
+		public bool CanDeploy (SolutionFolderItem entry, MakefileType type)
 		{
 			return entry is TranslationProject;
 		}
 
-		public Makefile Deploy (AutotoolsContext ctx, SolutionItem entry, IProgressMonitor monitor)
+		public Makefile Deploy (AutotoolsContext ctx, SolutionFolderItem entry, ProgressMonitor monitor)
 		{
 			Makefile mkfile = new Makefile ();
 			TranslationProject project = (TranslationProject) entry;
 			
 			StringBuilder files = new StringBuilder ();
 			foreach (Translation t in project.Translations) {
-				files.Append ("\\\n\t" + t.FileName);
+				files.Append ("\\\n\t").Append (t.FileName);
 			}
 			
 			string dir;
@@ -74,7 +74,7 @@ namespace MonoDevelop.Gettext
 			
 			string mt;
 			if (ctx.MakefileType == MakefileType.AutotoolsMakefile)
-				mt = "Makefile.am.template";
+				mt = "Makefile_am.template";
 			else
 				mt = "Makefile.template";
 

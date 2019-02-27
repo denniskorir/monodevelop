@@ -37,8 +37,9 @@ namespace MonoDevelop.Ide.Commands
 {
 	public enum WindowCommands
 	{
-		NextWindow,
-		PrevWindow,
+		NextDocument,
+		PrevDocument,
+		OpenDocumentList,
 		OpenWindowList,
 		SplitWindowVertically,
 		SplitWindowHorizontally,
@@ -48,7 +49,7 @@ namespace MonoDevelop.Ide.Commands
 		SwitchPreviousDocument
 	}
 
-	internal class NextWindowHandler : CommandHandler
+	internal class NextDocumentHandler : CommandHandler
 	{
 		protected override void Update (CommandInfo info)
 		{
@@ -70,7 +71,7 @@ namespace MonoDevelop.Ide.Commands
 		}
 	}
 
-	internal class PrevWindowHandler : CommandHandler
+	internal class PrevDocumentHandler : CommandHandler
 	{
 		protected override void Update (CommandInfo info)
 		{
@@ -91,29 +92,35 @@ namespace MonoDevelop.Ide.Commands
 		}
 	}
 
-	internal class OpenWindowListHandler : CommandHandler
+	internal class OpenDocumentListHandler : CommandHandler
 	{
 		protected override void Update (CommandArrayInfo info)
 		{
+			if (IdeApp.Workbench.Documents.Count < 10)
+				return;
+
 			int i = 0;
 			foreach (Document document in IdeApp.Workbench.Documents) {
+				if (i < 9) {
+					i++;
+					continue;
+				}
 
 				//Create CommandInfo object
 				CommandInfo commandInfo = new CommandInfo ();
 				commandInfo.Text = document.Window.Title.Replace ("_", "__");
-				if (document == IdeApp.Workbench.ActiveDocument) 
-					commandInfo.Checked = true; 
-				commandInfo.Description = GettextCatalog.GetString ("Activate window '{0}'", commandInfo.Text);
+				if (document == IdeApp.Workbench.ActiveDocument)
+					commandInfo.Checked = true;
+				commandInfo.Description = GettextCatalog.GetString ("Activate document '{0}'", commandInfo.Text);
 				if (document.Window.ShowNotification) {
 					commandInfo.UseMarkup = true;
 					commandInfo.Text = "<span foreground=" + '"' + "blue" + '"' + ">" + commandInfo.Text + "</span>";
 				}
 
 				//Add AccelKey
-				if (i < 10) {
+				if (IdeApp.Workbench.Documents.Count + i < 10) {
 					commandInfo.AccelKey = ((Platform.IsMac) ? "Meta" : "Alt") + "|" + ((i + 1) % 10).ToString ();
 				}
-
 
 				//Add menu item
 				info.Add (commandInfo, document);
@@ -126,6 +133,148 @@ namespace MonoDevelop.Ide.Commands
 		{
 			Document document = (Document)dataItem;
 			document.Select ();
+		}
+	}
+
+	internal class OpenDocumentHandlerBase : CommandHandler
+	{
+		int index;
+
+		// 1-based index
+		protected OpenDocumentHandlerBase (int index)
+		{
+			this.index = index;
+		}
+
+		protected override void Update (CommandInfo info)
+		{
+			if (IdeApp.Workbench.Documents.Count >= index) {
+				var document = IdeApp.Workbench.Documents [index - 1];
+
+				info.Text = document.Window.Title.Replace ("_", "__");
+				info.Checked = document == IdeApp.Workbench.ActiveDocument;
+				info.Description = GettextCatalog.GetString ("Activate document '{0}'", info.Text);
+				info.DataItem = document;
+
+				if (document.Window.ShowNotification) {
+					info.UseMarkup = true;
+					info.Text = "<span foreground=" + '"' + "blue" + '"' + ">" + info.Text + "</span>";
+				}
+				info.Visible = true;
+				info.Enabled = true;
+			} else {
+				info.Visible = false;
+				info.Enabled = false;
+			}
+		}
+
+		protected override void Run ()
+		{
+			var document = IdeApp.Workbench.Documents [index - 1];
+			document.Select ();
+		}
+	}
+
+	internal class OpenDocument1 : OpenDocumentHandlerBase
+	{
+		public OpenDocument1 ()
+			: base (1)
+		{
+		}
+	}
+
+	internal class OpenDocument2 : OpenDocumentHandlerBase
+	{
+		public OpenDocument2 ()
+			: base (2)
+		{
+		}
+	}
+
+	internal class OpenDocument3 : OpenDocumentHandlerBase
+	{
+		public OpenDocument3 ()
+			: base (3)
+		{
+		}
+	}
+
+	internal class OpenDocument4 : OpenDocumentHandlerBase
+	{
+		public OpenDocument4 ()
+			: base (4)
+		{
+		}
+	}
+
+	internal class OpenDocument5 : OpenDocumentHandlerBase
+	{
+		public OpenDocument5 ()
+			: base (5)
+		{
+		}
+	}
+
+	internal class OpenDocument6 : OpenDocumentHandlerBase
+	{
+		public OpenDocument6 ()
+			: base (6)
+		{
+		}
+	}
+
+	internal class OpenDocument7 : OpenDocumentHandlerBase
+	{
+		public OpenDocument7 ()
+			: base (7)
+		{
+		}
+	}
+
+	internal class OpenDocument8 : OpenDocumentHandlerBase
+	{
+		public OpenDocument8 ()
+			: base (8)
+		{
+		}
+	}
+
+	internal class OpenDocument9 : OpenDocumentHandlerBase
+	{
+		public OpenDocument9 ()
+			: base (9)
+		{
+		}
+	}
+
+	internal class OpenWindowListHandler : CommandHandler
+	{
+		protected override void Update (CommandArrayInfo info)
+		{
+			var windows = IdeApp.CommandService.TopLevelWindowStack.ToArray (); // enumerate only once
+			if (windows.Length <= 1)
+				return;
+			int i = 0;
+			foreach (Gtk.Window window in windows) {
+
+				//Create CommandInfo object
+				CommandInfo commandInfo = new CommandInfo ();
+				commandInfo.Text = window.Title.Replace ("_", "__").Replace("-","\u2013").Replace(" \u2013 " + BrandingService.ApplicationName, "");
+				if (window.HasToplevelFocus)
+					commandInfo.Checked = true;
+				commandInfo.Description = GettextCatalog.GetString ("Activate window '{0}'", commandInfo.Text);
+
+				//Add menu item
+				info.Add (commandInfo, window);
+
+				i++;
+			}
+		}
+
+		protected override void Run (object dataItem)
+		{
+			Window window = (Window)dataItem;
+			window.Present ();
 		}
 	}
 
@@ -221,18 +370,23 @@ namespace MonoDevelop.Ide.Commands
 	{
 		protected static void Switch (bool next)
 		{
-			//FIXME: does this option need to exist?
-			if (!PropertyService.Get ("MonoDevelop.Core.Gui.EnableDocumentSwitchDialog", true)) {
-				IdeApp.CommandService.DispatchCommand (next? WindowCommands.NextWindow : WindowCommands.PrevWindow);
+			if (!IdeApp.Preferences.EnableDocumentSwitchDialog) {
+				IdeApp.CommandService.DispatchCommand (next? WindowCommands.NextDocument : WindowCommands.PrevDocument);
 				return;
 			}
 			
 			var toplevel = Window.ListToplevels ().FirstOrDefault (w => w.HasToplevelFocus)
 				?? IdeApp.Workbench.RootWindow;
-			var sw = new DocumentSwitcher (toplevel, next);
-			sw.Present ();
+
+			bool hasContent;
+			var sw = new DocumentSwitcher (toplevel, next, out hasContent);
+			if (hasContent) {
+				sw.Present ();
+			} else {
+				sw.Destroy ();
+			}
 		}
-		
+
 		protected override void Run ()
 		{
 			Switch (true);
@@ -240,6 +394,39 @@ namespace MonoDevelop.Ide.Commands
 	}
 	
 	internal class SwitchPreviousDocument : SwitchNextDocument
+	{
+		protected override void Run ()
+		{
+			Switch (false);
+		}
+	}
+
+	internal class SwitchNextPad : CommandHandler
+	{
+		protected static void Switch (bool next)
+		{
+			if (!IdeApp.Preferences.EnableDocumentSwitchDialog)
+				return;
+
+			var toplevel = Window.ListToplevels ().FirstOrDefault (w => w.HasToplevelFocus)
+				?? IdeApp.Workbench.RootWindow;
+
+			bool hasContent;
+			var sw = new DocumentSwitcher (toplevel, GettextCatalog.GetString ("Pads"), next, out hasContent);
+			if (hasContent) {
+				sw.Present ();
+			} else {
+				sw.Destroy ();
+			}
+		}
+
+		protected override void Run ()
+		{
+			Switch (true);
+		}
+	}
+
+	internal class SwitchPreviousPad : SwitchNextPad
 	{
 		protected override void Run ()
 		{

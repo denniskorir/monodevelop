@@ -27,21 +27,20 @@
 using System;
 using ExtendedTitleBarDialog = MonoDevelop.Components.ExtendedTitleBarDialog;
 using Mono.Unix;
+using MonoDevelop.Core;
 using MonoDevelop.Ide;
-using MonoDevelop.Ide.Gui;
 using Xwt;
 using Xwt.Drawing;
 
 namespace MonoDevelop.PackageManagement
 {
-	public partial class AddPackagesDialog : ExtendedTitleBarDialog
+	internal partial class AddPackagesDialog : ExtendedTitleBarDialog
 	{
 		ComboBox packageSourceComboBox;
 		SearchTextEntry packageSearchEntry;
 		ListView packagesListView;
 		VBox packageInfoVBox;
 		Label packageNameLabel;
-		Label packageVersionLabel;
 		LinkLabel packageIdLink;
 		Label packageDescription;
 		Label packageAuthor;
@@ -50,6 +49,7 @@ namespace MonoDevelop.PackageManagement
 		LinkLabel packageLicenseLink;
 		LinkLabel packageProjectPageLink;
 		Label packageDependenciesList;
+		HBox packageDependenciesHBox;
 		HBox packageDependenciesListHBox;
 		Label packageDependenciesNoneLabel;
 		CheckBox showPrereleaseCheckBox;
@@ -60,8 +60,9 @@ namespace MonoDevelop.PackageManagement
 		Label errorMessageLabel;
 		Label loadingSpinnerLabel;
 		FrameBox noPackagesFoundFrame;
-		Color lineBorderColor = Color.FromBytes (163, 166, 171);
-		Color packageInfoBackgroundColor = Color.FromBytes (227, 231, 237);
+		ComboBox packageVersionComboBox;
+		HBox packageVersionsHBox;
+		int packageInfoFontSize = 11;
 
 		void Build ()
 		{
@@ -70,16 +71,22 @@ namespace MonoDevelop.PackageManagement
 			Height = 520;
 			Padding = new WidgetSpacing ();
 
+			if (Platform.IsWindows) {
+				packageInfoFontSize = 9;
+			}
+
 			// Top part of dialog:
 			// Package sources and search.
 			var topHBox = new HBox ();
 			topHBox.Margin = new WidgetSpacing (8, 5, 6, 5);
 
 			packageSourceComboBox = new ComboBox ();
+			packageSourceComboBox.Name = "packageSourceComboBox";
 			packageSourceComboBox.MinWidth = 200;
 			topHBox.PackStart (packageSourceComboBox);
 
 			packageSearchEntry = new SearchTextEntry ();
+			packageSearchEntry.Name = "addPackagesDialogSearchEntry";
 			packageSearchEntry.WidthRequest = 187;
 			topHBox.PackEnd (packageSearchEntry);
 
@@ -95,7 +102,7 @@ namespace MonoDevelop.PackageManagement
 			var middleFrame = new FrameBox ();
 			middleFrame.Content = middleHBox;
 			middleFrame.BorderWidth = new WidgetSpacing (0, 0, 0, 1);
-			middleFrame.BorderColor = lineBorderColor;
+			middleFrame.BorderColor = Styles.LineBorderColor;
 			mainVBox.PackStart (middleFrame, true, true);
 
 			// Error information.
@@ -103,15 +110,15 @@ namespace MonoDevelop.PackageManagement
 			packagesListVBox.Spacing = 0;
 			errorMessageHBox = new HBox ();
 			errorMessageHBox.Margin = new WidgetSpacing ();
-			errorMessageHBox.BackgroundColor = Colors.Orange;
+			errorMessageHBox.BackgroundColor = Styles.ErrorBackgroundColor;
 			errorMessageHBox.Visible = false;
 			var errorImage = new ImageView ();
 			errorImage.Margin = new WidgetSpacing (10, 0, 0, 0);
-			errorImage.Image = ImageService.GetIcon (Stock.Warning, Gtk.IconSize.Menu);
+			errorImage.Image = ImageService.GetIcon (MonoDevelop.Ide.Gui.Stock.Warning, Gtk.IconSize.Menu);
 			errorImage.HorizontalPlacement = WidgetPlacement.End;
 			errorMessageHBox.PackStart (errorImage);
 			errorMessageLabel = new Label ();
-			errorMessageLabel.TextColor = Colors.White;
+			errorMessageLabel.TextColor = Styles.ErrorForegroundColor;
 			errorMessageLabel.Margin = new WidgetSpacing (5, 5, 5, 5);
 			errorMessageLabel.Wrap = WrapMode.Word;
 			errorMessageHBox.PackStart (errorMessageLabel, true);
@@ -138,7 +145,7 @@ namespace MonoDevelop.PackageManagement
 
 			loadingSpinnerFrame = new FrameBox ();
 			loadingSpinnerFrame.Visible = false;
-			loadingSpinnerFrame.BackgroundColor = Colors.White;
+			loadingSpinnerFrame.BackgroundColor = Styles.BackgroundColor;
 			loadingSpinnerFrame.Content = loadingSpinnerHBox;
 			loadingSpinnerFrame.BorderWidth = new WidgetSpacing ();
 			packagesListVBox.PackStart (loadingSpinnerFrame, true, true);
@@ -153,7 +160,7 @@ namespace MonoDevelop.PackageManagement
 
 			noPackagesFoundFrame = new FrameBox ();
 			noPackagesFoundFrame.Visible = false;
-			noPackagesFoundFrame.BackgroundColor = Colors.White;
+			noPackagesFoundFrame.BackgroundColor = Styles.BackgroundColor;
 			noPackagesFoundFrame.Content = noPackagesFoundHBox;
 			noPackagesFoundFrame.BorderWidth = new WidgetSpacing ();
 			packagesListVBox.PackStart (noPackagesFoundFrame, true, true);
@@ -161,7 +168,7 @@ namespace MonoDevelop.PackageManagement
 			// Package information
 			packageInfoVBox = new VBox ();
 			var packageInfoFrame = new FrameBox ();
-			packageInfoFrame.BackgroundColor = packageInfoBackgroundColor;
+			packageInfoFrame.BackgroundColor = Styles.PackageInfoBackgroundColor;
 			packageInfoFrame.BorderWidth = new WidgetSpacing ();
 			packageInfoFrame.Content = packageInfoVBox;
 			packageInfoVBox.Margin = new WidgetSpacing (15, 12, 15, 12);
@@ -173,13 +180,12 @@ namespace MonoDevelop.PackageManagement
 			packageInfoScrollView.BorderVisible = false;
 			packageInfoScrollView.HorizontalScrollPolicy = ScrollPolicy.Never;
 			packageInfoScrollView.Content = packageInfoContainerVBox;
-			packageInfoScrollView.BackgroundColor = packageInfoBackgroundColor;
+			packageInfoScrollView.BackgroundColor = Styles.PackageInfoBackgroundColor;
 			var packageInfoScrollViewFrame = new FrameBox ();
-			packageInfoScrollViewFrame.BackgroundColor = packageInfoBackgroundColor;
+			packageInfoScrollViewFrame.BackgroundColor = Styles.PackageInfoBackgroundColor;
 			packageInfoScrollViewFrame.BorderWidth = new WidgetSpacing (1, 0, 0, 0);
-			packageInfoScrollViewFrame.BorderColor = lineBorderColor;
+			packageInfoScrollViewFrame.BorderColor = Styles.LineBorderColor;
 			packageInfoScrollViewFrame.Content = packageInfoScrollView;
-			middleHBox.PackEnd (packageInfoScrollViewFrame);
 
 			// Package name and version.
 			var packageNameHBox = new HBox ();
@@ -187,18 +193,16 @@ namespace MonoDevelop.PackageManagement
 
 			packageNameLabel = new Label ();
 			packageNameLabel.Ellipsize = EllipsizeMode.End;
-			Font packageInfoSmallFont = packageNameLabel.Font.WithScaledSize (0.8);
+			Font packageInfoSmallFont = packageNameLabel.Font.WithSize (packageInfoFontSize);
+			Font packageInfoBoldFont = packageInfoSmallFont.WithWeight (FontWeight.Bold);
+			packageNameLabel.Font = packageInfoSmallFont;
 			packageNameHBox.PackStart (packageNameLabel, true);
-
-			packageVersionLabel = new Label ();
-			packageVersionLabel.TextAlignment = Alignment.End;
-			packageNameHBox.PackEnd (packageVersionLabel);
 
 			// Package description.
 			packageDescription = new Label ();
 			packageDescription.Wrap = WrapMode.Word;
-			packageDescription.Font = packageNameLabel.Font.WithScaledSize (0.9);
-			packageDescription.BackgroundColor = packageInfoBackgroundColor;
+			packageDescription.Font = packageNameLabel.Font.WithSize (packageInfoFontSize);
+			packageDescription.BackgroundColor = Styles.PackageInfoBackgroundColor;
 			packageInfoVBox.PackStart (packageDescription);
 
 			// Package id.
@@ -207,8 +211,8 @@ namespace MonoDevelop.PackageManagement
 			packageInfoVBox.PackStart (packageIdHBox);
 
 			var packageIdLabel = new Label ();
-			packageIdLabel.Font = packageInfoSmallFont;
-			packageIdLabel.Markup = Catalog.GetString ("<b>Id</b>");
+			packageIdLabel.Font = packageInfoBoldFont;
+			packageIdLabel.Text = Catalog.GetString ("Id");
 			packageIdHBox.PackStart (packageIdLabel);
 
 			packageId = new Label ();
@@ -227,8 +231,8 @@ namespace MonoDevelop.PackageManagement
 			packageInfoVBox.PackStart (packageAuthorHBox);
 
 			var packageAuthorLabel = new Label ();
-			packageAuthorLabel.Markup = Catalog.GetString ("<b>Author</b>");
-			packageAuthorLabel.Font = packageInfoSmallFont;
+			packageAuthorLabel.Text = Catalog.GetString ("Author");
+			packageAuthorLabel.Font = packageInfoBoldFont;
 			packageAuthorHBox.PackStart (packageAuthorLabel);
 
 			packageAuthor = new Label ();
@@ -242,8 +246,8 @@ namespace MonoDevelop.PackageManagement
 			packageInfoVBox.PackStart (packagePublishedHBox);
 
 			var packagePublishedLabel = new Label ();
-			packagePublishedLabel.Markup = Catalog.GetString ("<b>Published</b>");
-			packagePublishedLabel.Font = packageInfoSmallFont;
+			packagePublishedLabel.Text = Catalog.GetString ("Published");
+			packagePublishedLabel.Font = packageInfoBoldFont;
 			packagePublishedHBox.PackStart (packagePublishedLabel);
 
 			packagePublishedDate = new Label ();
@@ -255,8 +259,8 @@ namespace MonoDevelop.PackageManagement
 			packageInfoVBox.PackStart (packageDownloadsHBox);
 
 			var packageDownloadsLabel = new Label ();
-			packageDownloadsLabel.Markup = Catalog.GetString ("<b>Downloads</b>");
-			packageDownloadsLabel.Font = packageInfoSmallFont;
+			packageDownloadsLabel.Text = Catalog.GetString ("Downloads");
+			packageDownloadsLabel.Font = packageInfoBoldFont;
 			packageDownloadsHBox.PackStart (packageDownloadsLabel);
 
 			packageDownloads = new Label ();
@@ -268,8 +272,8 @@ namespace MonoDevelop.PackageManagement
 			packageInfoVBox.PackStart (packageLicenseHBox);
 
 			var packageLicenseLabel = new Label ();
-			packageLicenseLabel.Markup = Catalog.GetString ("<b>License</b>");
-			packageLicenseLabel.Font = packageInfoSmallFont;
+			packageLicenseLabel.Text = Catalog.GetString ("License");
+			packageLicenseLabel.Font = packageInfoBoldFont;
 			packageLicenseHBox.PackStart (packageLicenseLabel);
 
 			packageLicenseLink = new LinkLabel ();
@@ -282,8 +286,8 @@ namespace MonoDevelop.PackageManagement
 			packageInfoVBox.PackStart (packageProjectPageHBox);
 
 			var packageProjectPageLabel = new Label ();
-			packageProjectPageLabel.Markup = Catalog.GetString ("<b>Project Page</b>");
-			packageProjectPageLabel.Font = packageInfoSmallFont;
+			packageProjectPageLabel.Text = Catalog.GetString ("Project Page");
+			packageProjectPageLabel.Font = packageInfoBoldFont;
 			packageProjectPageHBox.PackStart (packageProjectPageLabel);
 
 			packageProjectPageLink = new LinkLabel ();
@@ -292,12 +296,12 @@ namespace MonoDevelop.PackageManagement
 			packageProjectPageHBox.PackEnd (packageProjectPageLink);
 
 			// Package dependencies
-			var packageDependenciesHBox = new HBox ();
+			packageDependenciesHBox = new HBox ();
 			packageInfoVBox.PackStart (packageDependenciesHBox);
 
 			var packageDependenciesLabel = new Label ();
-			packageDependenciesLabel.Markup = Catalog.GetString ("<b>Dependencies</b>");
-			packageDependenciesLabel.Font = packageInfoSmallFont;
+			packageDependenciesLabel.Text = Catalog.GetString ("Dependencies");
+			packageDependenciesLabel.Font = packageInfoBoldFont;
 			packageDependenciesHBox.PackStart (packageDependenciesLabel);
 
 			packageDependenciesNoneLabel = new Label ();
@@ -316,6 +320,28 @@ namespace MonoDevelop.PackageManagement
 			packageDependenciesList.Font = packageInfoSmallFont;
 			packageDependenciesListHBox.PackStart (packageDependenciesList, true);
 
+			// Package versions.
+			packageVersionsHBox = new HBox ();
+			packageVersionsHBox.Visible = false;
+			packageVersionsHBox.BackgroundColor = Styles.PackageInfoBackgroundColor;
+			packageVersionsHBox.Margin = new WidgetSpacing (15, 0, 15, 12);
+			var packageVersionsLabel = new Label ();
+			packageVersionsLabel.Font = packageInfoBoldFont;
+			packageVersionsLabel.Text = Catalog.GetString ("Version");
+			packageVersionsHBox.PackStart (packageVersionsLabel);
+
+			packageVersionComboBox = new ComboBox ();
+			packageVersionComboBox.Name = "packageVersionComboBox";
+			packageVersionsHBox.Spacing = 15;
+			packageVersionsHBox.PackStart (packageVersionComboBox, true, true);
+
+			var packageInfoAndVersionsVBox = new VBox ();
+			packageInfoAndVersionsVBox.Margin = new WidgetSpacing ();
+			packageInfoAndVersionsVBox.BackgroundColor = Styles.PackageInfoBackgroundColor;
+			packageInfoAndVersionsVBox.PackStart (packageInfoScrollViewFrame, true, true);
+			packageInfoAndVersionsVBox.PackStart (packageVersionsHBox, false, false);
+			middleHBox.PackEnd (packageInfoAndVersionsVBox);
+
 			// Bottom part of dialog:
 			// Show pre-release packages and Close/Add to Project buttons.
 			var bottomHBox = new HBox ();
@@ -324,16 +350,19 @@ namespace MonoDevelop.PackageManagement
 			mainVBox.PackStart (bottomHBox);
 
 			showPrereleaseCheckBox = new CheckBox ();
+			showPrereleaseCheckBox.Name = "addPackagesDialogShowPreReleaseCheckBox";
 			showPrereleaseCheckBox.Label = Catalog.GetString ("Show pre-release packages");
 			bottomHBox.PackStart (showPrereleaseCheckBox);
 
 			addPackagesButton = new Button ();
+			addPackagesButton.Name = "addPackagesDialogAddPackageButton";
 			addPackagesButton.MinWidth = 120;
 			addPackagesButton.MinHeight = 25;
 			addPackagesButton.Label = Catalog.GetString ("Add Package");
 			bottomHBox.PackEnd (addPackagesButton);
 
 			var closeButton = new Button ();
+			closeButton.Name = "addPackagesDialogCloseButton";
 			closeButton.MinWidth = 120;
 			closeButton.MinHeight = 25;
 			closeButton.Label = Catalog.GetString ("Close");

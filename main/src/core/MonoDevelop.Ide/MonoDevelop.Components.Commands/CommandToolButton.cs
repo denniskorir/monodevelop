@@ -31,12 +31,13 @@ using MonoDevelop.Core;
 
 namespace MonoDevelop.Components.Commands
 {
-	public class CommandToolButton: Gtk.ToolButton, ICommandUserItem
+	class CommandToolButton: Gtk.ToolButton, ICommandUserItem
 	{
 		CommandManager commandManager;
 		object commandId;
 		string lastDesc;
 		object initialTarget;
+		CommandInfo lastCmdInfo;
 		
 		public CommandToolButton (object commandId, CommandManager commandManager): base ("")
 		{
@@ -69,13 +70,15 @@ namespace MonoDevelop.Components.Commands
 			if (commandManager == null)
 				throw new InvalidOperationException ();
 				
-			commandManager.DispatchCommand (commandId, null, initialTarget, CommandSource.MainToolbar);
+			commandManager.DispatchCommand (commandId, null, initialTarget, CommandSource.MainToolbar, lastCmdInfo);
 		}
 		
 		IconId stockId = null;
+		ImageView iconWidget;
 		
 		void Update (CommandInfo cmdInfo)
 		{
+			lastCmdInfo = cmdInfo;
 			if (lastDesc != cmdInfo.Description) {
 				string toolTip;
 				if (string.IsNullOrEmpty (cmdInfo.AccelKey)) {
@@ -91,8 +94,10 @@ namespace MonoDevelop.Components.Commands
 				Label = cmdInfo.Text;
 			if (cmdInfo.Icon != stockId) {
 				stockId = cmdInfo.Icon;
-				this.IconWidget = new Gtk.Image (cmdInfo.Icon, Gtk.IconSize.Menu);
+				this.IconWidget = iconWidget = new ImageView (cmdInfo.Icon, Gtk.IconSize.Menu);
 			}
+			if (IconWidget != null && cmdInfo.Enabled != Sensitive)
+				iconWidget.Image = iconWidget.Image.WithStyles (cmdInfo.Enabled ? "" : "disabled").WithAlpha (cmdInfo.Enabled ? 1.0 : 0.4);
 			if (cmdInfo.Enabled != Sensitive)
 				Sensitive = cmdInfo.Enabled;
 			if (cmdInfo.Visible != Visible)

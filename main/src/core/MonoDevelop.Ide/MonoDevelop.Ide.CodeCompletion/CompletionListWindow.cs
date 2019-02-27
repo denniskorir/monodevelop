@@ -1,4 +1,4 @@
-// CompletionListWindow.cs
+﻿// CompletionListWindow.cs
 //
 // Author:
 //   Lluis Sanchez Gual <lluis@novell.com>
@@ -32,716 +32,276 @@ using Gtk;
 using MonoDevelop.Core;
 using MonoDevelop.Components;
 using System.Linq;
-using ICSharpCode.NRefactory.Completion;
-using Mono.TextEditor.PopupWindow;
+using MonoDevelop.Ide.Editor.Extension;
+using System.ComponentModel;
+using System.Threading;
+using Xwt.Drawing;
+using Xwt;
 
 namespace MonoDevelop.Ide.CodeCompletion
 {
-	public class CompletionListWindow : ListWindow, IListDataProvider
+	public class CompletionListWindow
 	{
-		const int declarationWindowMargin = 3;
+		ICompletionView window;
+		CompletionController controller;
 
-		TooltipInformationWindow declarationviewwindow;
-		ICompletionData currentData;
-		Widget parsingMessage;
-		int initialWordLength;
-		int previousWidth = -1, previousHeight = -1;
-		
+		public CompletionData SelectedItem {
+			get {
+				return controller.SelectedItem;
+			}
+		}
+
+		public int SelectedItemIndex {
+			get { return controller.SelectedItemIndex; }
+		}
+
+		public event EventHandler SelectionChanged {
+			add { controller.SelectionChanged += value; }
+			remove { controller.SelectionChanged -= value; }
+		}
+
+		public CompletionListWindow ()
+		{
+			window = new CompletionListWindowGtk ();
+			controller = new CompletionController (this, window);
+		}
+
+		internal CompletionListWindow (ICompletionView w)
+		{
+			window = w;
+			controller = new CompletionController (this, w);
+		}
+
+		internal static CompletionListWindow CreateAsDialog ()
+		{
+			var gtkWindow = new CompletionListWindowGtk (Gtk.WindowType.Toplevel);
+			gtkWindow.TypeHint = Gdk.WindowTypeHint.Dialog;
+			gtkWindow.Decorated = false;
+			return new CompletionListWindow (gtkWindow);
+		}
+
+		public Xwt.Rectangle Allocation {
+			get {
+				return window.Allocation;
+			}
+		}
+
 		public CodeCompletionContext CodeCompletionContext {
-			get;
-			set;
+			get { return controller.CodeCompletionContext; }
+			set { controller.CodeCompletionContext = value; }
+		} 
+
+		internal int StartOffset {
+			get { return controller.StartOffset; }
+			set { controller.StartOffset = value; }
 		}
 
-		public int X { get; private set; }
-		public int Y { get; private set; }
-		
+		public int EndOffset {
+			get { return controller.EndOffset; }
+			set { controller.EndOffset = value; }
+		}
+
+		internal ICompletionWidget CompletionWidget {
+			get { return controller.CompletionWidget; }
+			set { controller.CompletionWidget = value; }
+		}
+
+		public bool Visible {
+			get { return controller.Visible; }
+		}
+
+		public int X {
+			get { return window.X; }
+		}
+
+		public int Y {
+			get { return window.Y; }
+		}
+
+		public bool AutoSelect {
+			get { return controller.AutoSelect; }
+			set { controller.AutoSelect = value; }
+		}
+
+		public bool SelectionEnabled {
+			get { return controller.SelectionEnabled; }
+		}
+
+		public bool InCategoryMode {
+			get { return controller.ShowCategories; }
+			set { controller.ShowCategories = value; }
+		}
+
+		public bool AutoCompleteEmptyMatch {
+			get { return controller.AutoCompleteEmptyMatch; }
+			set { controller.AutoCompleteEmptyMatch = value; }
+		}
+
+		public bool AutoCompleteEmptyMatchOnCurlyBrace {
+			get { return controller.AutoCompleteEmptyMatchOnCurlyBrace; }
+			set { controller.AutoCompleteEmptyMatchOnCurlyBrace = value; }
+		}
+
+		public string CompletionString {
+			get { return controller.CompletionString; }
+			set { controller.CompletionString = value; }
+		}
+
+		public string DefaultCompletionString {
+			get { return controller.DefaultCompletionString; }
+			set { controller.DefaultCompletionString = value; }
+		}
+
+		public bool CloseOnSquareBrackets {
+			get { return controller.CloseOnSquareBrackets; }
+			set { controller.CloseOnSquareBrackets = value; }
+		}
+
 		public int InitialWordLength {
-			get { return initialWordLength; }
-		}
-		
-		IMutableCompletionDataList mutableList;
-		ICompletionDataList completionDataList;
-		public ICompletionDataList CompletionDataList {
-			get { return completionDataList; }
-			set {
-				completionDataList = value;
-				defaultComparer = null;
-			}
+			get { return controller.InitialWordLength; }
 		}
 
-		bool previewCompletionString;
-		Entry previewEntry;
-		public override string PartialWord {
-			get {
-				if (previewEntry != null)
-					return previewEntry.Text;
-				return base.PartialWord;
-			}
+		public event EventHandler<CodeCompletionContextEventArgs> WordCompleted {
+			add { controller.WordCompleted += value; }
+			remove { controller.WordCompleted -= value; }
 		}
 
-		public bool PreviewCompletionString {
-			get {
-				return previewCompletionString;
-			}
-			set {
-				if (value) {
-					previewEntry = new Entry ();
-					previewEntry.Changed += delegate (object sender, EventArgs e) {
-						List.CompletionString = previewEntry.Text;
-
-						UpdateWordSelection ();
-						List.QueueDraw ();
-					};
-					previewEntry.KeyPressEvent += delegate(object o, KeyPressEventArgs args) {
-						var keyAction = PreProcessKey (args.Event.Key, (char)args.Event.KeyValue, args.Event.State);
-						if (keyAction.HasFlag (KeyActions.Complete))
-							CompleteWord ();
-
-						if (keyAction.HasFlag (KeyActions.CloseWindow)) {
-							Destroy ();
-						}
-
-						args.RetVal = !keyAction.HasFlag (KeyActions.Process);
-					};
-					WordCompleted += delegate (object sender, CodeCompletionContextEventArgs e) {
-						Destroy ();
-					};
-					vbox.PackStart (previewEntry, false, true, 0);
-
-					previewEntry.Activated += (sender, e) => CompleteWord ();
-					previewEntry.Show ();
-					FocusOutEvent += (o, args) => Destroy ();
-					GLib.Timeout.Add (10, delegate {
-						previewEntry.GrabFocus ();
-						return false;
-					});
-
-				}
-				previewCompletionString = value;
-			}
+		public event EventHandler VisibleChanged {
+			add { controller.VisibleChanged += value; }
+			remove { controller.VisibleChanged -= value; }
 		}
 
-		public CompletionListWindow (WindowType type = WindowType.Popup) : base(type) 
+		internal Gtk.Window TransientFor {
+			get { return window.TransientFor; }
+			set { window.TransientFor = value; }
+		}
+
+		public CompletionTextEditorExtension Extension {
+			get { return controller.Extension; }
+			set { controller.Extension = value; }
+		}
+
+		internal void InitializeListWindow (ICompletionWidget completionWidget, CodeCompletionContext completionContext)
 		{
-			if (IdeApp.Workbench != null)
-				this.TransientFor = IdeApp.Workbench.RootWindow;
-			TypeHint = Gdk.WindowTypeHint.Combo;
-			SizeAllocated += new SizeAllocatedHandler (ListSizeChanged);
-			Events = Gdk.EventMask.PropertyChangeMask;
-			WindowTransparencyDecorator.Attach (this);
-			DataProvider = this;
-			HideDeclarationView ();
-			List.ListScrolled += (object sender, EventArgs e) => {
-				HideDeclarationView ();
-				UpdateDeclarationView ();
-			};
-			List.WordsFiltered += delegate {
-				RepositionDeclarationViewWindow ();
-			};
+			controller.InitializeSession (completionWidget, completionContext);
 		}
-
-		bool completionListClosed;
-		void CloseCompletionList ()
-		{
-			if (!completionListClosed) {
-				completionDataList.OnCompletionListClosed (EventArgs.Empty);
-				completionListClosed = true;
-			}
-		}
-
-		void ReleaseObjects ()
-		{
-			CompletionWidget = null;
-			CompletionDataList = null;
-			CodeCompletionContext = null;
-			currentData = null;
-			Extension = null;
-		}
-
-		protected override void OnDestroyed ()
-		{
-			if (declarationviewwindow != null) {
-				declarationviewwindow.Destroy ();
-				declarationviewwindow = null;
-			}
-			
-			if (mutableList != null) {
-				mutableList.Changing -= OnCompletionDataChanging;
-				mutableList.Changed -= OnCompletionDataChanged;
-				mutableList = null;
-			}
-
-			if (completionDataList != null) {
-				if (completionDataList is IDisposable) 
-					((IDisposable)completionDataList).Dispose ();
-				CloseCompletionList ();
-				completionDataList = null;
-				defaultComparer = null;
-			}
-
-			HideDeclarationView ();
-			
-			if (declarationviewwindow != null) {
-				declarationviewwindow.Destroy ();
-				declarationviewwindow = null;
-			}
-			ReleaseObjects ();
-			base.OnDestroyed ();
-		}
-
-		public void PostProcessKeyEvent (Gdk.Key key, char keyChar, Gdk.ModifierType modifier)
-		{
-			KeyActions ka = KeyActions.None;
-			bool keyHandled = false;
-			foreach (var handler in CompletionDataList.KeyHandler) {
-				if (handler.PostProcessKey (this, key, keyChar, modifier, out ka)) {
-					keyHandled = true;
-					break;
-				}
-			}
-			
-			if (!keyHandled)
-				ka = PostProcessKey (key, keyChar, modifier);
-			if ((ka & KeyActions.Complete) != 0) 
-				CompleteWord (ref ka, key, keyChar, modifier);
-			if ((ka & KeyActions.CloseWindow) != 0)
-				CompletionWindowManager.HideWindow ();
-		}
-		
-		public void ToggleCategoryMode ()
-		{
-			List.InCategoryMode = !List.InCategoryMode;
-			ResetSizes ();
-			List.QueueDraw ();
-		}
-		
-		public bool PreProcessKeyEvent (Gdk.Key key, char keyChar, Gdk.ModifierType modifier)
-		{
-			if (key == Gdk.Key.Escape) {
-				CompletionWindowManager.HideWindow ();
-				return true;
-			}
-
-			KeyActions ka = KeyActions.None;
-			bool keyHandled = false;
-			foreach (ICompletionKeyHandler handler in CompletionDataList.KeyHandler) {
-				if (handler.PreProcessKey (this, key, keyChar, modifier, out ka)) {
-					keyHandled = true;
-					break;
-				}
-			}
-			
-			if (!keyHandled)
-				ka = PreProcessKey (key, keyChar, modifier);
-			if ((ka & KeyActions.Complete) != 0)
-				CompleteWord (ref ka, key, keyChar, modifier);
-
-			if ((ka & KeyActions.CloseWindow) != 0)
-				CompletionWindowManager.HideWindow ();
-
-			if ((ka & KeyActions.Ignore) != 0)
-				return true;
-			
-			if ((ka & KeyActions.Process) != 0) {
-				if (key == Gdk.Key.Left || key == Gdk.Key.Right) {
-					// Close if there's a modifier active EXCEPT lock keys and Modifiers
-					// Makes an exception for Mod1Mask (usually alt), shift, control, meta and super
-					// This prevents the window from closing if the num/scroll/caps lock are active
-					// FIXME: modifier mappings depend on X server settings
-					
-//					if ((modifier & ~(Gdk.ModifierType.LockMask | (Gdk.ModifierType.ModifierMask & ~(Gdk.ModifierType.ShiftMask | Gdk.ModifierType.Mod1Mask | Gdk.ModifierType.ControlMask | Gdk.ModifierType.MetaMask | Gdk.ModifierType.SuperMask)))) != 0) {
-					// this version doesn't work for my system - seems that I've a modifier active
-					// that gdk doesn't know about. How about the 2nd version - should close on left/rigt + shift/mod1/control/meta/super
-					if ((modifier & (Gdk.ModifierType.ShiftMask | Gdk.ModifierType.Mod1Mask | Gdk.ModifierType.ControlMask | Gdk.ModifierType.MetaMask | Gdk.ModifierType.SuperMask)) != 0) {
-						CompletionWindowManager.HideWindow ();
-						return false;
-					}
-					
-					if (declarationviewwindow != null && declarationviewwindow.Multiple) {
-						if (key == Gdk.Key.Left)
-							declarationviewwindow.OverloadLeft ();
-						else
-							declarationviewwindow.OverloadRight ();
-						UpdateDeclarationView ();
-					} else {
-						CompletionWindowManager.HideWindow ();
-						return false;
-					}
-					return true;
-				}
-				if (completionDataList != null && completionDataList.CompletionSelectionMode == CompletionSelectionMode.OwnTextField)
-					return true;
-			}
-			return false;
-		}
-		
-		public override void SelectEntry (string s)
-		{
-			base.SelectEntry (s);
-			UpdateDeclarationView ();
-		}
-
 
 		internal bool ShowListWindow (char firstChar, ICompletionDataList list, ICompletionWidget completionWidget, CodeCompletionContext completionContext)
 		{
-			if (list == null)
-				throw new ArgumentNullException ("list");
-			if (completionContext == null)
-				throw new ArgumentNullException ("completionContext");
-			if (completionContext == null)
-				throw new ArgumentNullException ("completionContext");
-			if (mutableList != null) {
-				mutableList.Changing -= OnCompletionDataChanging;
-				mutableList.Changed -= OnCompletionDataChanged;
-				HideFooter ();
-			}
-			ResetState ();
-			CompletionWidget = completionWidget;
-			CompletionDataList = list;
-
-			CodeCompletionContext = completionContext;
-			mutableList = completionDataList as IMutableCompletionDataList;
-			PreviewCompletionString = completionDataList.CompletionSelectionMode == CompletionSelectionMode.OwnTextField;
-
-			if (mutableList != null) {
-				mutableList.Changing += OnCompletionDataChanging;
-				mutableList.Changed += OnCompletionDataChanged;
-
-				if (mutableList.IsChanging)
-					OnCompletionDataChanging (null, null);
-			}
-			if (FillList ()) {
-				AutoSelect = list.AutoSelect;
-				AutoCompleteEmptyMatch = list.AutoCompleteEmptyMatch;
-				AutoCompleteEmptyMatchOnCurlyBrace = list.AutoCompleteEmptyMatchOnCurlyBrace;
-				CloseOnSquareBrackets = list.CloseOnSquareBrackets;
-				// makes control-space in midle of words to work
-				string text = completionWidget.GetCompletionText (completionContext);
-				DefaultCompletionString = completionDataList.DefaultCompletionString ?? "";
-				if (text.Length == 0) {
-					UpdateWordSelection ();
-					initialWordLength = 0;
-					//completionWidget.SelectedLength;
-					StartOffset = completionWidget.CaretOffset;
-					ResetSizes ();
-					ShowAll ();
-					UpdateWordSelection ();
-					UpdateDeclarationView ();
-					//if there is only one matching result we take it by default
-					if (completionDataList.AutoCompleteUniqueMatch && IsUniqueMatch && !IsChanging) {
-						CompleteWord ();
-						CompletionWindowManager.HideWindow ();
-						return false;
-					}
-					return true;
-				}
-
-				initialWordLength = completionWidget.SelectedLength > 0 ? 0 : text.Length;
-				StartOffset = completionWidget.CaretOffset - initialWordLength;
-				HideWhenWordDeleted = initialWordLength != 0;
-				ResetSizes ();
-				UpdateWordSelection ();
-				//if there is only one matching result we take it by default
-				if (completionDataList.AutoCompleteUniqueMatch && IsUniqueMatch && !IsChanging) {
-					CompleteWord ();
-					CompletionWindowManager.HideWindow ();
-					return false;
-				}
-				ShowAll ();
-				UpdateDeclarationView ();
-				return true;
-			}
-			CompletionWindowManager.HideWindow ();
-			return false;
+			controller.InitializeSession (completionWidget, completionContext);
+			return ShowListWindow (list, completionContext);
 		}
-		
-		class DataItemComparer : IComparer<ICompletionData>
+
+		internal bool ShowListWindow (ICompletionDataList list, CodeCompletionContext completionContext)
 		{
-			public int Compare (ICompletionData a, ICompletionData b)
-			{
-				if (a is IComparable && b is IComparable)
-					return ((IComparable)a).CompareTo (b);
-				return CompletionData.Compare (a, b);
+			Counters.ProcessCodeCompletion.Trace ("Begin show completion window");
+
+			var r = controller.ShowListWindow (list, completionContext);
+
+			Counters.ProcessCodeCompletion.Trace ("End show completion window");
+
+			return r;
+		}
+
+		public void Show ()
+		{
+			controller.ShowWindow ();
+		}
+
+		public void Destroy ()
+		{
+			controller.Dispose ();
+		}
+
+		public string PartialWord {
+			get {
+				return controller.PartialWord;
 			}
 		}
 
-		IComparer<ICompletionData> GetComparerForCompletionList (ICompletionDataList dataList)
-		{
-			var concrete = dataList as CompletionDataList;
-			return concrete != null && concrete.Comparer != null ? concrete.Comparer : new DataItemComparer ();
-		}
-		
-		bool FillList ()
-		{
-			if ((completionDataList.Count == 0) && !IsChanging)
-				return false;
-			
-			Style = CompletionWidget.GtkStyle;
-			
-			//sort, sinking obsolete items to the bottoms
-			//the string comparison is ordinal as that makes it an order of magnitude faster, which 
-			//which makes completion triggering noticeably more responsive
-			var list = completionDataList as CompletionDataList;
-			if (!completionDataList.IsSorted)
-				completionDataList.Sort (GetComparerForCompletionList (completionDataList));
-
-			Reposition (true);
-			return true;
-		}
-		
-		enum WindowPositonY {
-			None,
-			Top,
-			Bottom
-		}
-		WindowPositonY yPosition;
-		
-		void Reposition (bool force)
-		{
-			X = CodeCompletionContext.TriggerXCoord - TextOffset;
-			Y = CodeCompletionContext.TriggerYCoord;
-
-			int w, h;
-			GetSize (out w, out h);
-
-			if (!force && previousHeight != h && previousWidth != w)
-				return;
-			
-			// Note: we add back the TextOffset here in case X and X+TextOffset are on different monitors.
-			Gdk.Rectangle geometry = DesktopService.GetUsableMonitorGeometry (Screen, Screen.GetMonitorAtPoint (X + TextOffset, Y));
-			
-			previousHeight = h;
-			previousWidth = w;
-			
-			if (X + w > geometry.Right)
-				X = geometry.Right - w;
-			else if (X < geometry.Left)
-				X = geometry.Left;
-			
-			if (Y + h > geometry.Bottom || yPosition == WindowPositonY.Top) {
-				// Put the completion-list window *above* the cursor
-				Y = Y - CodeCompletionContext.TriggerTextHeight - h;
-				yPosition = WindowPositonY.Top;
-			} else {
-				yPosition = WindowPositonY.Bottom;
+		public string CurrentPartialWord {
+			get {
+				return controller.CurrentPartialWord;
 			}
-			
-			curXPos = X;
-			curYPos = Y;
-			Move (X, Y);
-			UpdateDeclarationView ();
-		}
-		
-		//smaller lists get size reallocated after FillList, so we have to reposition them
-		//if the window size has changed since we last positioned it
-		protected override void OnSizeAllocated (Gdk.Rectangle allocation)
-		{
-			base.OnSizeAllocated (allocation);
-			Reposition (true);
-		}
-		
-		public bool CompleteWord ()
-		{
-			KeyActions ka = KeyActions.None;
-			return CompleteWord (ref ka, (Gdk.Key)0, '\0', Gdk.ModifierType.None);
-		}
-		
-		public bool CompleteWord (ref KeyActions ka, Gdk.Key closeChar, char keyChar, Gdk.ModifierType modifier)
-		{
-			if (SelectedItem == -1 || completionDataList == null)
-				return false;
-			var item = completionDataList [SelectedItem];
-			if (item == null)
-				return false;
-			// first close the completion list, then insert the text.
-			// this is required because that's the logical event chain, otherwise things could be messed up
-			CloseCompletionList ();
-			((CompletionData)item).InsertCompletionText (this, ref ka, closeChar, keyChar, modifier);
-			AddWordToHistory (PartialWord, item.CompletionText);
-			OnWordCompleted (new CodeCompletionContextEventArgs (CompletionWidget, CodeCompletionContext, item.CompletionText));
-			return true;
-		}
-		
-		protected virtual void OnWordCompleted (CodeCompletionContextEventArgs e)
-		{
-			var handler = WordCompleted;
-			if (handler != null)
-				handler (this, e);
-		}
-		
-		public event EventHandler<CodeCompletionContextEventArgs> WordCompleted;
-		
-		void ListSizeChanged (object obj, SizeAllocatedArgs args)
-		{
-			UpdateDeclarationView ();
 		}
 
-		protected override void OnHidden ()
+		public bool IsUniqueMatch {
+			get {
+				return controller.IsUniqueMatch;
+			}
+		}
+
+		public bool PreProcessKeyEvent (KeyDescriptor descriptor)
 		{
-			HideDeclarationView ();
-			base.OnHidden ();
+			return controller.PreProcessKeyEvent (descriptor);
+		}
+
+		public void PostProcessKeyEvent (KeyDescriptor descriptor)
+		{
+			controller.PostProcessKeyEvent (descriptor);
+		}
+
+		internal bool IsInCompletion {
+			get {
+				return controller.IsInCompletion;
+			}
+		}
+
+		public void UpdateWordSelection ()
+		{
+			controller.UpdateWordSelection ();
+		}
+
+		public void RepositionWindow (Xwt.Rectangle? newCaret = null)
+		{
+			var r = newCaret != null ? new Xwt.Rectangle ((int)newCaret.Value.X, (int)newCaret.Value.Y, (int)newCaret.Value.Width, (int)newCaret.Value.Height) : (Xwt.Rectangle?)null;
+			window.RepositionWindow (r);
 		}
 
 		public void HideWindow ()
 		{
-			Hide ();
-			HideDeclarationView ();
-			ReleaseObjects ();
+			controller.HideWindow ();
 		}
 
-		protected override void DoubleClick ()
-		{
-			CompleteWord ();
-			CompletionWindowManager.HideWindow ();
+		/// <summary>
+		/// Gets or sets a value indicating that shift was pressed during enter.
+		/// </summary>
+		/// <value>
+		/// <c>true</c> if was shift pressed; otherwise, <c>false</c>.
+		/// </value>
+		public bool WasShiftPressed {
+			get { return controller.WasShiftPressed; }
 		}
-		
-		protected override void OnSelectionChanged ()
-		{
-			base.OnSelectionChanged ();
-			UpdateDeclarationView ();
-		}
-		
-		bool declarationViewHidden = true;
-		uint declarationViewTimer;
 
-		void UpdateDeclarationView ()
+		public void ResetSizes ()
 		{
-			if (completionDataList == null || List.SelectionFilterIndex >= completionDataList.Count || List.SelectionFilterIndex == -1) {
-				HideDeclarationView ();
-				return;
-			}
-			if (List.GdkWindow == null)
-				return;
-			RemoveDeclarationViewTimer ();
-			// no selection, try to find a selection
-			if (List.SelectedItem < 0 || List.SelectedItem >= completionDataList.Count) {
-				List.CompletionString = PartialWord;
-				bool hasMismatches;
-				List.SelectionFilterIndex = FindMatchedEntry (List.CompletionString, out hasMismatches);
-			}
-			// no success, hide declaration view
-			if (List.SelectedItem < 0 || List.SelectedItem >= completionDataList.Count) {
-				HideDeclarationView ();
-				return;
-			}
-
-			var data = completionDataList [List.SelectedItem];
-			if (data != currentData)
-				HideDeclarationView ();
-
-			declarationViewTimer = GLib.Timeout.Add (150, DelayedTooltipShow);
+			controller.ResetSizes ();
 		}
-		
-		void HideDeclarationView ()
-		{
-			RemoveDeclarationViewTimer ();
-			if (declarationviewwindow != null) {
-				declarationviewwindow.Hide ();
-			}
-			declarationViewHidden = true;
-		}
-		
-		void RemoveDeclarationViewTimer ()
-		{
-			if (declarationViewTimer != 0) {
-				GLib.Source.Remove (declarationViewTimer);
-				declarationViewTimer = 0;
+
+		public List<int> FilteredItems {
+			get {
+				return controller.FilteredItems;
 			}
 		}
 
-		void EnsureDeclarationViewWindow ()
+		internal ICompletionDataList CompletionDataList => controller.CompletionDataList;
+
+		internal void ClearMruCache ()
 		{
-			if (declarationviewwindow == null) {
-				declarationviewwindow = new TooltipInformationWindow ();
-			} else {
-				declarationviewwindow.SetDefaultScheme ();
-			}
+			controller.ClearMruCache ();
 		}
 
-		void RepositionDeclarationViewWindow ()
+		public bool CompleteWord ()
 		{
-			if (base.GdkWindow == null)
-				return;
-			EnsureDeclarationViewWindow ();
-			if (declarationviewwindow.Overloads == 0)
-				return;
-			var selectedItem = List.SelectedItem;
-			Gdk.Rectangle rect = List.GetRowArea (selectedItem);
-			if (rect.IsEmpty || rect.Bottom < (int)List.vadj.Value || rect.Y > List.Allocation.Height + (int)List.vadj.Value)
-				return;
-
-			declarationviewwindow.ShowArrow = true;
-			int ox;
-			int oy;
-			base.GdkWindow.GetOrigin (out ox, out oy);
-			declarationviewwindow.MaximumYTopBound = oy;
-			int y = rect.Y + Theme.Padding - (int)List.vadj.Value;
-			declarationviewwindow.ShowPopup (this, new Gdk.Rectangle (Gui.Styles.TooltipInfoSpacing, Math.Min (Allocation.Height, Math.Max (0, y)), Allocation.Width, rect.Height), PopupPosition.Left);
-			declarationViewHidden = false;
-		}
-		
-		bool DelayedTooltipShow ()
-		{
-			var selectedItem = List.SelectedItem;
-			if (selectedItem < 0 || selectedItem >= completionDataList.Count)
-				return false;
-			var data = completionDataList [selectedItem];
-
-			IEnumerable<ICompletionData> filteredOverloads;
-			if (data.HasOverloads) {
-				filteredOverloads = data.OverloadedData;
-			} else {
-				filteredOverloads = new ICompletionData[] { data };
-			}
-
-			EnsureDeclarationViewWindow ();
-			if (data != currentData) {
-				declarationviewwindow.Clear ();
-				var overloads = new List<ICompletionData> (filteredOverloads);
-				foreach (var overload in overloads) {
-					declarationviewwindow.AddOverload ((CompletionData)overload);
-				}
-				
-				currentData = data;
-				if (data.HasOverloads) {
-					for (int i = 0; i < overloads.Count; i++) {
-						if (!overloads[i].DisplayFlags.HasFlag (DisplayFlags.Obsolete)) {
-							declarationviewwindow.CurrentOverload = i;
-							break;
-						}
-					}
-				}
-			}
-
-			if (declarationviewwindow.Overloads == 0) {
-				HideDeclarationView ();
-				return false;
-			}
-
-			if (declarationViewHidden && Visible) {
-				RepositionDeclarationViewWindow ();
-			}
-			
-			declarationViewTimer = 0;
-			return false;
-		}
-		
-		protected override void ResetState ()
-		{
-			StartOffset = 0;
-			previousWidth = previousHeight = -1;
-			yPosition = WindowPositonY.None;
-			base.ResetState ();
-		}
-		
-		#region IListDataProvider
-		
-		int IListDataProvider.ItemCount 
-		{ 
-			get { return completionDataList.Count; } 
-		}
-		
-		CompletionCategory IListDataProvider.GetCompletionCategory (int n)
-		{
-			return completionDataList[n].CompletionCategory;
-		}
-		
-		string IListDataProvider.GetText (int n)
-		{
-			return completionDataList[n].DisplayText;
-		}
-		
-		string IListDataProvider.GetDescription (int n, bool isSelected)
-		{
-			return ((CompletionData)completionDataList[n]).GetDisplayDescription (isSelected);
+			return controller.CompleteWord ();
 		}
 
-		string IListDataProvider.GetRightSideDescription (int n, bool isSelected)
+		internal List<CompletionData> GetFilteredItems ()
 		{
-			return ((CompletionData)completionDataList[n]).GetRightSideDescription (isSelected);
-		}
-
-		bool IListDataProvider.HasMarkup (int n)
-		{
-			return (completionDataList [n].DisplayFlags & (DisplayFlags.Obsolete | DisplayFlags.MarkedBold)) != 0;
-		}
-		
-		//NOTE: we only ever return markup for items marked as obsolete
-		string IListDataProvider.GetMarkup (int n)
-		{
-			var completionData = completionDataList[n];
-			if (!completionData.HasOverloads && (completionData.DisplayFlags & DisplayFlags.Obsolete) != 0 || 
-				completionData.HasOverloads && completionData.OverloadedData.All (data => (data.DisplayFlags & DisplayFlags.Obsolete) != 0))
-				return "<s>" + GLib.Markup.EscapeText (completionDataList[n].DisplayText) + "</s>";
-			
-			if ((completionData.DisplayFlags & DisplayFlags.MarkedBold) != 0)
-				return "<b>" + GLib.Markup.EscapeText (completionDataList[n].DisplayText) + "</b>";
-			return GLib.Markup.EscapeText (completionDataList[n].DisplayText);
-		}
-		
-		string IListDataProvider.GetCompletionText (int n)
-		{
-			return completionDataList[n].CompletionText;
-		}
-
-		IComparer<ICompletionData> defaultComparer;
-
-		int IListDataProvider.CompareTo (int n, int m)
-		{
-			var item1 = completionDataList [n];
-			var item2 = completionDataList [m];
-			return (defaultComparer ?? (defaultComparer = GetComparerForCompletionList (completionDataList))).Compare (item1, item2);
-		}
-		
-		Xwt.Drawing.Image IListDataProvider.GetIcon (int n)
-		{
-			string iconName = ((CompletionData)completionDataList[n]).Icon;
-			if (string.IsNullOrEmpty (iconName))
-				return null;
-			return ImageService.GetIcon (iconName, IconSize.Menu);
-		}
-		
-		#endregion
-		
-		internal bool IsChanging {
-			get { return mutableList != null && mutableList.IsChanging; }
-		}
-		
-		void OnCompletionDataChanging (object s, EventArgs args)
-		{
-			if (parsingMessage == null) {
-				var box = new VBox ();
-				box.PackStart (new HSeparator (), false, false, 0);
-				var hbox = new HBox ();
-				hbox.BorderWidth = 3;
-				hbox.PackStart (new Image ("md-parser", IconSize.Menu), false, false, 0);
-				var lab = new Label (GettextCatalog.GetString ("Gathering class information..."));
-				lab.Xalign = 0;
-				hbox.PackStart (lab, true, true, 3);
-				hbox.ShowAll ();
-				parsingMessage = hbox;
-			}
-			ShowFooter (parsingMessage);
-		}
-		
-		void OnCompletionDataChanged (object s, EventArgs args)
-		{
-			ResetSizes ();
-			HideFooter ();
-			
-			//try to capture full selection state so as not to interrupt user
-
-			if (Visible) {
-				string last = List.AutoSelect ? CurrentCompletionText : PartialWord;
-				//don't reset the user-entered word when refilling the list
-				var tmp = List.AutoSelect;
-				// Fill the list before resetting so that we get the correct size
-				FillList ();
-				ResetSizes ();
-				List.AutoSelect = tmp;
-				if (last != null)
-					SelectEntry (last);
-			}
+			var result = new List<CompletionData> ();
+			foreach (var i in controller.FilteredItems)
+				result.Add (controller.CompletionDataList [i]);
+			return result;
 		}
 	}
 }

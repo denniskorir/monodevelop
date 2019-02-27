@@ -40,8 +40,12 @@ using MonoDevelop.Ide.StandardHeader;
 using System.Text;
 using MonoDevelop.Ide.Gui.Content;
 using MonoDevelop.Ide.CodeFormatting;
+using MonoDevelop.Ide.Editor;
 using MonoDevelop.Projects.SharedAssetsProjects;
 using MonoDevelop.Core.StringParsing;
+using System.Threading.Tasks;
+using MonoDevelop.Core.Text;
+using Gtk;
 
 namespace MonoDevelop.Ide.Templates
 {
@@ -57,6 +61,8 @@ namespace MonoDevelop.Ide.Templates
 		string dependsOn;
 		string buildAction;
 		string customTool;
+		string customToolNamespace;
+		string subType;
 		List<string> references = new List<string> ();
 		
 		public override void Load (XmlElement filenode, FilePath baseDirectory)
@@ -67,6 +73,8 @@ namespace MonoDevelop.Ide.Templates
 			defaultExtensionDefined = filenode.Attributes ["DefaultExtension"] != null;
 			dependsOn = filenode.GetAttribute ("DependsOn");
 			customTool = filenode.GetAttribute ("CustomTool");
+			customToolNamespace = filenode.GetAttribute ("CustomToolNamespace");
+			subType = filenode.GetAttribute ("SubType");
 			
 			buildAction = BuildAction.Compile;
 			buildAction = filenode.GetAttribute ("BuildAction");
@@ -107,20 +115,20 @@ namespace MonoDevelop.Ide.Templates
 			set { addStandardHeader = value; }
 		}
 		
-		public sealed override bool AddToProject (SolutionItem policyParent, Project project, string language, string directory, string name)
+		public sealed override async Task<bool> AddToProjectAsync (SolutionFolderItem policyParent, Project project, string language, string directory, string name)
 		{
-			return AddFileToProject (policyParent, project, language, directory, name) != null;
+			return await AddFileToProjectAsync (policyParent, project, language, directory, name) != null;
 		}
 		
-		public ProjectFile AddFileToProject (SolutionItem policyParent, Project project, string language, string directory, string name)
+		public async Task<ProjectFile> AddFileToProjectAsync (SolutionFolderItem policyParent, Project project, string language, string directory, string name)
 		{
-			generatedFile = SaveFile (policyParent, project, language, directory, name);
+			generatedFile = await SaveFileAsync (policyParent, project, language, directory, name);
 			if (generatedFile != null) {		
 				string buildAction = this.buildAction ?? project.GetDefaultBuildAction (generatedFile);
 				ProjectFile projectFile = project.AddFile (generatedFile, buildAction);
 				
 				if (!string.IsNullOrEmpty (dependsOn)) {
-					var model = GetTagModel (policyParent, project, language, name, generatedFile);
+					var model = CombinedTagModel.GetTagModel (ProjectTagModel, policyParent, project, language, name, generatedFile);
 					string parsedDepName = StringParserService.Parse (dependsOn, model);
 					if (projectFile.DependsOn != parsedDepName)
 						projectFile.DependsOn = parsedDepName;
@@ -128,7 +136,15 @@ namespace MonoDevelop.Ide.Templates
 				
 				if (!string.IsNullOrEmpty (customTool))
 					projectFile.Generator = customTool;
-				
+
+				if (!string.IsNullOrEmpty (customToolNamespace)) {
+					var model = CombinedTagModel.GetTagModel (ProjectTagModel, policyParent, project, language, name, generatedFile);
+					projectFile.CustomToolNamespace = StringParserService.Parse (customToolNamespace, model);
+				}
+
+				if (!string.IsNullOrEmpty (subType))
+					projectFile.ContentType = subType;
+
 				DotNetProject netProject = project as DotNetProject;
 				if (netProject != null) {
 					// Add required references
@@ -136,10 +152,58 @@ namespace MonoDevelop.Ide.Templates
 						string res = netProject.AssemblyContext.GetAssemblyFullName (aref, netProject.TargetFramework);
 						res = netProject.AssemblyContext.GetAssemblyNameForVersion (res, netProject.TargetFramework);
 						if (!ContainsReference (netProject, res))
-							netProject.References.Add (new ProjectReference (ReferenceType.Package, aref));
+							netProject.References.Add (ProjectReference.CreateAssemblyReference (aref));
 					}
 				}
 				
+				return projectFile;
+			} else
+				return null;
+		}
+
+		[Obsolete ("Use public sealed Task<bool> AddToProjectAsync (SolutionFolderItem policyParent, Project project, string language, string directory, string name).")]
+		public sealed override bool AddToProject (SolutionFolderItem policyParent, Project project, string language, string directory, string name)
+		{
+			return AddFileToProject (policyParent, project, language, directory, name) != null;
+		}
+
+		[Obsolete ("Use public Task<ProjectFile> AddFileToProjectAsync (SolutionFolderItem policyParent, Project project, string language, string directory, string name).")]
+		public ProjectFile AddFileToProject (SolutionFolderItem policyParent, Project project, string language, string directory, string name)
+		{
+			generatedFile = SaveFile (policyParent, project, language, directory, name);
+			if (generatedFile != null) {
+				string buildAction = this.buildAction ?? project.GetDefaultBuildAction (generatedFile);
+				ProjectFile projectFile = project.AddFile (generatedFile, buildAction);
+
+				if (!string.IsNullOrEmpty (dependsOn)) {
+					var model = CombinedTagModel.GetTagModel (ProjectTagModel, policyParent, project, language, name, generatedFile);
+					string parsedDepName = StringParserService.Parse (dependsOn, model);
+					if (projectFile.DependsOn != parsedDepName)
+						projectFile.DependsOn = parsedDepName;
+				}
+
+				if (!string.IsNullOrEmpty (customTool))
+					projectFile.Generator = customTool;
+
+				if (!string.IsNullOrEmpty (customToolNamespace)) {
+					var model = CombinedTagModel.GetTagModel (ProjectTagModel, policyParent, project, language, name, generatedFile);
+					projectFile.CustomToolNamespace = StringParserService.Parse (customToolNamespace, model);
+				}
+
+				if (!string.IsNullOrEmpty (subType))
+					projectFile.ContentType = subType;
+
+				DotNetProject netProject = project as DotNetProject;
+				if (netProject != null) {
+					// Add required references
+					foreach (string aref in references) {
+						string res = netProject.AssemblyContext.GetAssemblyFullName (aref, netProject.TargetFramework);
+						res = netProject.AssemblyContext.GetAssemblyNameForVersion (res, netProject.TargetFramework);
+						if (!ContainsReference (netProject, res))
+							netProject.References.Add (ProjectReference.CreateAssemblyReference (aref));
+					}
+				}
+
 				return projectFile;
 			} else
 				return null;
@@ -184,69 +248,112 @@ namespace MonoDevelop.Ide.Templates
 		public override void Show ()
 		{
 			if (!suppressAutoOpen)
-				IdeApp.Workbench.OpenDocument (generatedFile);
+				IdeApp.Workbench.OpenDocument (generatedFile, project: null);
 		}
-		
-		// Creates a file and saves it to disk. Returns the path to the new file
-		// All parameters are optional (can be null)
-		public string SaveFile (SolutionItem policyParent, Project project, string language, string baseDirectory, string entryName)
+
+		/// <summary>
+		/// Creates a file and saves it to disk. All parameters are optional (can be null)
+		/// </summary>
+		/// <returns>The path to the new file.</returns>
+		public async Task<string> SaveFileAsync (SolutionFolderItem policyParent, Project project, string language, string baseDirectory, string entryName)
 		{
 			string file = GetFileName (policyParent, project, language, baseDirectory, entryName);
+			AlertButton questionResult = null;
 			
 			if (File.Exists (file)) {
-				if (!MessageService.Confirm (GettextCatalog.GetString ("File already exists"),
-				                                GettextCatalog.GetString ("File {0} already exists. Do you want to overwrite\nthe existing file?", file),
-				                                AlertButton.OverwriteFile)) {
+				questionResult = MessageService.AskQuestion (GettextCatalog.GetString ("File already exists"),
+				                                             GettextCatalog.GetString ("File {0} already exists.\nDo you want to overwrite the existing file or add it to the project?", file),
+				                                             AlertButton.Cancel,
+				                                             AlertButton.AddExistingFile,
+				                                             AlertButton.OverwriteFile);
+				if (questionResult == AlertButton.Cancel)
 					return null;
-				}
 			}
-			
+
 			if (!Directory.Exists (Path.GetDirectoryName (file)))
 				Directory.CreateDirectory (Path.GetDirectoryName (file));
-					
-			Stream stream = CreateFileContent (policyParent, project, language, file, entryName);
-			
-			byte[] buffer = new byte [2048];
-			int nr;
-			FileStream fs = null;
-			try {
-				fs = File.Create (file);
-				while ((nr = stream.Read (buffer, 0, 2048)) > 0)
-					fs.Write (buffer, 0, nr);
-			} finally {
-				stream.Close ();
-				if (fs != null)
-					fs.Close ();
+
+			if (questionResult == null || questionResult == AlertButton.OverwriteFile) {
+				Stream stream = CreateFileContentFromDerivedClass (policyParent, project, language, file, entryName) ?? await CreateFileContentAsync (policyParent, project, language, file, entryName);
+
+				byte [] buffer = new byte [2048];
+				int nr;
+				FileStream fs = null;
+				try {
+					fs = File.Create (file);
+					while ((nr = stream.Read (buffer, 0, 2048)) > 0)
+						fs.Write (buffer, 0, nr);
+				} finally {
+					stream.Close ();
+					if (fs != null)
+						fs.Close ();
+				}
 			}
 			return file;
 		}
 
-		class CombinedTagModel : IStringTagModel
-		{
-			public IStringTagModel BaseModel;
-			public Dictionary<string, string> OverrideTags = new Dictionary<string, string> (StringComparer.OrdinalIgnoreCase);
+		bool createFileContentFromDerivedClass;
 
-			public object GetValue (string name)
-			{
-				string val;
-				if (OverrideTags.TryGetValue (name, out val))
-					return val;
-				if (BaseModel != null)
-					return BaseModel.GetValue (name);
-				return null;
+		/// <summary>
+		/// Allows a derived class's CreateFileContent to be called. Need to ensure that if the derived
+		/// class does not implement CreateFileContent then the SingleFileDescriptionTemplate's
+		/// CreateFileContentAsync is used instead of CreateFileContent.
+		/// </summary>
+		Stream CreateFileContentFromDerivedClass (SolutionFolderItem policyParent, Project project, string language, string fileName, string identifier)
+		{
+			createFileContentFromDerivedClass = true;
+			try {
+				#pragma warning disable 618 // back-compat for obsolete API
+				return CreateFileContent (policyParent, project, language, fileName, identifier);
+				#pragma warning restore 618
+			} finally {
+				createFileContentFromDerivedClass = false;
 			}
 		}
 
-		CombinedTagModel GetTagModel (SolutionItem policyParent, Project project, string language, string identifier, string fileName)
+		// Creates a file and saves it to disk. Returns the path to the new file
+		// All parameters are optional (can be null)
+		[Obsolete ("Use public Task<string> SaveFileAsync (SolutionFolderItem policyParent, Project project, string language, string baseDirectory, string entryName).")]
+		public string SaveFile (SolutionFolderItem policyParent, Project project, string language, string baseDirectory, string entryName)
 		{
-			var model = new CombinedTagModel { BaseModel = ProjectTagModel };
-			ModifyTags (policyParent, project, language, identifier, fileName, ref model.OverrideTags);
-			return model;
+			string file = GetFileName (policyParent, project, language, baseDirectory, entryName);
+			AlertButton questionResult = null;
+
+			if (File.Exists (file)) {
+				questionResult = MessageService.AskQuestion (GettextCatalog.GetString ("File already exists"),
+				                                             GettextCatalog.GetString ("File {0} already exists.\nDo you want to overwrite the existing file or add it to the project?", file),
+				                                             AlertButton.Cancel,
+				                                             AlertButton.AddExistingFile,
+				                                             AlertButton.OverwriteFile);
+				if (questionResult == AlertButton.Cancel)
+					return null;
+			}
+
+			if (!Directory.Exists (Path.GetDirectoryName (file)))
+				Directory.CreateDirectory (Path.GetDirectoryName (file));
+
+			if (questionResult == null || questionResult == AlertButton.OverwriteFile) {
+				Stream stream = CreateFileContent (policyParent, project, language, file, entryName);
+
+				byte [] buffer = new byte [2048];
+				int nr;
+				FileStream fs = null;
+				try {
+					fs = File.Create (file);
+					while ((nr = stream.Read (buffer, 0, 2048)) > 0)
+						fs.Write (buffer, 0, nr);
+				} finally {
+					stream.Close ();
+					if (fs != null)
+						fs.Close ();
+				}
+			}
+			return file;
 		}
 		
 		// Returns the name of the file that this template generates.
 		// All parameters are optional (can be null)
-		public virtual string GetFileName (SolutionItem policyParent, Project project, string language, string baseDirectory, string entryName)
+		public virtual string GetFileName (SolutionFolderItem policyParent, Project project, string language, string baseDirectory, string entryName)
 		{
 			if (string.IsNullOrEmpty (entryName) && !string.IsNullOrEmpty (defaultName))
 				entryName = defaultName;
@@ -255,12 +362,12 @@ namespace MonoDevelop.Ide.Templates
 			
 			//substitute tags
 			if ((name != null) && (name.Length > 0)) {
-				var model = GetTagModel (policyParent, project, language, entryName ?? name, null);
+				var model = CombinedTagModel.GetTagModel (ProjectTagModel, policyParent, project, language, entryName ?? name, null);
 				fileName = StringParserService.Parse (name, model);
 			}
 			
 			if (fileName == null)
-				throw new InvalidOperationException ("File name not provided in template");
+				throw new InvalidOperationException (GettextCatalog.GetString ("File name not provided in template"));
 			
 			//give it an extension if it didn't get one (compatibility with pre-substition behaviour)
 			if (Path.GetExtension (fileName).Length == 0) {
@@ -286,9 +393,13 @@ namespace MonoDevelop.Ide.Templates
 
 		// Returns a stream with the content of the file.
 		// project and language parameters are optional
-		public virtual Stream CreateFileContent (SolutionItem policyParent, Project project, string language, string fileName, string identifier)
+		[Obsolete ("Use public virtual async Task<Stream> CreateFileContentAsync (SolutionFolderItem policyParent, Project project, string language, string fileName, string identifier).")]
+		public virtual Stream CreateFileContent (SolutionFolderItem policyParent, Project project, string language, string fileName, string identifier)
 		{
-			var model = GetTagModel (policyParent, project, language, identifier, fileName);
+			if (createFileContentFromDerivedClass)
+				return null;
+
+			var model = CombinedTagModel.GetTagModel (ProjectTagModel, policyParent, project, language, identifier, fileName);
 
 			//HACK: for API compat, CreateContent just gets the override, not the base model
 			// but ProcessContent gets the entire model
@@ -297,14 +408,14 @@ namespace MonoDevelop.Ide.Templates
 			content = ProcessContent (content, model);
 
 			string mime = DesktopService.GetMimeTypeForUri (fileName);
-			CodeFormatter formatter = !string.IsNullOrEmpty (mime) ? CodeFormatterService.GetFormatter (mime) : null;
-			
+			var formatter = !string.IsNullOrEmpty (mime) ? CodeFormatterService.GetFormatter (mime) : null;
+
 			if (formatter != null) {
 				var formatted = formatter.FormatText (policyParent != null ? policyParent.Policies : null, content);
 				if (formatted != null)
 					content = formatted;
 			}
-			
+
 			var ms = new MemoryStream ();
 
 			var bom = Encoding.UTF8.GetPreamble ();
@@ -316,26 +427,115 @@ namespace MonoDevelop.Ide.Templates
 				data = System.Text.Encoding.UTF8.GetBytes (header);
 				ms.Write (data, 0, data.Length);
 			}
-			
-			Mono.TextEditor.TextDocument doc = new Mono.TextEditor.TextDocument ();
+
+			var doc = TextEditorFactory.CreateNewDocument ();
 			doc.Text = content;
-			
-			TextStylePolicy textPolicy = policyParent != null ? policyParent.Policies.Get<TextStylePolicy> ("text/plain")
-				: MonoDevelop.Projects.Policies.PolicyService.GetDefaultPolicy<TextStylePolicy> ("text/plain");
+
+			TextStylePolicy textPolicy = policyParent != null ? policyParent.Policies.Get<TextStylePolicy> (mime ?? "text/plain")
+				: MonoDevelop.Projects.Policies.PolicyService.GetDefaultPolicy<TextStylePolicy> (mime ?? "text/plain");
 			string eolMarker = TextStylePolicy.GetEolMarker (textPolicy.EolMarker);
 			byte[] eolMarkerBytes = System.Text.Encoding.UTF8.GetBytes (eolMarker);
-			
+
 			var tabToSpaces = textPolicy.TabsToSpaces? new string (' ', textPolicy.TabWidth) : null;
-			
-			foreach (Mono.TextEditor.DocumentLine line in doc.Lines) {
+
+			foreach (var line in doc.GetLines ()) {
 				var lineText = doc.GetTextAt (line.Offset, line.Length);
 				if (tabToSpaces != null)
 					lineText = lineText.Replace ("\t", tabToSpaces);
-				data = System.Text.Encoding.UTF8.GetBytes (lineText);
+				if (line.LengthIncludingDelimiter > 0) {
+					data = System.Text.Encoding.UTF8.GetBytes (lineText);
+					ms.Write (data, 0, data.Length);
+					ms.Write (eolMarkerBytes, 0, eolMarkerBytes.Length);
+				}
+			}
+
+			ms.Position = 0;
+			return ms;
+		}
+
+		// Returns a stream with the content of the file.
+		// project and language parameters are optional
+		public virtual async Task<Stream> CreateFileContentAsync (SolutionFolderItem policyParent, Project project, string language, string fileName, string identifier)
+		{
+			var model = CombinedTagModel.GetTagModel (ProjectTagModel, policyParent, project, language, identifier, fileName);
+
+			//HACK: for API compat, CreateContent just gets the override, not the base model
+			// but ProcessContent gets the entire model
+			string content = CreateContent (project, model.OverrideTags, language);
+
+			content = ProcessContent (content, model);
+
+			string mime = DesktopService.GetMimeTypeForUri (fileName);
+			var formatter = !string.IsNullOrEmpty (mime) ? CodeFormatterService.GetFormatter (mime) : null;
+
+			if (formatter != null) {
+				var document = TextEditorFactory.CreateNewReadonlyDocument (new StringTextSource (content), fileName);
+				// Avoid possible UI thread deadlock in CSharpFormatter by running the formatter with Task.Run.
+				var formatted = await Task.Run (() => formatter.Format (policyParent?.Policies, document));
+				if (formatted != null)
+					content = formatted.Text;
+			}
+
+			var ms = new MemoryStream ();
+			Encoding encoding = null; 
+			TextStylePolicy textPolicy = policyParent != null ? policyParent.Policies.Get<TextStylePolicy> (mime ?? "text/plain")
+				: MonoDevelop.Projects.Policies.PolicyService.GetDefaultPolicy<TextStylePolicy> (mime ?? "text/plain");
+			string eolMarker = TextStylePolicy.GetEolMarker (textPolicy.EolMarker);
+
+			var ctx = await EditorConfigService.GetEditorConfigContext (fileName);
+			if (ctx != null) {
+				ctx.CurrentConventions.UniversalConventions.TryGetEncoding (out encoding);
+				if (ctx.CurrentConventions.UniversalConventions.TryGetLineEnding (out string lineEnding))
+					eolMarker = lineEnding;
+			}
+			if (encoding == null)
+				encoding = System.Text.Encoding.UTF8;
+			var bom = encoding.GetPreamble ();
+			if (bom != null && bom.Length > 0)
+				ms.Write (bom, 0, bom.Length);
+
+			byte[] data;
+			if (AddStandardHeader) {
+				string header = StandardHeaderService.GetHeader (policyParent, fileName, true);
+				data = encoding.GetBytes (header);
 				ms.Write (data, 0, data.Length);
-				ms.Write (eolMarkerBytes, 0, eolMarkerBytes.Length);
 			}
 			
+			var doc = TextEditorFactory.CreateNewDocument ();
+			doc.Text = content;
+			
+
+			byte[] eolMarkerBytes = encoding.GetBytes (eolMarker);
+			bool convertTabsToSpaces = textPolicy.TabsToSpaces;
+			int tabWidth = textPolicy.TabWidth;
+
+			if (ctx != null) {
+				if (ctx.CurrentConventions.UniversalConventions.TryGetIndentStyle (out Microsoft.VisualStudio.CodingConventions.IndentStyle result))
+					convertTabsToSpaces = result == Microsoft.VisualStudio.CodingConventions.IndentStyle.Spaces;
+				if (ctx.CurrentConventions.UniversalConventions.TryGetTabWidth (out int editorConfigTabWidth))
+					tabWidth = editorConfigTabWidth;
+			}
+			var tabToSpaces = convertTabsToSpaces ? new string (' ', tabWidth) : null;
+
+			IDocumentLine lastLine = null;
+			foreach (var line in doc.GetLines ()) {
+				var lineText = doc.GetTextAt (line.Offset, line.Length);
+				if (tabToSpaces != null)
+					lineText = lineText.Replace ("\t", tabToSpaces);
+				if (line.LengthIncludingDelimiter > 0) {
+					data = encoding.GetBytes (lineText);
+					ms.Write (data, 0, data.Length);
+					ms.Write (eolMarkerBytes, 0, eolMarkerBytes.Length);
+				}
+				lastLine = line;
+			}
+			if (ctx != null && lastLine != null && lastLine.Length > 0) {
+				if (ctx.CurrentConventions.UniversalConventions.TryGetRequireFinalNewline (out bool requireNewLine)) {
+					if (requireNewLine)
+						ms.Write (eolMarkerBytes, 0, eolMarkerBytes.Length);
+				}
+			}
+
 			ms.Position = 0;
 			return ms;
 		}
@@ -358,77 +558,10 @@ namespace MonoDevelop.Ide.Templates
 		// We supply defaults whenever it is possible, to avoid having unsubstituted tags. However,
 		// do not substitute blanks when a sensible default cannot be guessed, because they result
 		//in less obvious errors.
-		public virtual void ModifyTags (SolutionItem policyParent, Project project, string language,
+		public virtual void ModifyTags (SolutionFolderItem policyParent, Project project, string language,
 			string identifier, string fileName, ref Dictionary<string,string> tags)
 		{
-			DotNetProject netProject = project as DotNetProject;
-			string languageExtension = "";
-			ILanguageBinding binding = null;
-			if (!string.IsNullOrEmpty (language)) {
-				binding = GetLanguageBinding (language);
-				if (binding != null)
-					languageExtension = Path.GetExtension (binding.GetFileName ("Default")).Remove (0, 1);
-			}
-			
-			//need a default namespace or if there is no project, substitutions can get very messed up
-			string ns;
-			if (project is IDotNetFileContainer)
-				ns = ((IDotNetFileContainer)project).GetDefaultNamespace (fileName);
-			else
-				ns = "Application";
-			
-			//need an 'identifier' for tag substitution, e.g. class name or page name
-			//if not given an identifier, use fileName
-			if ((identifier == null) && (fileName != null))
-				identifier = Path.GetFileName (fileName);
-			 
-			 if (identifier != null) {
-			 	//remove all extensions
-				while (Path.GetExtension (identifier).Length > 0)
-					identifier = Path.GetFileNameWithoutExtension (identifier);
-			 	identifier = CreateIdentifierName (identifier);
-				tags ["Name"] = identifier;
-				tags ["FullName"] = ns.Length > 0 ? ns + "." + identifier : identifier;
-				
-				//some .NET languages may be able to use keywords as identifiers if they're escaped
-				IDotNetLanguageBinding dnb = binding as IDotNetLanguageBinding;
-				if (dnb != null) {
-					System.CodeDom.Compiler.CodeDomProvider provider = dnb.GetCodeDomProvider ();
-					if (provider != null) {
-						tags ["EscapedIdentifier"] = provider.CreateEscapedIdentifier (identifier);
-					}
-				}
-			}
-			
-			tags ["Namespace"] = ns;
-			if (policyParent != null)
-				tags ["SolutionName"] = policyParent.Name;
-			if (project != null) {
-				tags ["ProjectName"] = project.Name;
-				tags ["SafeProjectName"] = CreateIdentifierName (project.Name);
-				var info = project.AuthorInformation ?? AuthorInformation.Default;
-				tags ["AuthorCopyright"] = info.Copyright;
-				tags ["AuthorCompany"] = info.Company;
-				tags ["AuthorTrademark"] = info.Trademark;
-				tags ["AuthorEmail"] = info.Email;
-				tags ["AuthorName"] = info.Name;
-			}
-			if ((language != null) && (language.Length > 0))
-				tags ["Language"] = language;
-			if (languageExtension.Length > 0)
-				tags ["LanguageExtension"] = languageExtension;
-			
-			if (fileName != FilePath.Null) {
-				FilePath fileDirectory = Path.GetDirectoryName (fileName);
-				if (project != null && project.BaseDirectory != FilePath.Null && fileDirectory.IsChildPathOf (project.BaseDirectory))
-					tags ["ProjectRelativeDirectory"] = fileDirectory.ToRelative (project.BaseDirectory);
-				else
-					tags ["ProjectRelativeDirectory"] = fileDirectory;
-				
-				tags ["FileNameWithoutExtension"] = Path.GetFileNameWithoutExtension (fileName); 
-				tags ["Directory"] = fileDirectory;
-				tags ["FileName"] = fileName;
-			}
+			FileTemplateTagsModifier.ModifyTags (policyParent, project, language, identifier, fileName, ref tags);
 		}
 		
 		static string CreateIdentifierName (string identifier)
@@ -446,11 +579,11 @@ namespace MonoDevelop.Ide.Templates
 		}
 
 		
-		protected ILanguageBinding GetLanguageBinding (string language)
+		internal static LanguageBinding GetLanguageBinding (string language)
 		{
 			var binding = LanguageBindingService.GetBindingPerLanguageName (language);
 			if (binding == null)
-				throw new InvalidOperationException ("Language '" + language + "' not found");
+				throw new InvalidOperationException (GettextCatalog.GetString ("Language '{0}' not found", language));
 			return binding;
 		}
 	}

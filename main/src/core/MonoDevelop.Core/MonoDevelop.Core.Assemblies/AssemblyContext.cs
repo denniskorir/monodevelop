@@ -29,20 +29,21 @@ using System.Linq;
 using System.IO;
 using System.Reflection;
 using System.Collections.Generic;
+using System.Collections.Immutable;
 using Mono.PkgConfig;
 
 namespace MonoDevelop.Core.Assemblies
 {
 	public class AssemblyContext: IAssemblyContext
 	{
-		Dictionary<string, SystemPackage> assemblyPathToPackage = new Dictionary<string, SystemPackage> ();
-		Dictionary<string, SystemAssembly> assemblyFullNameToAsm = new Dictionary<string, SystemAssembly> ();
-		Dictionary<string, SystemPackage> packagesHash = new Dictionary<string, SystemPackage> ();
-		List<SystemPackage> packages = new List<SystemPackage> ();
+		ImmutableDictionary<string, SystemPackage> assemblyPathToPackage = ImmutableDictionary<string, SystemPackage>.Empty;
+		ImmutableDictionary<string, SystemAssembly> assemblyFullNameToAsm = ImmutableDictionary<string, SystemAssembly>.Empty;
+		ImmutableDictionary<string, SystemPackage> packagesHash = ImmutableDictionary<string, SystemPackage>.Empty;
+		ImmutableList<SystemPackage> packages = ImmutableList<SystemPackage>.Empty;
 		
 		public event EventHandler Changed;
 
-		public ICollection<string> GetAssemblyFullNames ()
+		public IEnumerable<string> GetAssemblyFullNames ()
 		{
 			return assemblyFullNameToAsm.Keys;
 		}
@@ -56,6 +57,9 @@ namespace MonoDevelop.Core.Assemblies
 		{
 			List<PackageAssemblyInfo> pinfos = new List<PackageAssemblyInfo> (assemblyFiles.Length);
 			foreach (string afile in assemblyFiles) {
+				if (!SystemAssemblyService.IsManagedAssembly (afile))
+					continue;
+
 				try {
 					PackageAssemblyInfo pi = new PackageAssemblyInfo ();
 					pi.File = afile;
@@ -90,8 +94,8 @@ namespace MonoDevelop.Core.Assemblies
 					asms.Add (AddAssembly (asm.File, new AssemblyInfo (asm), p));
 			}
 			p.Initialize (pinfo, asms, isInternal);
-			packages.Add (p);
-			packagesHash [pinfo.Name] = p;
+			packages = packages.Add (p);
+			packagesHash = packagesHash.SetItem (pinfo.Name, p);
 			
 			NotifyChanged ();
 			
@@ -117,8 +121,8 @@ namespace MonoDevelop.Core.Assemblies
 			foreach (SystemAssembly asm in p.Assemblies)
 				RemoveAssembly (asm);
 			
-			packages.Remove (p);
-			packagesHash.Remove (p.Name);
+			packages = packages.Remove (p);
+			packagesHash = packagesHash.Remove (p.Name);
 			NotifyChanged ();
 		}
 		
@@ -284,13 +288,16 @@ namespace MonoDevelop.Core.Assemblies
 		
 		public static string NormalizeAsmName (string name)
 		{
-			int i = name.ToLower ().IndexOf (", publickeytoken=null", StringComparison.Ordinal);
+			var span = name.AsSpan ();
+			int i = span.IndexOf (", publickeytoken=null".AsSpan (), StringComparison.OrdinalIgnoreCase);
 			if (i != -1)
-				name = name.Substring (0, i).Trim ();
-			i = name.ToLower ().IndexOf (", processorarchitecture=", StringComparison.Ordinal);
+				span = span.Slice (0, i).Trim ();
+
+			i = span.IndexOf (", processorarchitecture=".AsSpan (), StringComparison.OrdinalIgnoreCase);
 			if (i != -1)
-				name = name.Substring (0, i).Trim ();
-			return name;
+				span = span.Slice (0, i).Trim ();
+
+			return span.ToStringWithOriginal (name);
 		}
 	
 		// Returns the installed version of the given assembly name
@@ -418,23 +425,33 @@ namespace MonoDevelop.Core.Assemblies
 			string[] parts = assemblyName.Split (',');
 			if (parts.Length < 1)
 				return;
+
 			name = parts[0].Trim ();
-			
 			if (parts.Length < 2)
 				return;
-			int i = parts[1].IndexOf ('=');
-			version = i != -1 ? parts[1].Substring (i+1).Trim () : parts[1].Trim ();
-			
+
+			version = GetPart (parts [1]);
 			if (parts.Length < 3)
 				return;
-			i = parts[2].IndexOf ('=');
-			culture = i != -1 ? parts[2].Substring (i+1).Trim () : parts[2].Trim ();
-			if (culture == "neutral") culture = "";
-			
+
+			culture = GetPart (parts [2]);
+			if (culture == "neutral")
+				culture = "";
 			if (parts.Length < 4)
 				return;
-			i = parts[3].IndexOf ('=');
-			token = i != -1 ? parts[3].Substring (i+1).Trim () : parts[3].Trim ();
+
+			token = GetPart (parts [3]);
+
+			string GetPart (string part)
+			{
+				var span = part.AsSpan ();
+				int i = span.IndexOf ('=');
+				if (i != -1)
+					span = span.Slice (i + 1);
+				span = span.Trim ();
+
+				return span.ToStringWithOriginal (part);
+			}
 		}
 		
 		// Given the full name of an assembly, returns the corresponding full assembly name
@@ -537,8 +554,8 @@ namespace MonoDevelop.Core.Assemblies
 					asm.NextSameName = prevAsm.NextSameName;
 					prevAsm.NextSameName = asm;
 				} else
-					assemblyFullNameToAsm [asm.FullName] = asm;
-				assemblyPathToPackage [assemblyfile] = package;
+					assemblyFullNameToAsm = assemblyFullNameToAsm.SetItem (asm.FullName, asm);
+				assemblyPathToPackage = assemblyPathToPackage.SetItem (assemblyfile, package);
 				return asm;
 			} catch {
 				return null;
@@ -551,7 +568,7 @@ namespace MonoDevelop.Core.Assemblies
 			if (!assemblyFullNameToAsm.TryGetValue (asm.FullName, out ca))
 				return;
 			
-			assemblyPathToPackage.Remove (asm.Location);
+			assemblyPathToPackage = assemblyPathToPackage.Remove (asm.Location);
 			
 			SystemAssembly prev = null;
 			do {
@@ -559,9 +576,9 @@ namespace MonoDevelop.Core.Assemblies
 					if (prev != null)
 						prev.NextSameName = ca.NextSameName;
 					else if (ca.NextSameName != null)
-						assemblyFullNameToAsm [asm.FullName] = ca.NextSameName;
+						assemblyFullNameToAsm = assemblyFullNameToAsm.SetItem (asm.FullName, ca.NextSameName);
 					else
-						assemblyFullNameToAsm.Remove (asm.FullName);
+						assemblyFullNameToAsm = assemblyFullNameToAsm.Remove (asm.FullName);
 					break;
 				} else {
 					prev = ca;
@@ -577,8 +594,8 @@ namespace MonoDevelop.Core.Assemblies
 			    && packagesHash.TryGetValue (package.Name, out oldPackage) && !oldPackage.IsFrameworkPackage) {
 				ForceUnregisterPackage (oldPackage);
 			}
-			packagesHash [package.Name] = package;
-			packages.Add (package);
+			packagesHash = packagesHash.SetItem (package.Name, package);
+			packages = packages.Add (package);
 		}
 
 		public static AssemblyName ParseAssemblyName (string fullname)

@@ -30,13 +30,16 @@
 using System;
 using Gtk;
 
+using MonoDevelop.Components;
+using MonoDevelop.Components.AtkCocoaHelper;
 using MonoDevelop.Core;
 using MonoDevelop.Projects;
 using MonoDevelop.Projects.Text;
 using MonoDevelop.Ide.Gui.Dialogs;
 using MonoDevelop.Ide;
-using ICSharpCode.NRefactory.TypeSystem;
 using MonoDevelop.Ide.TypeSystem;
+using Microsoft.CodeAnalysis;
+using Microsoft.CodeAnalysis.CSharp;
 
 namespace MonoDevelop.CSharp.Project
 {
@@ -53,18 +56,9 @@ namespace MonoDevelop.CSharp.Project
 			this.project = project;
 			DotNetProjectConfiguration configuration = (DotNetProjectConfiguration) project.GetConfiguration (IdeApp.Workspace.ActiveConfiguration);
 			CSharpCompilerParameters compilerParameters = (CSharpCompilerParameters) configuration.CompilationParameters;
-			CSharpProjectParameters projectParameters = (CSharpProjectParameters) configuration.ProjectParameters;
+			var csproject = (CSharpProject)project;
 			
-			ListStore store = new ListStore (typeof (string));
-			store.AppendValues (GettextCatalog.GetString ("Executable"));
-			store.AppendValues (GettextCatalog.GetString ("Library"));
-			store.AppendValues (GettextCatalog.GetString ("Executable with GUI"));
-			store.AppendValues (GettextCatalog.GetString ("Module"));
-			compileTargetCombo.Model = store;
-			CellRendererText cr = new CellRendererText ();
-			compileTargetCombo.PackStart (cr, true);
-			compileTargetCombo.AddAttribute (cr, "text", 0);
-			compileTargetCombo.Active = (int) configuration.CompileTarget;
+			compileTargetCombo.CompileTarget = configuration.CompileTarget;
 			compileTargetCombo.Changed += new EventHandler (OnTargetChanged);
 			
 			if (project.IsLibraryBasedProjectType) {
@@ -75,7 +69,7 @@ namespace MonoDevelop.CSharp.Project
 				classListStore = new ListStore (typeof(string));
 				mainClassEntry.Model = classListStore;
 				mainClassEntry.TextColumn = 0;
-				((Entry)mainClassEntry.Child).Text = projectParameters.MainClass ?? string.Empty;
+				((Entry)mainClassEntry.Child).Text = csproject.MainClass ?? string.Empty;
 			
 				UpdateTarget ();
 			}
@@ -85,39 +79,65 @@ namespace MonoDevelop.CSharp.Project
 			foreach (TextEncoding e in TextEncoding.SupportedEncodings) {
 				if (e.CodePage == -1)
 					continue;
-				if (e.CodePage == projectParameters.CodePage)
+				if (e.CodePage == csproject.CodePage)
 					foundEncoding = e.Id;
 				codepageEntry.AppendText (e.Id);
 			}
 			if (foundEncoding != null)
 				codepageEntry.Entry.Text = foundEncoding;
-			else if (projectParameters.CodePage != 0)
-				codepageEntry.Entry.Text = projectParameters.CodePage.ToString ();
+			else if (csproject.CodePage != 0)
+				codepageEntry.Entry.Text = csproject.CodePage.ToString ();
 			
-			iconEntry.Path = projectParameters.Win32Icon;
+			iconEntry.Path = csproject.Win32Icon;
 			iconEntry.DefaultPath = project.BaseDirectory;
 			allowUnsafeCodeCheckButton.Active = compilerParameters.UnsafeCode;
 			noStdLibCheckButton.Active = compilerParameters.NoStdLib;
 
-			ListStore langVerStore = new ListStore (typeof (string));
-			langVerStore.AppendValues (GettextCatalog.GetString ("Default"));
-			langVerStore.AppendValues ("ISO-1");
-			langVerStore.AppendValues ("ISO-2");
-			langVerStore.AppendValues ("Version 3");
-			langVerStore.AppendValues ("Version 4");
-			langVerStore.AppendValues ("Version 5");
-			langVerStore.AppendValues ("Version 6");
-			langVerCombo.Model = langVerStore;
-			langVerCombo.Active = (int) compilerParameters.LangVersion;
-		}
-		
-		protected override void OnDestroyed ()
-		{
-			if (classListStore != null) {
-				classListStore.Dispose ();
-				classListStore = null;
+			var langVerStore = new ListStore (typeof (string), typeof(LanguageVersion));
+			foreach (var (text, version) in CSharpLanguageVersionHelper.GetKnownLanguageVersions ()) {
+				langVerStore.AppendValues (text, version);
 			}
-			base.OnDestroyed ();
+			langVerCombo.Model = langVerStore;
+
+			TreeIter iter;
+			if (langVerStore.GetIterFirst (out iter)) {
+				do {
+					var val = (LanguageVersion)(int)langVerStore.GetValue (iter, 1);
+					if (val == compilerParameters.LangVersion) {
+						langVerCombo.SetActiveIter (iter);
+						break;
+					}
+				} while (langVerStore.IterNext (ref iter));
+			}
+
+			SetupAccessibility ();
+		}
+
+		void SetupAccessibility ()
+		{
+			label76.Accessible.Role = Atk.Role.Filler;
+			label75.Accessible.Role = Atk.Role.Filler;
+			label74.Accessible.Role = Atk.Role.Filler;
+			compileTargetCombo.SetCommonAccessibilityAttributes ("CodeGeneration.CompileTarget", label86,
+			                                                     GettextCatalog.GetString ("Select the compile target for the code generation"));
+
+			mainClassEntry.SetCommonAccessibilityAttributes ("CodeGeneration.MainClass", label88,
+			                                                 GettextCatalog.GetString ("Enter the main class for the code generation"));
+
+			iconEntry.SetEntryAccessibilityAttributes ("CodeGeneration.WinIcon", "",
+			                                           GettextCatalog.GetString ("Enter the file to use as the icon on Windows"));
+			iconEntry.SetAccessibilityLabelRelationship (label3);
+
+			codepageEntry.SetCommonAccessibilityAttributes ("CodeGeneration.CodePage", label1,
+			                                                GettextCatalog.GetString ("Select the compiler code page"));
+
+			noStdLibCheckButton.SetCommonAccessibilityAttributes ("CodeGeneration.NoStdLib", "", GettextCatalog.GetString ("Whether or not to include a reference to mscorlib.dll"));
+
+			langVerCombo.SetCommonAccessibilityAttributes ("CodeGeneration.LanguageVersion", label2,
+			                                               GettextCatalog.GetString ("Select the version of C# to use"));
+
+			allowUnsafeCodeCheckButton.SetCommonAccessibilityAttributes ("CodeGeneration.AllowUnsafe", "",
+			                                                             GettextCatalog.GetString ("Check to allow 'unsafe' code"));
 		}
 
 		public bool ValidateChanges ()
@@ -145,10 +165,13 @@ namespace MonoDevelop.CSharp.Project
 		public void Store (ItemConfigurationCollection<ItemConfiguration> configs)
 		{
 			int codePage;
-			CompileTarget compileTarget =  (CompileTarget) compileTargetCombo.Active;
-			LangVersion langVersion = (LangVersion) langVerCombo.Active; 
-			
-			
+
+			var langVersion = LanguageVersion.Default;
+			TreeIter iter;
+			if (langVerCombo.GetActiveIter (out iter)) {
+				langVersion = (LanguageVersion)langVerCombo.Model.GetValue (iter, 1);
+			}
+
 			if (codepageEntry.Entry.Text.Length > 0) {
 				// Get the codepage. If the user specified an encoding name, find it.
 				int trialCodePage = -1;
@@ -170,20 +193,19 @@ namespace MonoDevelop.CSharp.Project
 			} else
 				codePage = 0;
 			
-			project.CompileTarget = compileTarget;
+			project.CompileTarget = compileTargetCombo.CompileTarget;
 			
-			CSharpProjectParameters projectParameters = (CSharpProjectParameters) project.LanguageParameters; 
+			var csproject = (CSharpProject)project; 
 			
-			projectParameters.CodePage = codePage;
+			csproject.CodePage = codePage;
 
 			if (iconEntry.Sensitive)
-				projectParameters.Win32Icon = iconEntry.Path;
+				csproject.Win32Icon = iconEntry.Path;
 			
 			if (mainClassEntry.Sensitive)
-				projectParameters.MainClass = mainClassEntry.Entry.Text;
-			
+				csproject.MainClass = mainClassEntry.Entry.Text;
 			foreach (DotNetProjectConfiguration configuration in configs) {
-				CSharpCompilerParameters compilerParameters = (CSharpCompilerParameters) configuration.CompilationParameters; 
+				CSharpCompilerParameters compilerParameters = (CSharpCompilerParameters) configuration.CompilationParameters;
 				compilerParameters.UnsafeCode = allowUnsafeCodeCheckButton.Active;
 				compilerParameters.NoStdLib = noStdLibCheckButton.Active;
 				compilerParameters.LangVersion = langVersion;
@@ -197,7 +219,7 @@ namespace MonoDevelop.CSharp.Project
 		
 		void UpdateTarget ()
 		{
-			if ((CompileTarget) compileTargetCombo.Active == CompileTarget.Library) {
+			if (compileTargetCombo.CompileTarget == CompileTarget.Library) {
 				iconEntry.Sensitive = false;
 			} else {
 				iconEntry.Sensitive = true;
@@ -209,16 +231,14 @@ namespace MonoDevelop.CSharp.Project
 		void FillClasses ()
 		{
 			try {
-				var ctx = TypeSystemService.GetCompilation (project);
+				var ctx = TypeSystemService.GetCompilationAsync (project).Result;
 				if (ctx == null)
 					// Project not found in parser database
 					return;
-				foreach (var c in ctx.GetAllTypeDefinitions ()) {
-					if (c.Methods != null) {
-						foreach (var m in c.Methods) {
-							if (m.IsStatic && m.Name == "Main")
-								classListStore.AppendValues (c.FullName);
-						}
+				foreach (var c in ctx.Assembly.GlobalNamespace.GetTypeMembers ()) {
+					foreach (var m in c.GetMembers().OfType<IMethodSymbol> ()) {
+						if (m.IsStatic && m.Name == "Main")
+							classListStore.AppendValues (c.ToDisplayString(SymbolDisplayFormat.CSharpErrorMessageFormat));
 					}
 				}
 				classListFilled = true;
@@ -232,7 +252,7 @@ namespace MonoDevelop.CSharp.Project
 	{
 		CompilerOptionsPanelWidget widget;
 		
-		public override Widget CreatePanelWidget ()
+		public override Control CreatePanelWidget ()
 		{
 			return (widget = new CompilerOptionsPanelWidget ((DotNetProject) ConfiguredProject));
 		}

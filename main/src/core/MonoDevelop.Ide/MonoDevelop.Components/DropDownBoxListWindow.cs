@@ -28,10 +28,12 @@ using System;
 using MonoDevelop.Ide;
 using Gtk;
 using System.Text;
+using MonoDevelop.Components.AtkCocoaHelper;
+using MonoDevelop.Ide.Fonts;
 
 namespace MonoDevelop.Components
 {
-	public class DropDownBoxListWindow : Window
+	public class DropDownBoxListWindow : Gtk.Window
 	{
 		readonly ScrolledWindow vScrollbar;
 		internal ListWidget list;
@@ -58,7 +60,15 @@ namespace MonoDevelop.Components
 			set {
 				list.MaxVisibleRows = value;
 				list.CalcVisibleRows ();
-				SetSizeRequest (list.WidthRequest, list.HeightRequest);
+				SetSizeRequest (list.WidthRequest + WidthModifier, list.HeightRequest);
+			}
+		}
+
+		const int padding = 5;
+
+		int WidthModifier {
+			get {
+				return padding + 2 * (int)BorderWidth;
 			}
 		}
 
@@ -68,12 +78,16 @@ namespace MonoDevelop.Components
 
 		public DropDownBoxListWindow (IListDataProvider provider, WindowType windowType) : base (windowType)
 		{
+			Accessible.Name = "DropDownBoxListWindow";
+
 			this.DataProvider = provider;
 			this.TransientFor = IdeApp.Workbench.RootWindow;
-			this.TypeHint = Gdk.WindowTypeHint.Menu;
+			this.TypeHint = Gdk.WindowTypeHint.DropdownMenu;
 			this.Decorated = false;
 			this.BorderWidth = 1;
 			list = new ListWidget (this);
+			list.Accessible.Name = "DropDownBoxListWindow.List";
+
 			list.SelectItem += delegate {
 				var sel = list.Selection;
 				if (sel >= 0 && sel < DataProvider.IconCount) {
@@ -81,7 +95,7 @@ namespace MonoDevelop.Components
 					Destroy ();
 				}
 			};
-			SetSizeRequest (list.WidthRequest, list.HeightRequest);
+			SetSizeRequest (list.WidthRequest + WidthModifier, list.HeightRequest);
 			vScrollbar = new ScrolledWindow ();
 			vScrollbar.VScrollbar.SizeAllocated += (o, args) => {
 				var minWidth = list.WidthRequest + args.Allocation.Width;
@@ -96,7 +110,8 @@ namespace MonoDevelop.Components
 
 		public void SelectItem (object item)
 		{
-			for (int i = 0; i < DataProvider.IconCount; i++) {
+			int count = DataProvider.IconCount;
+			for (int i = 0; i < count; i++) {
 				if (DataProvider.GetTag (i) == item) {
 					list.Selection = i;
 					vScrollbar.Vadjustment.Value = Math.Max (0, i * list.RowHeight - vScrollbar.Vadjustment.PageSize / 2);
@@ -108,7 +123,8 @@ namespace MonoDevelop.Components
 		void SwitchToSeletedWord ()
 		{
 			string selection = list.WordSelection.ToString ();
-			for (int i = 0; i < DataProvider.IconCount; i++) {
+			int count = DataProvider.IconCount;
+			for (int i = 0; i < count; i++) {
 				if (DataProvider.GetMarkup (i).StartsWith (selection, StringComparison.OrdinalIgnoreCase)) {
 					list.Selection = i;
 					list.WordSelection.Append (selection);
@@ -200,8 +216,9 @@ namespace MonoDevelop.Components
 
 		internal class ListWidget: DrawingArea
 		{
-			const int margin = 0;
+			const int leftXAlignment = 1;
 			const int padding = 4;
+			const int iconTextDistance = 4;
 			int listWidth = 300;
 			Pango.Layout layout;
 			readonly DropDownBoxListWindow win;
@@ -225,12 +242,62 @@ namespace MonoDevelop.Components
 
 			public ListWidget (DropDownBoxListWindow win)
 			{
+				Accessible.Role = Atk.Role.List;
 				this.win = win;
 				this.Events = Gdk.EventMask.ButtonPressMask | Gdk.EventMask.ButtonReleaseMask | Gdk.EventMask.PointerMotionMask | Gdk.EventMask.LeaveNotifyMask;
 				this.CanFocus = true;
-				layout = new Pango.Layout (this.PangoContext);
-				CalcRowHeight ();
-				CalcVisibleRows ();
+				UpdateStyle ();
+
+				CalcAccessibility ();
+			}
+
+			class TextElement : AtkCocoaHelper.AccessibilityElementProxy
+			{
+				public int RowIndex { get; set; }
+				internal TextElement ()
+				{
+				}
+			}
+
+			TextElement[] textElements;
+			void CalcAccessibility ()
+			{
+				if (!AtkCocoaHelper.AccessibilityElementProxy.Enabled) {
+					return;
+				}
+
+				var columnElement = new AtkCocoaHelper.AccessibilityElementProxy ();
+				columnElement.GtkParent = this;
+				columnElement.SetRole (AtkCocoa.Roles.AXColumn);
+				Accessible.AddAccessibleElement (columnElement);
+
+				int count = win.DataProvider.IconCount;
+				textElements = new TextElement[count];
+				for (int i = 0; i < count; i++) {
+					var rowElement = new AtkCocoaHelper.AccessibilityElementProxy ();
+					rowElement.GtkParent = this;
+					rowElement.SetRole (AtkCocoa.Roles.AXRow);
+					Accessible.AddAccessibleElement (rowElement);
+
+					var cellElement = new AtkCocoaHelper.AccessibilityElementProxy ();
+					cellElement.GtkParent = this;
+					cellElement.SetRole (AtkCocoa.Roles.AXCell);
+					columnElement.AddAccessibleChild (cellElement);
+					rowElement.AddAccessibleChild (cellElement);
+
+					var textElement = textElements[i] = new TextElement ();
+					textElement.RowIndex = i;
+					textElement.PerformPress += PerformPress;
+					textElement.GtkParent = this;
+					textElement.Value = win.DataProvider.GetMarkup (i);
+					cellElement.AddAccessibleChild (textElement);
+				}
+			}
+
+			void PerformPress (object sender, EventArgs args)
+			{
+				var element = (TextElement)sender;
+				win.DataProvider.ActivateItem (element.RowIndex);
 			}
 
 			internal void CalcRowHeight ()
@@ -255,6 +322,13 @@ namespace MonoDevelop.Components
 
 			protected override void OnDestroyed ()
 			{
+				if (textElements != null) {
+					foreach (var textElement in textElements) {
+						textElement.PerformPress -= PerformPress;
+					}
+					textElements = null;
+				}
+
 				if (layout != null) {
 					layout.Dispose ();
 					layout = null;
@@ -378,12 +452,12 @@ namespace MonoDevelop.Components
 				int winWidth, winHeight;
 				GdkWindow.GetSize (out winWidth, out winHeight);
 
-				int lineWidth = winWidth - margin * 2;
-				const int xpos = margin + padding;
+				int lineWidth = winWidth - leftXAlignment * 2;
+				const int xpos = leftXAlignment + padding;
 
 				int n = (int)(vAdjustment.Value / rowHeight);
-				int ypos = (int)(margin + n * rowHeight - vAdjustment.Value);
-				while (ypos < winHeight - margin && n < win.DataProvider.IconCount) {
+				int ypos = (int)(leftXAlignment + n * rowHeight - vAdjustment.Value);
+				while (ypos < winHeight - leftXAlignment && n < win.DataProvider.IconCount) {
 					string text = win.DataProvider.GetMarkup (n) ?? "&lt;null&gt;";
 
 					var icon = win.DataProvider.GetIcon (n);
@@ -391,7 +465,7 @@ namespace MonoDevelop.Components
 					int iconWidth = icon != null ? (int)icon.Width : 0;
 
 					layout.Ellipsize = Pango.EllipsizeMode.End;
-					layout.Width = (Allocation.Width - xpos - iconWidth - 2) * (int)Pango.Scale.PangoScale;
+					layout.Width = (Allocation.Width - xpos - padding - iconWidth - iconTextDistance) * (int)Pango.Scale.PangoScale;
 					layout.SetMarkup (PathBar.GetFirstLineFromMarkup (text));
 
 					int wi, he, typos, iypos;
@@ -402,18 +476,20 @@ namespace MonoDevelop.Components
 					if (n == selection) {
 						if (!disableSelection) {
 							GdkWindow.DrawRectangle (Style.BaseGC (StateType.Selected), 
-								true, margin, ypos, lineWidth, rowHeight);
+								true, leftXAlignment, ypos, lineWidth, rowHeight);
 							GdkWindow.DrawLayout (Style.TextGC (StateType.Selected), 
-							                      xpos + iconWidth + 2, typos, layout);
+							                      xpos + iconWidth + iconTextDistance, typos, layout);
+							if (icon != null)
+								icon = icon.WithStyles ("sel");
 						} else {
 							GdkWindow.DrawRectangle (Style.BaseGC (StateType.Selected), 
-								false, margin, ypos, lineWidth, rowHeight);
+								false, leftXAlignment, ypos, lineWidth, rowHeight);
 							GdkWindow.DrawLayout (Style.TextGC (StateType.Normal), 
-							                      xpos + iconWidth + 2, typos, layout);
+							                      xpos + iconWidth + iconTextDistance, typos, layout);
 						}
 					} else
 						GdkWindow.DrawLayout (Style.TextGC (StateType.Normal), 
-						                      xpos + iconWidth + 2, typos, layout);
+						                      xpos + iconWidth + iconTextDistance, typos, layout);
 					
 					if (icon != null) {
 						using (var ctx = Gdk.CairoHelper.Create (this.GdkWindow))
@@ -454,8 +530,8 @@ namespace MonoDevelop.Components
 					return;
 				int newHeight;
 				newHeight = win.DataProvider.IconCount > MaxVisibleRows ? 
-								(rowHeight * MaxVisibleRows) + margin * 2 :
-								(rowHeight * win.DataProvider.IconCount) + margin * 2;
+								(rowHeight * MaxVisibleRows) + leftXAlignment * 2 :
+								(rowHeight * win.DataProvider.IconCount) + leftXAlignment * 2;
 				newHeight += 2;
 				listWidth = Math.Min (450, CalcWidth ());
 				SetSizeRequest (listWidth, newHeight);
@@ -467,22 +543,25 @@ namespace MonoDevelop.Components
 					return 0;
 				int longest = 0;
 				string longestText = win.DataProvider.GetMarkup (0) ?? "";
-				
-				for (int i = 1; i < win.DataProvider.IconCount; i++) {
+
+				int count = win.DataProvider.IconCount;
+				for (int i = 1; i < count; i++) {
 					string curText = win.DataProvider.GetMarkup (i) ?? "";
 					if (curText.Length > longestText.Length) {
 						longestText = curText;
 						longest = i;
 					}
 				}
-				layout.SetMarkup (win.DataProvider.GetMarkup (longest) ?? "&lt;null&gt;");
+				layout.Width = -1;
+				layout.SetMarkup (longestText ?? "&lt;null&gt;");
 				int w, h;
-				layout.GetPixelSize (out w, out h);
+				layout.GetPixelSize(out w, out h);
 				var icon = win.DataProvider.GetIcon (longest);
 				int iconWidth = icon != null ? (int) icon.Width : 24;
-				w += iconWidth + 2 + padding * 2 + margin;
-				return w;
+				return iconWidth + iconTextDistance + (padding * 2) + leftXAlignment + w;
 			}
+
+
 
 			void SetBounds ()
 			{
@@ -501,7 +580,6 @@ namespace MonoDevelop.Components
 			protected override void OnSizeAllocated (Gdk.Rectangle allocation)
 			{
 				base.OnSizeAllocated (allocation);
-
 				hAdjustment.SetBounds (0, allocation.Width, 0, 0, allocation.Width);
 
 				SetBounds ();
@@ -517,12 +595,13 @@ namespace MonoDevelop.Components
 
 			void UpdateStyle ()
 			{
-				GdkWindow.Background = Style.Base (StateType.Normal);
+				if (IsRealized)
+					GdkWindow.Background = Style.Base (StateType.Normal);
 				if (layout != null)
 					layout.Dispose ();
 				layout = new Pango.Layout (PangoContext);
 				layout.Wrap = Pango.WrapMode.Char;
-				layout.FontDescription = Style.FontDescription.Copy ();
+				layout.FontDescription = FontService.SansFont.CopyModified (Ide.Gui.Styles.FontScale11);
 				CalcRowHeight ();
 				CalcVisibleRows ();
 			}

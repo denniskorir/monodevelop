@@ -31,12 +31,15 @@ using System.IO;
 using System.Collections.Generic;
 using MonoDevelop.Core;
 using MonoDevelop.Core.ProgressMonitoring;
+using MonoDevelop.Projects.MSBuild;
+using System.Linq;
+using System.Threading.Tasks;
 
 namespace MonoDevelop.Projects
 {
 	class ProjectConvertTool: IApplication
 	{
-		public int Run (string[] arguments)
+		public async Task<int> Run (string[] arguments)
 		{
 			if (arguments.Length == 0 || arguments [0] == "--help") {
 				Console.WriteLine ("");
@@ -59,18 +62,18 @@ namespace MonoDevelop.Projects
 			
 			string projectFile = null;
 			string destPath = null;
-			string formatName = null;
+			string formatId = null;
 			bool formatList = false;
 			List<string> projects = new List<string> ();
 			string[] itemsToExport = null;
 			
 			foreach (string s in arguments)
 			{
-				if (s.StartsWith ("-d:"))
+				if (s.StartsWith ("-d:", StringComparison.Ordinal))
 					destPath = s.Substring (3);
-				else if (s.StartsWith ("-f:"))
-					formatName = s.Substring (3);
-				else if (s.StartsWith ("-p:"))
+				else if (s.StartsWith ("-f:", StringComparison.Ordinal))
+					formatId = s.Substring (3);
+				else if (s.StartsWith ("-p:", StringComparison.Ordinal))
 					projects.Add (s.Substring (3));
 				else if (s == "-l")
 					formatList = true;
@@ -99,7 +102,7 @@ namespace MonoDevelop.Projects
 			
 			object item;
 			if (Services.ProjectService.IsWorkspaceItemFile (projectFile)) {
-				item = Services.ProjectService.ReadWorkspaceItem (monitor, projectFile);
+				item = await Services.ProjectService.ReadWorkspaceItem (monitor, projectFile);
 				if (projects.Count > 0) {
 					Solution sol = item as Solution;
 					if (sol == null) {
@@ -127,23 +130,23 @@ namespace MonoDevelop.Projects
 					Console.WriteLine ("The -p option can't be used when exporting a single project");
 					return 1;
 				}
-				item = Services.ProjectService.ReadSolutionItem (monitor, projectFile);
+				item = await Services.ProjectService.ReadSolutionItem (monitor, projectFile);
 			}
 			
-			FileFormat[] formats = Services.ProjectService.FileFormats.GetFileFormatsForObject (item);
+			var formats = MSBuildFileFormat.GetSupportedFormats ().ToArray ();
 			
 			if (formats.Length == 0) {
 				Console.WriteLine ("Can't convert file to any format: " + projectFile);
 				return 1;
 			}
 			
-			FileFormat format = null;
+			MSBuildFileFormat format = null;
 			
-			if (formatName == null || formatList) {
+			if (formatId == null || formatList) {
 				Console.WriteLine ();
 				Console.WriteLine ("Target formats:");
 				for (int n=0; n<formats.Length; n++)
-					Console.WriteLine ("  {0}. {1}", n + 1, formats [n].Name);
+					Console.WriteLine ("  {0}. {1} ({2})", n + 1, formats [n].Id, formats [n].ProductDescription);
 				Console.WriteLine ();
 				if (formatList)
 					return 0;
@@ -163,12 +166,12 @@ namespace MonoDevelop.Projects
 				format = formats [op - 1];
 			}
 			else {
-				foreach (FileFormat f in formats) {
-					if (f.Name == formatName)
+				foreach (var f in formats) {
+					if (f.Id == formatId)
 						format = f;
 				}
 				if (format == null) {
-					Console.WriteLine ("Unknown file format: " + formatName);
+					Console.WriteLine ("Unknown file format: " + formatId);
 					return 1;
 				}
 			}
@@ -177,7 +180,8 @@ namespace MonoDevelop.Projects
 				destPath = Path.GetDirectoryName (projectFile);
 			destPath = FileService.GetFullPath (destPath);
 			
-			string ofile = Services.ProjectService.Export (monitor, projectFile, itemsToExport, destPath, format);
+			string ofile = await Services.ProjectService.Export (monitor, projectFile, itemsToExport, destPath, format);
+
 			if (ofile != null) {
 				Console.WriteLine ("Saved file: " + ofile);
 				return 0;

@@ -24,78 +24,136 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 // THE SOFTWARE.
 using System;
-using Mono.TextEditor;
 using MonoDevelop.CSharp.Formatting;
+using MonoDevelop.Ide.Editor;
+using MonoDevelop.Ide.Editor.Extension;
+using System.Collections.Generic;
+using Microsoft.CodeAnalysis.Text;
+using Microsoft.CodeAnalysis.Editor;
+using Microsoft.CodeAnalysis.Shared.Extensions;
+using System.Threading;
+using MonoDevelop.Ide;
 
 namespace MonoDevelop.CSharp.Highlighting
 {
-	class CSharpSelectionSurroundingProvider : DefaultSelectionSurroundingProvider
+	class CSharpSelectionSurroundingProvider : SelectionSurroundingProvider
 	{
-		MonoDevelop.Ide.Gui.Document document;
+		readonly DocumentContext context;
+		readonly TextEditor editor;
 
-		public CSharpSelectionSurroundingProvider (MonoDevelop.Ide.Gui.Document document)
+		public CSharpSelectionSurroundingProvider (MonoDevelop.Ide.Editor.TextEditor editor, DocumentContext context)
 		{
-			this.document = document;
+			this.editor = editor;
+			this.context = context;
 		}
 
-		public override bool GetSelectionSurroundings (TextEditorData textEditorData, uint unicodeKey, out string start, out string end)
+		#region SelectionSurroundingProvider implementation
+
+		public override bool GetSelectionSurroundings (uint unicodeKey, out string start, out string end)
 		{
-			if (unicodeKey == '/') {
+			switch ((char)unicodeKey) {
+			case '"':
+				start = editor.SelectionRegion.BeginLine != editor.SelectionRegion.EndLine ? "@\"" : "\"";
+				end = "\"";
+				return true;
+			case '\'':
+				start = end = "'";
+				return true;
+			case '(':
+				start = "(";
+				end = ")";
+				return true;
+			case '<':
+				start = "<";
+				end = ">";
+				return true;
+			case '[':
+				start = "[";
+				end = "]";
+				return true;
+			case '{':
+				start = "{";
+				end = "}";
+				return true;
+			case '/':
 				start = "/*";
 				end = "*/";
 				return true;
+			default:
+				start = end = "";
+				return false;
 			}
-
-			if (unicodeKey == '"') {
-				start = textEditorData.MainSelection.Anchor.Line != textEditorData.MainSelection.Lead.Line ? "@\"" : "\"";
-				end = "\"";
-				return true;
-			}
-			return base.GetSelectionSurroundings (textEditorData, unicodeKey, out start, out end);
 		}
 
-		public override void HandleSpecialSelectionKey (TextEditorData textEditorData,uint unicodeKey)
+		public override void HandleSpecialSelectionKey (uint unicodeKey)
 		{
 			string start, end;
-			GetSelectionSurroundings (textEditorData, unicodeKey, out start, out end);
-			var selection = textEditorData.MainSelection;
+			((SelectionSurroundingProvider)this).GetSelectionSurroundings (unicodeKey, out start, out end);
 
-			if (textEditorData.MainSelection.SelectionMode == SelectionMode.Block) {
-				int startCol = System.Math.Min (selection.Anchor.Column, selection.Lead.Column) - 1;
-				int endCol = System.Math.Max (selection.Anchor.Column, selection.Lead.Column);
-				for (int lineNumber = selection.MinLine; lineNumber <= selection.MaxLine; lineNumber++) {
-					DocumentLine lineSegment = textEditorData.GetLine (lineNumber);
+			if (editor.SelectionMode == SelectionMode.Block) {
+				var selection = editor.SelectionRegion;
+				int startCol = System.Math.Min (selection.Begin.Column, selection.End.Column) - 1;
+				int endCol = System.Math.Max (selection.Begin.Column, selection.End.Column);
 
-					if (lineSegment.Offset + startCol < lineSegment.EndOffset)
-						textEditorData.Insert (lineSegment.Offset + startCol, start);
+				int minLine = System.Math.Min (selection.Begin.Line, selection.End.Line);
+				int maxLine = System.Math.Max (selection.BeginLine, selection.End.Line);
+
+				var changes = new List<TextChange> ();
+				for (int lineNumber = minLine; lineNumber <= maxLine; lineNumber++) {
+					var lineSegment = editor.GetLine (lineNumber);
+
+					if (lineSegment.Offset + startCol < lineSegment.EndOffset) {
+						changes.Add (new TextChange (new TextSpan (lineSegment.Offset + startCol, 0), start));
+					}
 					if (lineSegment.Offset + endCol < lineSegment.EndOffset)
-						textEditorData.Insert (lineSegment.Offset + endCol, end);
+						changes.Add (new TextChange (new TextSpan (lineSegment.Offset + endCol, 0), end));
 				}
 
-				textEditorData.MainSelection = new Selection (
-					new DocumentLocation (selection.Anchor.Line, endCol == selection.Anchor.Column ? endCol + start.Length : startCol + 1 + start.Length),
-					new DocumentLocation (selection.Lead.Line, endCol == selection.Anchor.Column ? startCol + 1 + start.Length : endCol + start.Length),
-					Mono.TextEditor.SelectionMode.Block);
-				textEditorData.Document.CommitMultipleLineUpdate (textEditorData.MainSelection.MinLine, textEditorData.MainSelection.MaxLine);
+				editor.ApplyTextChanges (changes);
+
+//				textEditorData.MainSelection = new Selection (
+//					new DocumentLocation (selection.Anchor.Line, endCol == selection.Anchor.Column ? endCol + start.Length : startCol + 1 + start.Length),
+//					new DocumentLocation (selection.Lead.Line, endCol == selection.Anchor.Column ? startCol + 1 + start.Length : endCol + start.Length),
+//					MonoDevelop.Ide.Editor.SelectionMode.Block);
 			} else {
-				int anchorOffset = selection.GetAnchorOffset (textEditorData);
-				int leadOffset = selection.GetLeadOffset (textEditorData);
-				if (leadOffset < anchorOffset) {
-					int tmp = anchorOffset;
-					anchorOffset = leadOffset;
-					leadOffset = tmp;
-				}
-				textEditorData.Insert (anchorOffset, start);
-				textEditorData.Insert (leadOffset >= anchorOffset ? leadOffset + start.Length : leadOffset, end);
-			//	textEditorData.SetSelection (anchorOffset + start.Length, leadOffset + start.Length);
-				if (CSharpTextEditorIndentation.OnTheFlyFormatting) {
-					var l1 = textEditorData.GetLineByOffset (anchorOffset);
-					var l2 = textEditorData.GetLineByOffset (leadOffset);
-					OnTheFlyFormatter.Format (document, l1.Offset, l2.EndOffsetIncludingDelimiter);
+				var selectionRange = editor.SelectionRange;
+				int anchorOffset = selectionRange.Offset;
+				int leadOffset = selectionRange.EndOffset;
+				var text = editor.GetTextAt (selectionRange);
+
+				var formattingService = context.AnalysisDocument.GetLanguageService<IEditorFormattingService> ();
+
+
+				if (editor.Options.GenerateFormattingUndoStep) {
+					using (var undo = editor.OpenUndoGroup ()) {
+						editor.ReplaceText (selectionRange, start);
+					}
+					using (var undo = editor.OpenUndoGroup ()) {
+						editor.ReplaceText (anchorOffset, 1, start + text + end);
+						editor.SetSelection (anchorOffset + start.Length, leadOffset + start.Length + end.Length);
+					}
+					if (unicodeKey == '{') {
+						if (formattingService != null) {
+							var changes = formattingService.GetFormattingChangesAsync (context.AnalysisDocument, TextSpan.FromBounds (anchorOffset + start.Length - 1, leadOffset + start.Length + end.Length), CancellationToken.None).WaitAndGetResult (CancellationToken.None);
+							editor.ApplyTextChanges (changes);
+						}
+					}
+				} else {
+					using (var undo = editor.OpenUndoGroup ()) {
+						editor.InsertText (anchorOffset, start);
+						editor.InsertText (leadOffset >= anchorOffset ? leadOffset + start.Length : leadOffset, end);
+						if (unicodeKey == '{') {
+							if (formattingService != null) {
+								var changes = formattingService.GetFormattingChangesAsync (context.AnalysisDocument, TextSpan.FromBounds (anchorOffset + start.Length, leadOffset + start.Length), CancellationToken.None).WaitAndGetResult (CancellationToken.None);
+								editor.ApplyTextChanges (changes);
+							}
+						} else {
+							editor.SetSelection (anchorOffset + start.Length, leadOffset + start.Length + end.Length);
+						}
+					}
 				}
 			}
 		}
-
+		#endregion
 	}
 }
-

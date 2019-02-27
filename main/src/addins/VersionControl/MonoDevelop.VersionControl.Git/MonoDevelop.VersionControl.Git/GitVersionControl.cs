@@ -26,15 +26,24 @@
 
 using MonoDevelop.Core;
 using System.Collections.Generic;
+using System.IO;
 
 namespace MonoDevelop.VersionControl.Git
 {
 	abstract class GitVersionControl : VersionControlSystem
 	{
-		readonly Dictionary<FilePath,GitRepository> repositories = new Dictionary<FilePath,GitRepository> ();
+		string version = null;
 
 		public override string Name {
 			get { return "Git"; }
+		}
+
+		public override string Version {
+			get {
+				if (version == null)
+					version = LibGit2Sharp.GlobalSettings.Version.InformationalVersion;
+				return version;
+			}
 		}
 
 		public override bool IsInstalled {
@@ -45,10 +54,7 @@ namespace MonoDevelop.VersionControl.Git
 
 		public override Repository GetRepositoryReference (FilePath path, string id)
 		{
-			GitRepository repo;
-			if (!repositories.TryGetValue (path.CanonicalPath, out repo))
-				repositories [path.CanonicalPath] = repo = new GitRepository (this, path, null);
-			return repo;
+			return new GitRepository (this, path, null);
 		}
 
 		protected override Repository OnCreateRepositoryInstance ()
@@ -63,17 +69,13 @@ namespace MonoDevelop.VersionControl.Git
 
 		protected override FilePath OnGetRepositoryPath (FilePath path, string id)
 		{
-			if (path.IsEmpty || path.ParentDirectory.IsEmpty || path.IsNull || path.ParentDirectory.IsNull)
-				return null;
-			if (path.IsGitRepository ())
-				return path;
-			return OnGetRepositoryPath (path.ParentDirectory, id);
-		}
-
-		internal void UnregisterRepo (GitRepository repo)
-		{
-			if (!repo.RootPath.IsNullOrEmpty)
-				repositories.Remove (repo.RootPath.CanonicalPath);
+			string repo = LibGit2Sharp.Repository.Discover (path.ResolveLinks ());
+			if (!string.IsNullOrEmpty (repo)) {
+				repo = repo.TrimEnd ('\\', '/');
+				if (repo.EndsWith (".git", System.StringComparison.OrdinalIgnoreCase))
+					repo = Path.GetDirectoryName (repo);
+			}
+			return repo;
 		}
 	}
 }

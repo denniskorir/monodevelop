@@ -26,12 +26,16 @@
 using MonoDevelop.Core;
 using System.Collections.Generic;
 using System.Linq;
+using System.Threading;
+using System;
 
 namespace MonoDevelop.VersionControl
 {
-	class VersionInfoCache
+	class VersionInfoCache : IDisposable
 	{
+		ReaderWriterLockSlim fileLock = new ReaderWriterLockSlim();
 		Dictionary<FilePath,VersionInfo> fileStatus = new Dictionary<FilePath, VersionInfo> ();
+		ReaderWriterLockSlim directoryLock = new ReaderWriterLockSlim ();
 		Dictionary<FilePath,DirectoryStatus> directoryStatus = new Dictionary<FilePath, DirectoryStatus> ();
 		Repository repo;
 
@@ -43,46 +47,68 @@ namespace MonoDevelop.VersionControl
 		public void ClearCachedVersionInfo (FilePath rootPath)
 		{
 			var canonicalPath = rootPath.CanonicalPath;
-			lock (fileStatus) {
+
+			try {
+				fileLock.EnterWriteLock ();
 				foreach (var p in fileStatus.Where (e => e.Key.IsChildPathOf (rootPath) || e.Key == canonicalPath))
 					p.Value.RequiresRefresh = true;
+			} finally {
+				fileLock.ExitWriteLock ();
 			}
-			lock (directoryStatus) {
+
+			try {
+				directoryLock.EnterWriteLock ();
 				foreach (var p in directoryStatus.Where (e => e.Key.IsChildPathOf (rootPath) || e.Key == canonicalPath))
 					p.Value.RequiresRefresh = true;
+			} finally {
+				directoryLock.ExitWriteLock ();
 			}
 		}
 
 		public VersionInfo GetStatus (FilePath localPath)
 		{
-			lock (fileStatus) {
+			try {
+				fileLock.EnterReadLock ();
+
 				VersionInfo vi;
 				fileStatus.TryGetValue (localPath, out vi);
 				return vi;
+			} finally {
+				fileLock.ExitReadLock ();
 			}
 		}
 
 		public DirectoryStatus GetDirectoryStatus (FilePath localPath)
 		{
-			lock (directoryStatus) {
+			try {
+				directoryLock.EnterReadLock ();
+
 				DirectoryStatus vis;
 				if (directoryStatus.TryGetValue (localPath.CanonicalPath, out vis))
 					return vis;
 				return null;
+			} finally {
+				directoryLock.ExitReadLock ();
 			}
 		}
 
 		public void SetStatus (VersionInfo versionInfo, bool notify = true)
 		{
-			lock (fileStatus) {
+			try {
+				fileLock.EnterWriteLock ();
+
+				if (!versionInfo.IsInitialized)
+					versionInfo.Init (repo);
 				VersionInfo vi;
 				if (fileStatus.TryGetValue (versionInfo.LocalPath, out vi) && vi.Equals (versionInfo)) {
 					vi.RequiresRefresh = false;
 					return;
 				}
-				versionInfo.Init (repo);
 				fileStatus [versionInfo.LocalPath] = versionInfo;
+			} finally {
+				fileLock.ExitWriteLock ();
 			}
+
 			if (notify)
 				VersionControlService.NotifyFileStatusChanged (new FileUpdateEventArgs (repo, versionInfo.LocalPath, versionInfo.IsDirectory));
 		}
@@ -90,14 +116,17 @@ namespace MonoDevelop.VersionControl
 		public void SetStatus (IEnumerable<VersionInfo> versionInfos)
 		{
 			FileUpdateEventArgs args = null;
-			lock (fileStatus) {
+
+			try {
+				fileLock.EnterWriteLock ();
 				foreach (var versionInfo in versionInfos) {
+					if (!versionInfo.IsInitialized)
+						versionInfo.Init (repo);
 					VersionInfo vi;
 					if (fileStatus.TryGetValue (versionInfo.LocalPath, out vi) && vi.Equals (versionInfo)) {
 						vi.RequiresRefresh = false;
 						continue;
 					}
-					versionInfo.Init (repo);
 					fileStatus [versionInfo.LocalPath] = versionInfo;
 					var a = new FileUpdateEventArgs (repo, versionInfo.LocalPath, versionInfo.IsDirectory);
 					if (args == null)
@@ -105,6 +134,8 @@ namespace MonoDevelop.VersionControl
 					else
 						args.MergeWith (a);
 				}
+			} finally {
+				fileLock.ExitWriteLock ();
 			}
 			if (args != null) {
 			//	Console.WriteLine ("Notifying Status " + string.Join (", ", args.Select (p => p.FilePath.FullPath)));
@@ -114,13 +145,15 @@ namespace MonoDevelop.VersionControl
 
 		public void SetDirectoryStatus (FilePath localDirectory, VersionInfo[] versionInfos, bool hasRemoteStatus)
 		{
-			lock (directoryStatus) {
+			try {
+				directoryLock.EnterWriteLock ();
+
 				DirectoryStatus vis;
 				if (directoryStatus.TryGetValue (localDirectory.CanonicalPath, out vis)) {
 					if (versionInfos.Length == vis.FileInfo.Length && (hasRemoteStatus == vis.HasRemoteStatus)) {
-						bool allEqual = false;
-						for (int n=0; n<versionInfos.Length; n++) {
-							if (!versionInfos[n].Equals (vis.FileInfo[n])) {
+						bool allEqual = true;
+						for (int n = 0; n < versionInfos.Length; n++) {
+							if (!versionInfos [n].Equals (vis.FileInfo [n])) {
 								allEqual = false;
 								break;
 							}
@@ -133,7 +166,30 @@ namespace MonoDevelop.VersionControl
 				}
 				directoryStatus [localDirectory.CanonicalPath] = new DirectoryStatus { FileInfo = versionInfos, HasRemoteStatus = hasRemoteStatus };
 				SetStatus (versionInfos);
+			} finally {
+				directoryLock.ExitWriteLock ();
 			}
+		}
+
+		public void Dispose ()
+		{
+			if (fileLock != null) {
+				fileLock.Dispose ();
+				fileLock = null;
+			}
+			if (directoryLock != null) {
+				directoryLock.Dispose ();
+				directoryLock = null;
+			}
+			if (fileStatus != null) {
+				fileStatus.Clear ();
+				fileStatus = null;
+			}
+			if (directoryStatus != null) {
+				directoryStatus.Clear ();
+				directoryStatus = null;
+			}
+			repo = null;
 		}
 	}
 

@@ -41,20 +41,20 @@ namespace MonoDevelop.Ide.Commands
 	{
 		public override IEnumerable<StringTagDescription> GetTags ()
 		{
-			yield return new StringTagDescription ("FilePath", "File Path");
-			yield return new StringTagDescription ("FileDir", "File Directory");
-			yield return new StringTagDescription ("FileName", "File Name");
-			yield return new StringTagDescription ("FileNamePrefix", "File Name Without Extension");
-			yield return new StringTagDescription ("FileExt", "File Extension");
-			yield return new StringTagDescription ("CurLine", "Cursor Line", false);
-			yield return new StringTagDescription ("CurColumn", "Cursor Column", false);
-			yield return new StringTagDescription ("CurOffset", "Cursor Offset", false);
-			yield return new StringTagDescription ("CurText", "Selected Editor Text", false);
-			yield return new StringTagDescription ("EditorText", "Editor Text", false);
-			yield return new StringTagDescription ("StartupPath", "MonoDevelop Startup Directory", false);
-			yield return new StringTagDescription ("ConfigDir", "MonoDevelop Configuration Directory", false);
-			yield return new StringTagDescription ("DataDir", "MonoDevelop User Data Directory", false);
-			yield return new StringTagDescription ("LogDir", "MonoDevelop Log Directory", false);
+			yield return new StringTagDescription ("FilePath", GettextCatalog.GetString ("File Path"));
+			yield return new StringTagDescription ("FileDir", GettextCatalog.GetString ("File Directory"));
+			yield return new StringTagDescription ("FileName", GettextCatalog.GetString ("File Name"));
+			yield return new StringTagDescription ("FileNamePrefix", GettextCatalog.GetString ("File Name Without Extension"));
+			yield return new StringTagDescription ("FileExt", GettextCatalog.GetString ("File Extension"));
+			yield return new StringTagDescription ("CurLine", GettextCatalog.GetString ("Cursor Line"), false);
+			yield return new StringTagDescription ("CurColumn", GettextCatalog.GetString ("Cursor Column"), false);
+			yield return new StringTagDescription ("CurOffset", GettextCatalog.GetString ("Cursor Offset"), false);
+			yield return new StringTagDescription ("CurText", GettextCatalog.GetString ("Selected Editor Text"), false);
+			yield return new StringTagDescription ("EditorText", GettextCatalog.GetString ("Editor Text"), false);
+			yield return new StringTagDescription ("StartupPath", GettextCatalog.GetString ("MonoDevelop Startup Directory"), false);
+			yield return new StringTagDescription ("ConfigDir", GettextCatalog.GetString ("MonoDevelop Configuration Directory"), false);
+			yield return new StringTagDescription ("DataDir", GettextCatalog.GetString ("MonoDevelop User Data Directory"), false);
+			yield return new StringTagDescription ("LogDir", GettextCatalog.GetString ("MonoDevelop Log Directory"), false);
 		}
 		
 		public override object GetTagValue (Workbench wb, string tag)
@@ -87,17 +87,17 @@ namespace MonoDevelop.Ide.Commands
 					
 				case "CURLINE":
 					if (wb.ActiveDocument != null && wb.ActiveDocument.Editor != null)
-						return wb.ActiveDocument.Editor.Caret.Line;
+						return wb.ActiveDocument.Editor.CaretLocation.Line;
 					return null;
 					
 				case "CURCOLUMN":
 					if (wb.ActiveDocument != null && wb.ActiveDocument.Editor != null)
-						return wb.ActiveDocument.Editor.Caret.Column;
+						return wb.ActiveDocument.Editor.CaretLocation.Column;
 					return null;
 					
 				case "CUROFFSET":
 					if (wb.ActiveDocument != null && wb.ActiveDocument.Editor != null)
-						return wb.ActiveDocument.Editor.Caret.Offset;
+						return wb.ActiveDocument.Editor.CaretOffset;
 					return null;
 					
 				case "CURTEXT":

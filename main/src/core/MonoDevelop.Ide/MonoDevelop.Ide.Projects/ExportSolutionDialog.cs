@@ -1,4 +1,4 @@
-// ExportProjectDialog.cs
+﻿// ExportProjectDialog.cs
 //
 // Author:
 //   Lluis Sanchez Gual <lluis@novell.com>
@@ -30,22 +30,25 @@ using System;
 using System.IO;
 using MonoDevelop.Components;
 using MonoDevelop.Projects;
+using MonoDevelop.Projects.MSBuild;
+using System.Linq;
 
 namespace MonoDevelop.Ide.Projects
 {
 	partial class ExportSolutionDialog : Gtk.Dialog
 	{
-		FileFormat[] formats;
+		MSBuildFileFormat[] formats;
 		
-		public ExportSolutionDialog (WorkspaceItem item, FileFormat selectedFormat)
+		public ExportSolutionDialog (IMSBuildFileObject item, MSBuildFileFormat selectedFormat)
 		{
 			this.Build();
 			
-			labelNewFormat.Text = item.FileFormat.Name;
+			labelNewFormat.Text = selectedFormat?.ProductDescription ?? item.FileFormat.ProductDescription;
 			
-			formats = Services.ProjectService.FileFormats.GetFileFormatsForObject (item);
-			foreach (FileFormat format in formats)
-				comboFormat.AppendText (format.Name);
+			formats = MSBuildFileFormat.GetSupportedFormats (item).ToArray ();
+			foreach (var format in formats) {
+				comboFormat.AppendText (format.ProductDescription);
+			}
 
 			int sel = Array.IndexOf (formats, selectedFormat);
 			if (sel == -1) sel = 0;
@@ -68,7 +71,7 @@ namespace MonoDevelop.Ide.Projects
 			UpdateControls ();
 		}
 		
-		public FileFormat Format {
+		public MSBuildFileFormat Format {
 			get {
 				if (comboFormat == null)
 					return formats[0];

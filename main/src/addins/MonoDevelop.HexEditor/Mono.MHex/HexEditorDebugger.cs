@@ -25,7 +25,10 @@
 // THE SOFTWARE.
 using System;
 using Mono.MHex.Data;
+using MonoDevelop.HexEditor;
 using Xwt;
+using MonoDevelop.Components.AtkCocoaHelper;
+using MonoDevelop.Core;
 
 namespace Mono.MHex
 {
@@ -69,11 +72,16 @@ namespace Mono.MHex
 
 		public HexEditorDebugger ()
 		{
+			editor.HexEditorStyle = new MonoDevelopHexEditorStyle (editor);
 			var comboBox = new ComboBox ();
+			comboBox.Accessible.SetCommonAttributes ("HexEditor.BitCombo", GettextCatalog.GetString ("Group Width"),
+													 GettextCatalog.GetString ("Select how the hex data is grouped"));
 			comboBox.Items.Add ("Hex 8");
 			comboBox.Items.Add ("Hex 16");
 			comboBox.SelectedIndex = 0;
 			editor.Options.StringRepresentationType = StringRepresentationTypes.ASCII;
+			editor.Accessible.Label = GettextCatalog.GetString ("Hexadecimal Text Editor");
+
 			comboBox.SelectionChanged += delegate {
 				switch (comboBox.SelectedIndex) {
 				case 0:

@@ -80,45 +80,52 @@ namespace MonoDevelop.Ide.Gui.Pads.ProjectPad
 				nodeInfo.Label = "<span foreground='dimgrey'>" + nodeInfo.Label + "</span>";
 			}
 		}
-		
-		public override int CompareObjects (ITreeNavigator thisNode, ITreeNavigator otherNode)
-		{
-			if (otherNode.DataItem is ProjectFolder)
-				return 1;
-			else
-				return DefaultSort;
-		}
 	}
 	
 	class SystemFileNodeCommandHandler: NodeCommandHandler
 	{
+		public override void OnRenameStarting (ref int selectionStart, ref int selectionLength)
+		{
+			string name = CurrentNode.NodeName;
+			selectionStart = 0;
+			selectionLength = Path.GetFileNameWithoutExtension (name).Length;
+		}
+
 		public override void RenameItem (string newName)
 		{
-			SystemFile file = CurrentNode.DataItem as SystemFile;
-			string oldname = file.Path;
-
-			string newname = Path.Combine (Path.GetDirectoryName (oldname), newName);
-			if (newname != oldname) {
-				try {
-					if (!FileService.IsValidPath (newname)) {
-						MessageService.ShowWarning (GettextCatalog.GetString ("The name you have chosen contains illegal characters. Please choose a different name."));
-					} else if (File.Exists (newname) || Directory.Exists (newname)) {
-						MessageService.ShowWarning (GettextCatalog.GetString ("File or directory name is already in use. Please choose a different one."));
-					} else {
-						FileService.RenameFile (oldname, newname);
-					}
-				} catch (System.ArgumentException) { // new file name with wildcard (*, ?) characters in it
-					MessageService.ShowWarning (GettextCatalog.GetString ("The name you have chosen contains illegal characters. Please choose a different name."));
-				} catch (System.IO.IOException ex) { 
-					MessageService.ShowError (GettextCatalog.GetString ("There was an error renaming the file."), ex);
-				}
+			var file = (SystemFile)CurrentNode.DataItem;
+			if (RenameFileWithConflictCheck (file.Path, newName, out string newPath)) {
+				file.Path = newPath;
 			}
+		}
+
+		public static bool RenameFileWithConflictCheck (FilePath oldPath, string newName, out string newPath)
+		{
+			newPath = oldPath.ParentDirectory.Combine (newName);
+			if (oldPath == newPath) {
+				return false;
+			}
+			try {
+				if (!FileService.IsValidPath (newPath) || ProjectFolderCommandHandler.ContainsDirectorySeparator (newName)) {
+					MessageService.ShowWarning (GettextCatalog.GetString ("The name you have chosen contains illegal characters. Please choose a different name."));
+				} else if (File.Exists (newPath) || Directory.Exists (newPath)) {
+					MessageService.ShowWarning (GettextCatalog.GetString ("File or directory name is already in use. Please choose a different one."));
+				} else {
+					FileService.RenameFile (oldPath, newPath);
+					return true;
+				}
+			} catch (ArgumentException) { // new file name with wildcard (*, ?) characters in it
+				MessageService.ShowWarning (GettextCatalog.GetString ("The name you have chosen contains illegal characters. Please choose a different name."));
+			} catch (IOException ex) {
+				MessageService.ShowError (GettextCatalog.GetString ("There was an error renaming the file."), ex);
+			}
+			return false;
 		}
 		
 		public override void ActivateItem ()
 		{
 			SystemFile file = CurrentNode.DataItem as SystemFile;
-			IdeApp.Workbench.OpenDocument (file.Path);
+			IdeApp.Workbench.OpenDocument (file.Path, project: null);
 		}
 		
 		public override void DeleteMultipleItems ()
@@ -149,8 +156,7 @@ namespace MonoDevelop.Ide.Gui.Pads.ProjectPad
 		[AllowMultiSelection]
 		public void IncludeFileToProject ()
 		{
-			Set<SolutionEntityItem> projects = new Set<SolutionEntityItem> ();
-			Set<Solution> solutions = new Set<Solution> ();
+			Set<IWorkspaceFileObject> projects = new Set<IWorkspaceFileObject> ();
 			var nodesByProject = CurrentNodes.GroupBy (n => n.GetParentDataItem (typeof(Project), true) as Project);
 			
 			foreach (var projectGroup in nodesByProject) {
@@ -166,21 +172,19 @@ namespace MonoDevelop.Ide.Gui.Pads.ProjectPad
 						SolutionFolder folder = node.GetParentDataItem (typeof(SolutionFolder), true) as SolutionFolder;
 						if (folder != null) {
 							folder.Files.Add (file.Path);
-							solutions.Add (folder.ParentSolution);
+							projects.Add (folder.ParentSolution);
 						}
 						else {
 							Solution sol = node.GetParentDataItem (typeof(Solution), true) as Solution;
 							sol.RootFolder.Files.Add (file.Path);
-							solutions.Add (sol);
+							projects.Add (sol);
 						}
 					}
 				}
 				if (newFiles.Count > 0)
 					project.AddFiles (newFiles);
 			}
-			IdeApp.ProjectOperations.Save (projects);
-			foreach (Solution sol in solutions)
-				IdeApp.ProjectOperations.Save (sol);
+			IdeApp.ProjectOperations.SaveAsync (projects);
 		}
 		
 		[CommandUpdateHandler (ProjectCommands.IncludeToProject)]

@@ -27,6 +27,8 @@
 //
 
 using System;
+using MonoDevelop.Components;
+using MonoDevelop.Components.AtkCocoaHelper;
 using MonoDevelop.Core;
 using MonoDevelop.Ide.Gui.Dialogs;
 using MonoDevelop.Projects;
@@ -36,8 +38,8 @@ namespace MonoDevelop.Ide.Gui.OptionPanels
 	class GlobalAuthorInformationPanel : OptionsPanel
 	{
 		GlobalAuthorInformationPanelWidget widget;
-		
-		public override Gtk.Widget CreatePanelWidget ()
+
+		public override Control CreatePanelWidget ()
 		{
 			return widget = new GlobalAuthorInformationPanelWidget ();
 		}
@@ -60,15 +62,40 @@ namespace MonoDevelop.Ide.Gui.OptionPanels
 			copyrightEntry.Text = AuthorInformation.Default.Copyright ?? "";
 			companyEntry.Text = AuthorInformation.Default.Company ?? "";
 			trademarkEntry.Text = AuthorInformation.Default.Trademark ?? "";
+
+			SetupAccessibility ();
 		}
-		
+
+		void SetupAccessibility ()
+		{
+			nameEntry.SetCommonAccessibilityAttributes ("AuthorInformationPanel.nameEntry", "",
+														GettextCatalog.GetString ("Enter the author name"));
+			nameEntry.SetAccessibilityLabelRelationship (label2);
+
+			emailEntry.SetCommonAccessibilityAttributes ("AuthorInformationPanel.emailEntry", "",
+														 GettextCatalog.GetString ("Enter the author's email address"));
+			emailEntry.SetAccessibilityLabelRelationship (label4);
+
+			copyrightEntry.SetCommonAccessibilityAttributes ("AuthorInformationPanel.copyrightEntry", "",
+															 GettextCatalog.GetString ("Enter the copyright statement"));
+			copyrightEntry.SetAccessibilityLabelRelationship (label3);
+
+			companyEntry.SetCommonAccessibilityAttributes ("AuthorInformationPanel.companyEntry", "",
+														   GettextCatalog.GetString ("Enter the company name"));
+			companyEntry.SetAccessibilityLabelRelationship (label5);
+
+			trademarkEntry.SetCommonAccessibilityAttributes ("AuthorInformationPanel.trademarkEntry", "",
+															 GettextCatalog.GetString ("Enter the trademark statement"));
+			trademarkEntry.SetAccessibilityLabelRelationship (label6);
+		}
+
 		public void Save ()
 		{
-			PropertyService.Set ("Author.Name", nameEntry.Text);
-			PropertyService.Set ("Author.Email", emailEntry.Text);
-			PropertyService.Set ("Author.Copyright", copyrightEntry.Text);
-			PropertyService.Set ("Author.Company", companyEntry.Text);
-			PropertyService.Set ("Author.Trademark", trademarkEntry.Text);
+			Runtime.Preferences.AuthorName.Value = nameEntry.Text;
+			Runtime.Preferences.AuthorEmail.Value = emailEntry.Text;
+			Runtime.Preferences.AuthorCopyright.Value = copyrightEntry.Text;
+			Runtime.Preferences.AuthorCompany.Value = companyEntry.Text;
+			Runtime.Preferences.AuthorTrademark.Value = trademarkEntry.Text;
 		}
 	}
 }

@@ -52,7 +52,6 @@ namespace MonoDevelop.Ide.Projects
 		StringMatcher stringMatcher;
 		List<AssemblyInfo> assemblies = new List<AssemblyInfo> ();
 		FilePath basePath;
-		FilePath baseSolutionPath;
 
 		class AssemblyInfo
 		{
@@ -150,12 +149,12 @@ namespace MonoDevelop.Ide.Projects
 
 		void HandleClicked (object sender, EventArgs e)
 		{
-			var dlg = new OpenFileDialog (GettextCatalog.GetString ("Select Assembly"), FileChooserAction.Open);
+			var dlg = new OpenFileDialog (GettextCatalog.GetString ("Select Assembly"), MonoDevelop.Components.FileChooserAction.Open);
 //			dlg.AddFilter (GettextCatalog.GetString ("Assemblies"), "*.[Dd][Ll][Ll]", "*.[Ee][Xx][Ee]");
 			dlg.AddFilter (GettextCatalog.GetString ("Assemblies"), "*.dll", "*.exe");
 			dlg.CurrentFolder = basePath;
 			dlg.SelectMultiple = true;
-
+			dlg.TransientFor = selectDialog;
 			if (dlg.Run ()) {
 				basePath = dlg.CurrentFolder;
 				foreach (string file in dlg.SelectedFiles) {
@@ -199,6 +198,11 @@ namespace MonoDevelop.Ide.Projects
 			this.project = configureProject;
 			assemblies.Clear ();
 
+			if (configureProject == null) {
+				Reset ();
+				return;
+			}
+
 			nugetDir = configureProject.ParentSolution.ItemDirectory.Combine ("packages");
 
 			foreach (var asm in selectDialog.GetRecentFileReferences (project.ParentSolution.FileName)) {
@@ -206,7 +210,7 @@ namespace MonoDevelop.Ide.Projects
 					assemblies.Add (new AssemblyInfo (asm));
 			}
 
-			foreach (var pr in configureProject.ParentSolution.GetAllSolutionItems<DotNetProject> ().SelectMany (p => p.References).Where (r => r.ReferenceType == ReferenceType.Assembly && !string.IsNullOrEmpty (r.HintPath))) {
+			foreach (var pr in configureProject.ParentSolution.GetAllItems<DotNetProject> ().SelectMany (p => p.References).Where (r => r.ReferenceType == ReferenceType.Assembly && !string.IsNullOrEmpty (r.HintPath))) {
 				var file = new FilePath (pr.HintPath).CanonicalPath;
 				if (File.Exists (file) && !IsNuGetAssembly (file) && !assemblies.Any (a => a.File.Equals (file)))
 					assemblies.Add (new AssemblyInfo (pr.HintPath));
@@ -281,9 +285,9 @@ namespace MonoDevelop.Ide.Projects
 
 		internal static string GetMatchMarkup (Gtk.Widget widget, string text, int[] matches, int startIndex)
 		{
-			StringBuilder result = new StringBuilder ();
+			StringBuilder result = StringBuilderCache.Allocate ();
 			int lastPos = 0;
-			var color = Mono.TextEditor.HslColor.GenerateHighlightColors (widget.Style.Base (StateType.Normal), 
+			var color = HslColor.GenerateHighlightColors (widget.Style.Base (StateType.Normal), 
 				widget.Style.Text (StateType.Normal), 3)[2];
 			for (int n=0; n < matches.Length; n++) {
 				int pos = matches[n] - startIndex;
@@ -300,7 +304,7 @@ namespace MonoDevelop.Ide.Projects
 			}
 			if (lastPos < text.Length)
 				result.Append (GLib.Markup.EscapeText (text.Substring (lastPos, text.Length - lastPos)));
-			return result.ToString ();
+			return StringBuilderCache.ReturnAndFree (result);
 		}
 
 		public void AddReference (object sender, Gtk.ToggledArgs e)
@@ -329,7 +333,7 @@ namespace MonoDevelop.Ide.Projects
 
 		void AddReference (FilePath path)
 		{
-			selectDialog.AddReference (new ProjectReference (ReferenceType.Assembly, path));
+			selectDialog.AddReference (ProjectReference.CreateAssemblyFileReference (path));
 		}
 
 		void RemoveReference (FilePath path)

@@ -34,16 +34,16 @@ using System.Globalization;
 using System.IO;
 using System.Text;
 using MonoDevelop.Projects.Extensions;
-using MonoDevelop.Projects.Formats.MSBuild;
+using MonoDevelop.Projects.MSBuild;
 
 namespace MonoDevelop.CSharp.Project
 {
-	class CSharpResourceIdBuilder : MSBuildResourceHandler
+	class CSharpResourceIdBuilder
 	{
-		public override string GetDefaultResourceId (ProjectFile pf)
+		public static string GetDefaultResourceId (ProjectFile pf)
 		{
-			if (String.IsNullOrEmpty (pf.DependsOn) || !File.Exists (pf.DependsOn) || Path.GetExtension (pf.DependsOn).ToLower () != ".cs")
-				return base.GetDefaultResourceId (pf);
+			if (String.IsNullOrEmpty (pf.DependsOn) || !File.Exists (pf.DependsOn) || !string.Equals (Path.GetExtension (pf.DependsOn), ".cs", StringComparison.OrdinalIgnoreCase))
+				return null;
 
 			string ns = null;
 			string classname = null;
@@ -80,7 +80,7 @@ namespace MonoDevelop.CSharp.Project
 				}
 
 				if (classname == null)
-					return base.GetDefaultResourceId (pf);
+					return null;
 
 				string culture, extn, only_filename;
 				if (MSBuildProjectService.TrySplitResourceName (pf.ProjectVirtualPath, out only_filename, out culture, out extn))
@@ -101,91 +101,94 @@ namespace MonoDevelop.CSharp.Project
 		 * skips strings "foo", 
 		 * skips anything after a # , eg. #region, #if 
 		 * Won't handle #if false etc kinda blocks*/
-		string GetNextToken (StreamReader sr)
+		static string GetNextToken (StreamReader sr)
 		{
-			StringBuilder sb = new StringBuilder ();
+			StringBuilder sb = StringBuilderCache.Allocate ();
+			try {
+				while (true) {
+					int c = sr.Peek ();
+					if (c == -1)
+						return null;
 
-			while (true) {
-				int c = sr.Peek ();
-				if (c == -1)
-					return null;
+					if (c == '\r' || c == '\n') {
+						sr.ReadLine ();
+						if (sb.Length > 0)
+							break;
 
-				if (c == '\r' || c == '\n') {
-					sr.ReadLine ();
-					if (sb.Length > 0)
-						break;
+						continue;
+					}
 
-					continue;
-				}
-
-				if (c == '/') {
-					sr.Read ();
-
-					if (sr.Peek () == '*') {
-						/* multi-line comment */
+					if (c == '/') {
 						sr.Read ();
 
-						while (true) {
-							int n = sr.Read ();
-							if (n == -1)
-								break;
-							if (n != '*')
-								continue;
+						if (sr.Peek () == '*') {
+							/* multi-line comment */
+							sr.Read ();
 
-							if (sr.Peek () == '/') {
-								/* End of multi-line comment */
+							while (true) {
+								int n = sr.Read ();
+								if (n == -1)
+									break;
+								if (n != '*')
+									continue;
+
+								if (sr.Peek () == '/') {
+									/* End of multi-line comment */
+									if (sb.Length > 0) {
+										sr.Read ();
+										return sb.ToString ();
+									}
+									break;
+								}
+							}
+						} else if (sr.Peek () == '/') {
+							//Single line comment, skip the rest of the line
+							sr.ReadLine ();
+							continue;
+						}
+					} else if (c == '"') {
+						/* String "foo" */
+						sr.Read ();
+						while (true) {
+							int n = sr.Peek ();
+							if (n == -1)
+								throw new Exception ("String literal not closed");
+
+							if (n == '"') {
+								/* end of string */
 								if (sb.Length > 0) {
 									sr.Read ();
 									return sb.ToString ();
 								}
+
 								break;
 							}
-						}
-					} else if (sr.Peek () == '/') {
-						//Single line comment, skip the rest of the line
-						sr.ReadLine ();
-						continue;
-					}
-				} else if (c == '"') {
-					/* String "foo" */
-					sr.Read ();
-					while (true) {
-						int n = sr.Peek ();
-						if (n == -1)
-							throw new Exception ("String literal not closed");
-
-						if (n == '"') {
-							/* end of string */
-							if (sb.Length > 0) {
-								sr.Read ();
-								return sb.ToString ();
-							}
-
-							break;
-						}
-						sr.Read ();
-					}
-				} else if (c == '#') {
-					//skip rest of the line
-					sr.ReadLine ();
-				} else {
-					if (Char.IsLetterOrDigit ((char) c) || c == '_' || c == '.') {
-						sb.Append ((char) c);
-					} else {
-						if (sb.Length > 0)
-							break;
-
-						if (c != ' ' && c != '\t') {
 							sr.Read ();
-							return ((char) c).ToString ();
+						}
+					} else if (c == '#') {
+						//skip rest of the line
+						sr.ReadLine ();
+					} else {
+						if (Char.IsLetterOrDigit ((char)c) || c == '_' || c == '.') {
+							sb.Append ((char)c);
+						} else {
+							if (sb.Length > 0)
+								break;
+
+							if (c != ' ' && c != '\t') {
+								sr.Read ();
+								return ((char)c).ToString ();
+							}
 						}
 					}
+
+					sr.Read ();
 				}
 
-				sr.Read ();
+				return sb.ToString ();
+			} finally {
+				StringBuilderCache.Free (sb);
 			}
-
-			return sb.ToString ();
 		}
 
 	}

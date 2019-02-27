@@ -26,6 +26,7 @@
 
 using System.Collections.Generic;
 using MonoDevelop.Ide.TypeSystem;
+using System.Linq;
 
 namespace MonoDevelop.AspNet.Razor
 {
@@ -36,12 +37,17 @@ namespace MonoDevelop.AspNet.Razor
 		public RazorCSharpParsedDocument (string fileName, RazorCSharpPageInfo pageInfo) : base (fileName)
 		{
 			PageInfo = pageInfo;
-			Flags |= ParsedDocumentFlags.NonSerializable;
+			Flags |= ParsedDocumentFlags.NonSerializable | ParsedDocumentFlags.HasCustomCompletionExtension;
 			if (PageInfo.Errors != null)
-				Add (PageInfo.Errors);
+				AddRange (PageInfo.Errors);
 		}
 
-		public override IEnumerable<FoldingRegion> Foldings	{
+		public override System.Threading.Tasks.Task<IReadOnlyList<FoldingRegion>> GetFoldingsAsync (System.Threading.CancellationToken cancellationToken)
+		{
+			return System.Threading.Tasks.Task.FromResult((IReadOnlyList<FoldingRegion>)Foldings.ToList ());
+		}
+
+		public IEnumerable<FoldingRegion> Foldings	{
 			get	{
 				if (PageInfo.FoldingRegions != null) {
 					foreach (var region in PageInfo.FoldingRegions) {
@@ -56,5 +62,6 @@ namespace MonoDevelop.AspNet.Razor
 				}
 			}
 		}
+
 	}
 }

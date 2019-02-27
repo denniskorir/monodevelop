@@ -99,7 +99,7 @@ namespace MonoDevelop.ChangeLogAddIn
 			AllowCommit = !requireComment;
 			
 			if (!AuthorInformation.Default.IsValid) {
-				msgLabel.Markup = "<b><span foreground='red'>" + GettextCatalog.GetString ("ChangeLog entries can't be generated.") + "</span></b>";
+				msgLabel.Markup = "<b><span foreground='" + Ide.Gui.Styles.ErrorForegroundColor.ToHexString (false) + "'>" + GettextCatalog.GetString ("ChangeLog entries can't be generated.") + "</span></b>";
 				pathLabel.Text = GettextCatalog.GetString ("The name or e-mail of the user has not been configured.");
 				logButton.Label = GettextCatalog.GetString ("Configure user data");
 				optionsButton.Visible = false;
@@ -114,11 +114,11 @@ namespace MonoDevelop.ChangeLogAddIn
 				string fc = GettextCatalog.GetString ("There are {0} files without a comment.\nThe ChangeLog entry for those files will not be generated.", uncommentedCount);
 				if (requireComment)
 					fc += "\n" + GettextCatalog.GetString ("Some of the projects require that files have comments when they are committed.");
-				warning = "<b><span foreground='red'>" + fc + "</span></b>\n";
+				warning = "<b><span foreground='" + Ide.Gui.Styles.ErrorForegroundColor.ToHexString (false) + "'>" + fc + "</span></b>\n";
 			}
 			if (unknownFileCount > 0) {
 				string fc = GettextCatalog.GetPluralString ("{0} ChangeLog file not found. Some changes will not be logged.","{0} ChangeLog files not found. Some changes will not be logged.", unknownFileCount, unknownFileCount);
-				msgLabel.Markup = warning + "<b><span foreground='red'>" + fc + "</span></b>";
+				msgLabel.Markup = warning + "<b><span foreground='" + Ide.Gui.Styles.ErrorForegroundColor.ToHexString (false) + "'>" + fc + "</span></b>";
 				pathLabel.Text = GettextCatalog.GetString ("Click on the 'Details' button for more info.");
 			} else if (entries.Count == 1) {
 				msgLabel.Markup = warning + "<b>" + GettextCatalog.GetString ("The following ChangeLog file will be updated:") + "</b>";
@@ -156,7 +156,7 @@ namespace MonoDevelop.ChangeLogAddIn
 					}
 					if (!cset.ContainsFile (ce.File)) {
 						if (!cset.Repository.GetVersionInfo (ce.File).IsVersioned)
-							cset.Repository.Add (ce.File, false, new MonoDevelop.Core.ProgressMonitoring.NullProgressMonitor ());
+							cset.Repository.Add (ce.File, false, new MonoDevelop.Core.ProgressMonitor ());
 						cset.AddFile (ce.File);
 					}
 				}
@@ -226,7 +226,7 @@ namespace MonoDevelop.ChangeLogAddIn
 			requireComment = false;
 			
 			foreach (ChangeSetItem item in cset.Items) {
-				SolutionItem parentItem;
+				SolutionFolderItem parentItem;
 				ChangeLogPolicy policy;
 				string logf = ChangeLogService.GetChangeLogForFile (cset.BaseLocalPath, item.LocalPath,
 				                                                    out parentItem, out policy);
@@ -286,8 +286,8 @@ namespace MonoDevelop.ChangeLogAddIn
 				return;
 			}
 			
-			var dlg = new AddLogEntryDialog (entries);
-			MessageService.ShowCustomDialog (dlg, (Window) Toplevel);
+			using (var dlg = new AddLogEntryDialog (entries))
+				MessageService.ShowCustomDialog (dlg, (Window) Toplevel);
 		}
 		
 		void OnClickOptions (object s, EventArgs args)
